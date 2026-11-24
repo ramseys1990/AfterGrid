@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-dev
+- Shared household directory and filter; administrator-only editing and deleting.
+- Manual Homebox/Grocy native location references with independent owning and storage households; shared/unassigned supported.
+- SQLite foreign keys protect referenced households. Native inventories and QR labels remain unchanged.
+- Add persistence, duplicate, reference and authorization tests. Live inventory API discovery and stock reporting are next; no counts invented.
+- Correct archive lifecycle smoke test to inspect removed files using the administrator API rather than inaccessible host directory.
+
+
 ## 0.3.6-dev
 - Local ZIM indexing, recoverable removal, restoration and explicit purge; safe filenames and serialized native library mutations.
 - Display indexed and removed archives, with disk usage and administrator-only origin-checked actions.

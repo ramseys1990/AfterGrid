@@ -22,10 +22,12 @@ try:
     from .worker_client import call, WorkerUnavailable
     from .content import search_catalog, local_inventory, CatalogUnavailable
     from .downloads import Downloads
+    from .households import Households
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
     from downloads import Downloads
+    from households import Households
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -66,6 +68,7 @@ def create_app(data_dir=None):
     secure_cookie = os.environ.get("AFTERGRID_SECURE_COOKIE", "false").lower() == "true"
     configured_origin = os.environ.get("AFTERGRID_ORIGIN", "").rstrip("/")
     downloads = Downloads(data, os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
+    households = Households(data)
     attempts = deque()
     lock = threading.Lock()
 
@@ -94,13 +97,14 @@ def create_app(data_dir=None):
                     selection TEXT, result TEXT);
             """)
             con.execute("INSERT OR IGNORE INTO first_run(id,token) VALUES (1,?)", (secrets.token_hex(24),))
+        households.init()
         downloads.start()
         try:
             yield
         finally:
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.3.6-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.4.0-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -170,7 +174,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.3.6-dev"}
+                "version": "0.4.0-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -193,6 +197,55 @@ def create_app(data_dir=None):
     def require_admin(request):
         if not admin_session(request):
             raise HTTPException(401, "Administrator login required")
+
+    @api.get("/api/households")
+    def household_directory():
+        # Shared LAN resource directory; no member contact information or credentials.
+        with db() as con:
+            if not con.execute("SELECT 1 FROM admin WHERE id=1").fetchone():
+                raise HTTPException(403,"Complete initial setup first")
+        return households.view()
+
+    class HouseholdRequest(BaseModel):
+        id: int | None = Field(default=None,gt=0)
+        name: str = Field(min_length=1,max_length=80)
+
+    class LocationRequest(BaseModel):
+        id: int | None = Field(default=None,gt=0)
+        module: str = Field(max_length=16)
+        native_id: str = Field(min_length=1,max_length=64)
+        label: str = Field(min_length=1,max_length=120)
+        owner_id: int | None = Field(default=None,gt=0)
+        storage_id: int | None = Field(default=None,gt=0)
+
+    class DeleteRequest(BaseModel):
+        id: int = Field(gt=0)
+
+    def household_change(request,operation):
+        require_admin(request)
+        same_origin(request)
+        try:
+            return {"id":operation()}
+        except ValueError as exc:
+            raise HTTPException(400,str(exc))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409,"Duplicate record, unknown household, or household still referenced by a location")
+
+    @api.post("/api/admin/households")
+    def household_save(payload: HouseholdRequest,request: Request):
+        return household_change(request,lambda:households.save_household(payload.name,payload.id))
+
+    @api.post("/api/admin/households/delete")
+    def household_delete(payload: DeleteRequest,request: Request):
+        return household_change(request,lambda:households.delete_household(payload.id))
+
+    @api.post("/api/admin/households/locations")
+    def location_save(payload: LocationRequest,request: Request):
+        return household_change(request,lambda:households.save_location(payload.module,payload.native_id,payload.label,payload.owner_id,payload.storage_id,payload.id))
+
+    @api.post("/api/admin/households/locations/delete")
+    def location_delete(payload: DeleteRequest,request: Request):
+        return household_change(request,lambda:households.delete_location(payload.id))
 
     @api.get("/api/admin/content/downloads")
     def content_downloads(request: Request):

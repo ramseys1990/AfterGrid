@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.3.6-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.4.0-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -46,3 +46,7 @@ The administrator content panel now shows local ZIM files and disk space and sea
 Content downloads now use a persistent unprivileged queue and native curl, official Metalink SHA-256 metadata and kiwix-manage indexing. Existing development installations must make content/kiwix writable by UID 10001 (sudo chown -R 10001:10001 /opt/aftergrid/content/kiwix) before enabling downloads. New installs handle this automatically. Catalog entries without a supported official download path or SHA-256 metadata are not supported. Actual upstream download and reader reload validation remain pending. Delete corrupt .part files manually after confirming no job is running; local imports and recoverable removal are available.
 
 Local archive management: copy trusted ZIMs to content/kiwix (USB or LAN transfer outside the portal), refresh local archives, then Add to library. Remove unindexes and retains a copy under .removed; Restore reindexes, and Delete permanently reclaims storage. Local actions are blocked while a download runs. Native tool and reader reload smoke tests use a pinned OpenZIM fixture; live upstream download and physical offline LAN testing remain separate.
+
+## Households
+
+The shared LAN directory supports household names and manual native Homebox/Grocy location references, with separate ownership and storage households. Only the local administrator edits the directory. No personal accounts or duplicate inventory databases. Counts describe mapped locations, not stock quantities. Automatic native API discovery and live reporting are not yet implemented. Do not put sensitive details in the shared labels.

@@ -23,6 +23,7 @@ async function refresh(){
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
     await renderModules();
+    await refreshHouseholds();
   }
 }
 async function renderModules(){
@@ -252,5 +253,84 @@ $("auth").addEventListener("click",async()=>{
   catch(e){error(e.message);}
 });
 $("cancel").addEventListener("click",()=>{error("");view("dashboard");});
-refresh().catch(e=>error(e.message));
 
+
+let directory={households:[],locations:[]};
+function option(select,value,label){
+  const node=document.createElement("option");node.value=value;node.textContent=label;select.append(node);
+}
+function householdOptions(select,first,previous){
+  select.replaceChildren();option(select,"",first);
+  for(const h of directory.households)option(select,String(h.id),h.name);
+  select.value=[...select.options].some(o=>o.value===previous)?previous:"";
+}
+function directoryButton(parent,label,handler){
+  const button=document.createElement("button");button.type="button";button.textContent=label;
+  button.addEventListener("click",async()=>{try{await handler();}catch(e){$("household-message").textContent=e.message;}});
+  parent.append(button);
+}
+async function changeDirectory(path,payload){
+  await api("/api/admin/households"+path,payload);
+  $("household-message").textContent="Saved.";
+  await refreshHouseholds();
+}
+function renderDirectory(){
+  const filter=$("household-filter").value;
+  const admin=!!status?.admin;
+  $("household-editor").hidden=!admin;
+  if(!admin){$("household-form").reset();$("location-form").reset();$("household-message").textContent="";}
+  const root=$("household-list");root.replaceChildren();
+  for(const h of directory.households){
+    if(filter&&String(h.id)!==filter)continue;
+    const card=document.createElement("article"),title=document.createElement("strong"),summary=document.createElement("p");
+    title.textContent=h.name;
+    const owned=directory.locations.filter(l=>l.owner_id===h.id).length;
+    const stored=directory.locations.filter(l=>l.storage_id===h.id).length;
+    summary.textContent=owned+" owned location references · "+stored+" storage location references (not item counts)";
+    card.append(title,summary);
+    if(admin){
+      directoryButton(card,"Edit",()=>{const form=$("household-form");form.elements.id.value=h.id;form.elements.name.value=h.name;form.scrollIntoView();});
+      directoryButton(card,"Delete",async()=>{if(confirm("Delete this household? Remove or reassign its location references first."))await changeDirectory("/delete",{id:h.id});});
+    }
+    root.append(card);
+  }
+  if(!directory.households.length)root.textContent="No households configured yet.";
+  const locations=$("location-list");locations.replaceChildren();
+  for(const l of directory.locations){
+    if(filter&&String(l.owner_id)!==filter&&String(l.storage_id)!==filter)continue;
+    const card=document.createElement("article"),title=document.createElement("strong"),detail=document.createElement("p"),ref=document.createElement("small");
+    title.textContent=l.label+" · "+l.module;
+    detail.textContent="Ownership: "+(l.owner_name||"Shared / unassigned")+" · Stored at: "+(l.storage_name||"Shared / unassigned");
+    ref.textContent="Native location ID: "+l.native_id;card.append(title,detail,ref);
+    if(admin){
+      directoryButton(card,"Edit reference",()=>{const form=$("location-form");for(const key of ["id","module","native_id","label","owner_id","storage_id"])form.elements[key].value=l[key]??"";form.scrollIntoView();});
+      directoryButton(card,"Remove reference",async()=>{if(confirm("Remove this AfterGrid reference only? Native inventory is not changed."))await changeDirectory("/locations/delete",{id:l.id});});
+    }
+    locations.append(card);
+  }
+  if(!locations.children.length)locations.textContent="No mapped locations for this view.";
+}
+async function refreshHouseholds(){
+  directory=await api("/api/households");
+  const filter=$("household-filter");
+  householdOptions(filter,"All households",filter.value);
+  for(const key of ["owner_id","storage_id"]){
+    const select=$("location-form").elements[key];householdOptions(select,"Shared / unassigned",select.value);
+  }
+  renderDirectory();
+}
+$("household-filter").addEventListener("change",renderDirectory);
+$("household-refresh").addEventListener("click",()=>refreshHouseholds().catch(e=>{$("household-message").textContent=e.message;}));
+$("household-reset").addEventListener("click",()=>$("household-form").reset());
+$("location-reset").addEventListener("click",()=>$("location-form").reset());
+$("household-form").addEventListener("submit",async event=>{
+  event.preventDefault();const form=event.currentTarget;const v=Object.fromEntries(new FormData(form));
+  try{await changeDirectory("",{id:v.id?Number(v.id):null,name:v.name});form.reset();}catch(e){$("household-message").textContent=e.message;}
+});
+$("location-form").addEventListener("submit",async event=>{
+  event.preventDefault();const form=event.currentTarget;const v=Object.fromEntries(new FormData(form));
+  for(const key of ["id","owner_id","storage_id"])v[key]=v[key]?Number(v[key]):null;
+  try{await changeDirectory("/locations",v);form.reset();}catch(e){$("household-message").textContent=e.message;}
+});
+
+refresh().catch(e=>error(e.message));
