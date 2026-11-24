@@ -29,7 +29,7 @@ jobs:
           export AFTERGRID_ROOT="$PWD"
           export AFTERGRID_BIND=127.0.0.1 AFTERGRID_PORT=8080 AFTERGRID_ORIGIN=http://127.0.0.1:8080
           export SMOKE_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(24))')"
-          mkdir -p data/core content/kiwix content/maps
+          mkdir -p data/core content/kiwix content/maps content/routing
           cp modules/kiwix/library.xml content/kiwix/library.xml
           # Small, pinned OpenZIM upstream fixture; no live catalog dependency.
           curl --fail --silent --show-error --location --max-time 60 https://raw.githubusercontent.com/openzim/zim-testing-suite/2edf72096208e60c82b6ebbe313baa552cc6af52/data/withns/wikibooks_be_all_nopic_2017-02.zim -o content/kiwix/fixture.zim
@@ -38,13 +38,15 @@ jobs:
           curl --fail --silent --show-error --location --max-time 60 "https://raw.githubusercontent.com/protomaps/PMTiles/aec8fa1341222fdddb3318e9ffa8e18e19b312f7/spec/v3/stamen_toner(raster)CC-BY%2BODbL_z3.pmtiles" -o "$RUNNER_TEMP/aftergrid-map-fixture.pmtiles"
           test "$(git hash-object "$RUNNER_TEMP/aftergrid-map-fixture.pmtiles")" = 8d170ca89ecf3197d14366db63679f198a198101
           export MAP_FIXTURE="$RUNNER_TEMP/aftergrid-map-fixture.pmtiles"
+          curl --fail --silent --show-error --location --max-time 60 https://raw.githubusercontent.com/valhalla/valhalla/3.9.3/test/data/liechtenstein-latest.osm.pbf -o content/routing/region.osm.pbf
+          test "$(git hash-object content/routing/region.osm.pbf)" = 2c5877699db20b0b5bdab999586528c3ddb0ae63
           printf '%s\n' "$SMOKE_TOKEN" > data/core/setup-token
-          sudo chown -R 10001:10001 data/core content/kiwix content/maps
+          sudo chown -R 10001:10001 data/core content/kiwix content/maps content/routing
           sudo chmod 700 data/core
           sudo chmod 600 data/core/setup-token
           cleanup() {
             export HBOX_AUTH_API_KEY_PEPPER=cleanup-placeholder KOPIA_UI_PASSWORD=cleanup-placeholder KOPIA_PASSWORD=cleanup-placeholder
-            for module in kiwix homebox grocy kopia maps; do
+            for module in kiwix homebox grocy kopia maps routing; do
               docker compose -p "aftergrid-$module" -f "modules/$module/compose.yaml" down || true
             done
             docker compose logs --tail 50 || true

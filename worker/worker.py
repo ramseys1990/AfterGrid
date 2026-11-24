@@ -293,6 +293,8 @@ def execute(row):
         if ident not in catalog() or action not in ACTIONS:
             raise ValueError("Unsupported job")
         steps = stages(action)
+        if ident == "routing" and action in {"install","update"}:
+            steps.insert(2, ("Prepare regional routing graph", ("run", "--rm", "--no-deps", "-T", "--entrypoint", "/bin/sh", "routing", "/aftergrid/build.sh")))
         change(job, state="running", total=len(steps), completed=0)
         if action in {"share","unshare"}:
             if not catalog()[ident].get("lan_shareable"):

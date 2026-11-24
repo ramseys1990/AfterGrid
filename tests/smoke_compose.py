@@ -171,3 +171,19 @@ action("uninstall","maps")
 assert module("maps")["status"]=="not installed"
 assert Path("content/maps/region.pmtiles").is_file()
 print("Maps empty startup, local tile serving and lifecycle passed; map archive retained.")
+
+# Native graph build and route calculation using the small pinned OSM fixture.
+action("install","routing")
+assert module("routing")["status"]=="running"
+for mode in ("auto","pedestrian","bicycle"):
+    result=api("/api/maps/route",{"start":[9.5209,47.1394],"end":[9.5238,47.1417],"mode":mode})
+    assert result["distance_km"]>0 and result["duration_seconds"]>0 and len(result["coordinates"])>=2
+    assert result["instructions"]
+action("stop","routing")
+assert module("routing")["status"]=="stopped"
+action("start","routing")
+assert module("routing")["status"]=="running"
+action("uninstall","routing")
+assert module("routing")["status"]=="not installed"
+assert Path("content/routing/tiles/.aftergrid-ready").is_file()
+print("Native routing graph, three costing modes and lifecycle passed.")

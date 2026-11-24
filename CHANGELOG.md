@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4-dev
+- Optional Valhalla module with native regional graph preparation and preserved routing tiles; no directly exposed backend port.
+- Local same-origin route planning for driving, walking and cycling, coordinate selection, route overlay and directions.
+- Add response bounds, polyline decoding, access tests and native graph/mode smoke tests. Results pending.
+
+
 ## 0.5.3-dev
 - Fix styled map asset build by bundling pinned upstream license notices rather than assuming npm packages include their source licenses.
 - Add offline geographic overview, drag selection, numeric fields and initial regional presets using pinned Natural Earth land data.

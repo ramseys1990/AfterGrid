@@ -1,0 +1,10 @@
+{
+  "id": "routing",
+  "name": "Offline routing",
+  "category": "Navigation",
+  "description": "Valhalla driving, walking and cycling directions using a locally built road graph.",
+  "port": 8002,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-routing:8002/status",
+  "setup_note": "Before installing, copy a regional OpenStreetMap PBF to content/routing/region.osm.pbf. Installation builds the graph once, using native Valhalla tools. Route planning is available through the styled map page. Existing graphs are preserved."
+}

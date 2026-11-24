@@ -66,6 +66,7 @@ chmod 0755 "$ROOT"
 install -d -m 0700 -o 10001 -g 10001 "$ROOT/data/core"
 install -d -m 0755 -o 10001 -g 10001 "$ROOT/content/kiwix"
 install -d -m 0755 -o 10001 -g 10001 "$ROOT/content/maps"
+install -d -m 0755 -o 10001 -g 10001 "$ROOT/content/routing"
 install -m 0644 -o 10001 -g 10001 "$ROOT/modules/kiwix/library.xml" "$ROOT/content/kiwix/library.xml"
 token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 printf '%s\n' "$token" > "$ROOT/data/core/setup-token"

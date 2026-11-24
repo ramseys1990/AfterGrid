@@ -1,1 +1,3 @@
 html,body{height:100%;margin:0;font-family:system-ui,sans-serif;color:#e8efe8;background:#17241c}body{display:flex;flex-direction:column}header,footer{padding:.65rem;display:flex;gap:.8rem;align-items:center;flex-wrap:wrap;font-size:.9rem}header a,footer a{color:#b9dcaa}#map{flex:1;min-height:0}#map-status{font-size:.85rem}footer{font-size:.75rem}
+
+#route-panel{padding:.45rem .7rem;max-height:42vh;overflow:auto;background:#203126}#route-form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:end}#route-form label{display:grid;gap:.2rem;font-size:.8rem}#route-form input,#route-form select,#route-form button{font:inherit;padding:.4rem;max-width:100%}#route-message{font-size:.85rem;padding-top:.3rem}#route-directions{font-size:.85rem}

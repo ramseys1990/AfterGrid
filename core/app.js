@@ -38,7 +38,7 @@ async function renderModules(){
       if(mod.installable && mod.status==="running" && (!mod.admin_only||status.admin) && (!mod.loopback_only||(mod.shared&&mod.lan_url)||["127.0.0.1","localhost"].includes(location.hostname))){
         const link=document.createElement("a");
         const url=new URL(mod.shared&&mod.lan_url?mod.lan_url:location.href);if(mod.loopback_only)url.protocol="http:";url.port=mod.port;url.pathname="/";url.search="";url.hash="";
-        link.href=url.href;link.textContent=mod.id==="maps"?"Open native tile viewer":"Open application";link.target="_blank";link.rel="noopener noreferrer";card.append(link);
+        link.href=mod.id==="routing"?"/maps":url.href;link.textContent=mod.id==="routing"?"Open route planner":mod.id==="maps"?"Open native tile viewer":"Open application";link.target="_blank";link.rel="noopener noreferrer";card.append(link);
         if(mod.id==="maps"){const styled=document.createElement("a");styled.href="/maps";styled.textContent="Open styled offline map";card.append(styled);}
       }
       if(status.admin && mod.installable){

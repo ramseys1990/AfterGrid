@@ -26,6 +26,7 @@ try:
     from .households import Households
     from .inventory import Inventory, InventoryError
     from .map_downloads import MapDownloads
+    from .routing import route, RouteError
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
@@ -33,6 +34,7 @@ except ImportError:
     from households import Households
     from inventory import Inventory, InventoryError
     from map_downloads import MapDownloads
+    from routing import route, RouteError
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -114,7 +116,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.3-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.5.4-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -171,6 +173,24 @@ def create_app(data_dir=None):
     def javascript():
         return FileResponse(ROOT / "app.js", media_type="text/javascript")
 
+    class RouteRequest(BaseModel):
+        start: list[float] = Field(min_length=2,max_length=2)
+        end: list[float] = Field(min_length=2,max_length=2)
+        mode: str = Field(max_length=16)
+
+    @api.post("/api/maps/route")
+    def map_route(payload: RouteRequest,request: Request):
+        same_origin(request)
+        with db() as con:
+            if not con.execute("SELECT 1 FROM admin WHERE id=1").fetchone():
+                raise HTTPException(403,"Complete initial setup first")
+        try:
+            return route(payload.start,payload.end,payload.mode)
+        except ValueError as exc:
+            raise HTTPException(400,str(exc))
+        except RouteError as exc:
+            raise HTTPException(503,str(exc))
+
     @api.get("/maps")
     def map_view():
         return FileResponse(ROOT / "maps.html")
@@ -213,7 +233,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.3-dev"}
+                "version": "0.5.4-dev"}
 
     @api.get("/api/modules")
     def modules():

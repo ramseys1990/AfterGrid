@@ -1,0 +1,31 @@
+services:
+  routing:
+    image: ghcr.io/valhalla/valhalla:3.9.3
+    entrypoint: ["/bin/sh", "/aftergrid/serve.sh"]
+    user: "10001:10001"
+    init: true
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/content/routing
+        target: /routing
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/modules/routing
+        target: /aftergrid
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      apps:
+        aliases: [aftergrid-routing]
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps
