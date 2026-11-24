@@ -111,9 +111,15 @@ def main(fixture):
             post_job(old,"/api/admin/kopia/initialize",{"confirmed":True})
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             inventory=tmp/"inventory.json"
+            other=client()
+            call(other,"/api/login",creds)
             def capture_call(path,payload=None):
                 status=202 if payload is not None and "/recovery-maintenance/" not in path else 200
-                return call(old,path,payload,status)
+                result=call(old,path,payload,status)
+                if path.endswith("/recovery-maintenance/begin"):
+                    assert call(other,"/api/admin/backups/core/snapshot",{"confirmed":True},409)["detail"]
+                    assert call(old,"/api/admin/households",{"name":"Must be blocked"},409)["detail"]
+                return result
             capture=recover.guarded_capture(capture_call,["kiwix"],job_timeout=240)
             assert call(old,"/api/admin/recovery-maintenance")["phase"]=="sealed"
             assert call(old,"/api/admin/households",{"name":"Must be blocked"},409)["detail"]
@@ -167,6 +173,7 @@ def main(fixture):
             assert not call(old,"/api/status")["admin"]
             fresh=client()
             assert call(fresh,"/api/status")["recovery_core_only"]
+            assert not call(fresh,"/api/status")["recovery_maintenance"]
             call(fresh,"/api/login",creds)
             assert call(fresh,"/api/households")["households"][0]["name"]=="Guided household"
             assert call(fresh,"/api/admin/kopia/status")["connection"]=="connected"
