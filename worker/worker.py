@@ -2,6 +2,8 @@
 import http.server
 import http.cookiejar
 import base64
+import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -23,7 +25,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot", "worker-verify-snapshot"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -171,7 +173,7 @@ def enqueue(ident, action, backup_confirmed=False):
         raise ValueError("Unsupported module or action")
     if action in ("snapshot","verify-snapshot") and ident not in SNAPSHOT_SOURCES:
         raise ValueError("Application snapshot not yet supported")
-    if action in ("initialize-repository","core-snapshot","core-verify-snapshot","worker-snapshot") and ident!="kopia":
+    if action in ("initialize-repository","core-snapshot","core-verify-snapshot","worker-snapshot","worker-verify-snapshot") and ident!="kopia":
         raise ValueError("Kopia-only action")
     if action == "update" and (backup_confirmed is not True or ident == "routing"):
         raise ValueError("Update requires backup confirmation and a supported module")
@@ -528,6 +530,7 @@ def worker_snapshot(job):
     change(job,state="running",total=3,completed=0,stage="Check repository and export worker state")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
     payload,count=worker_recovery_payload(job)
+    checksum=hashlib.sha256(payload).hexdigest()
     env=compose_env("kopia")
     def stage(script,stdin=None):
         try:
@@ -543,6 +546,7 @@ def worker_snapshot(job):
         change(job,completed=2,stage="Create native encrypted worker snapshot")
         snapshot_id=native_snapshot_source(WORKER_EXPORT_SOURCE)
         log(job,"\nWorker state export snapshot: "+snapshot_id+"; "+str(count)+" secret sets; restore not verified.\n")
+        log(job,"Worker recovery envelope SHA-256: "+checksum+"\n")
     finally:
         change(job,stage="Remove private worker export")
         stage('test -d "$1" && test ! -L "$1" && test -f "$1/job-id" && test ! -L "$1/job-id" && test "$(cat "$1/job-id")" = "$2" && test -f "$1/worker-recovery.json" && test ! -L "$1/worker-recovery.json" && test "$(find "$1" -mindepth 1 -maxdepth 1 | wc -l)" -eq 2 && rm "$1/worker-recovery.json" "$1/job-id" && rmdir "$1"')
@@ -555,6 +559,8 @@ CORE_TABLES={"admin","sessions","first_run","households","inventory_locations",
 def managed_snapshot_record(ident):
     if ident=="core":
         module,action,pattern="kopia","core-snapshot",r"Core database export snapshot: ([a-f0-9]{32,64});"
+    elif ident=="worker":
+        module,action,pattern="kopia","worker-snapshot",r"Worker state export snapshot: ([a-f0-9]{32,64});"
     elif ident in SNAPSHOT_SOURCES:
         module,action,pattern=ident,"snapshot",r"Native snapshot reported complete: ([a-f0-9]{32,64});"
     else:
@@ -570,7 +576,7 @@ def latest_managed_snapshot(ident):
     return managed_snapshot_record(ident)[1]
 
 def restore_manifest(ident,snapshot_id):
-    source=CORE_SNAPSHOT_SOURCE if ident=="core" else SNAPSHOT_SOURCES[ident]
+    source=CORE_SNAPSHOT_SOURCE if ident=="core" else WORKER_EXPORT_SOURCE if ident=="worker" else SNAPSHOT_SOURCES[ident]
     try:
         raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","30s","/bin/kopia",
             "snapshot","list","--json","--json-verbose","--manifest-id","--max-results=50",source),
@@ -624,11 +630,54 @@ def check_restored_homebox(data):
 def check_restored_core(data):
     check_restored_database(data,CORE_TABLES,core=True)
 
+def check_restored_worker(payload,source_job,expected_checksum):
+    """Validate the captured envelope without printing or applying any secret."""
+    try:
+        if not isinstance(payload,bytes) or not 0<len(payload)<=WORKER_EXPORT_LIMIT:
+            raise ValueError("Worker envelope size")
+        if not hmac.compare_digest(hashlib.sha256(payload).hexdigest(),expected_checksum):
+            raise ValueError("Worker envelope digest")
+        value=json.loads(payload)
+        if not isinstance(value,dict) or set(value)!={"format","job","jobs_sqlite3","secrets"} or type(value["format"]) is not int or value["format"]!=1 or type(value["job"]) is not int or value["job"]!=source_job:
+            raise ValueError("Worker envelope format")
+        reviewed={ident:set(m.get("generated_secrets",[])) for ident,m in catalog().items() if m.get("generated_secrets")}
+        recovered=value["secrets"]
+        if not isinstance(recovered,dict) or "kopia" not in recovered or not set(recovered)<=set(reviewed):
+            raise ValueError("Worker secret sets")
+        for ident,fields in recovered.items():
+            if not isinstance(fields,dict) or set(fields)!=reviewed[ident] or not all(isinstance(v,str) and re.fullmatch(r"[a-f0-9]{64}",v) for v in fields.values()):
+                raise ValueError("Worker secret fields")
+        data=base64.b64decode(value["jobs_sqlite3"],validate=True)
+        if not 0<len(data)<=WORKER_DB_LIMIT or not data.startswith(b"SQLite format 3\x00"):
+            raise ValueError("Worker database size or format")
+        with tempfile.TemporaryDirectory(prefix="aftergrid-worker-check-") as tmp:
+            path=Path(tmp)/"jobs.sqlite3"
+            path.write_bytes(data)
+            deadline=time.monotonic()+15
+            with sqlite3.connect(path.as_uri()+"?mode=ro&immutable=1",uri=True) as conn:
+                conn.execute("PRAGMA trusted_schema=OFF")
+                conn.set_progress_handler(lambda: int(time.monotonic()>deadline),10000)
+                if conn.execute("PRAGMA integrity_check").fetchmany(2)!=[("ok",)]:raise ValueError("Worker database integrity")
+                if not {"jobs","sharing","batches"}<={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}:raise ValueError("Worker database schema")
+                if conn.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running')").fetchone()!=(0,):raise ValueError("Unsafe pending jobs")
+                if conn.execute("SELECT COUNT(*) FROM jobs WHERE id=? AND module='kopia' AND action='worker-snapshot' AND state='interrupted'",(source_job,)).fetchone()!=(1,):raise ValueError("Worker snapshot job missing")
+        return len(recovered)
+    except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):
+        raise RuntimeError("Worker recovery envelope verification failed; inspect private restored files") from None
+
+def worker_export_checksum(source_job):
+    with db() as conn:
+        row=conn.execute("SELECT log FROM jobs WHERE id=? AND module='kopia' AND action='worker-snapshot' AND state='succeeded'",(source_job,)).fetchone()
+    match=re.search(r"Worker recovery envelope SHA-256: ([a-f0-9]{64})",row["log"]) if row else None
+    if not match:raise RuntimeError("Worker snapshot has no recorded export digest; create a new managed snapshot")
+    return match.group(1)
+
 def verify_snapshot(job,ident):
-    if ident!="core" and ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported restore verification")
+    if ident not in {"core","worker"} and ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported restore verification")
     change(job,state="running",total=4,completed=0,stage="Locate latest managed snapshot")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
     source_job,snapshot_id=managed_snapshot_record(ident)
+    expected_checksum=worker_export_checksum(source_job) if ident=="worker" else None
     root=restore_manifest(ident,snapshot_id)
     # Each verification gets a new private directory, never a live data mount.
     target="/restore/aftergrid-"+ident+"-"+str(job)+"-"+secrets.token_hex(8)
@@ -644,7 +693,18 @@ def verify_snapshot(job,ident):
         execute("timeout","--kill-after=10s","300s","/bin/kopia","restore","--no-overwrite-files",
                 "--no-overwrite-symlinks","--no-ignore-permission-errors",root,target+"/data",timeout=330)
         change(job,completed=3,stage="Verify restored application data")
-        if ident=="notes":
+        if ident=="worker":
+            marker=execute("/bin/sh","-c",
+                'p="$1/data"; f="$p/job-id"; test -d "$1" && test ! -L "$1" && test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && test "$(stat -c %s "$f")" -le 19 && cat "$f"',
+                "check-worker-marker",target)
+            if marker!=str(source_job).encode("ascii"):raise RuntimeError("Restored worker export job marker mismatch")
+            payload=execute("/bin/sh","-c",
+                'p="$1/data"; f="$p/worker-recovery.json"; test -d "$1" && test ! -L "$1" && test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && size=$(stat -c %s "$f") && test "$size" -le 50331648 && cat "$f"',
+                "check-worker-envelope",target,timeout=30)
+            count=check_restored_worker(payload,source_job,expected_checksum)
+            del payload
+            result="Exact worker envelope digest, database integrity, interrupted jobs and "+str(count)+" reviewed secret sets verified"
+        elif ident=="notes":
             # Verify native setup/ACL files and at least one regular page without
             # evaluating PHP, logging account data or following symlink directories.
             execute("/bin/sh","-c",
@@ -912,6 +972,10 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="worker-verify-snapshot":
+            if ident!="kopia":raise ValueError("Kopia-only action")
+            verify_snapshot(job,"worker")
+            return
         if action=="worker-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
             worker_snapshot(job)

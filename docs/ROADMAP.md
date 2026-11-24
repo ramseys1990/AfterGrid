@@ -77,3 +77,5 @@ Preparedness: shared LAN landing-page indicators for indexed knowledge, local ma
 0.8.8: previous expanded application backups and online core export passed CI 45485912415 / 45486710318. Add isolated core snapshot restoration with exact job marker, schema, administrator and absent session checks. CI pending. Next: worker-state consistent recovery export and verification, including generated secrets.
 
 0.8.9: worker state and generated secret consistent export and encrypted Kopia snapshot implemented, no pending job replay, no new mounts, private staging cleanup; CI pending. Core isolated restoration workflow still running at start. Next verify worker export restoration and then expand remaining app coverage.
+
+0.8.10: isolated worker-state restore, exact envelope SHA-256, job marker, database integrity and no pending replay checks; CI verifies original generated secret values without logging them. CI pending. Previous core restore and worker snapshot unit/build checks passed; native smoke still running at start of this slice. Next expand managed application coverage and plan clean-machine recovery.

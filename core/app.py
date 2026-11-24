@@ -133,7 +133,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.9-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.10-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -836,6 +836,20 @@ def create_app(data_dir=None):
             raise HTTPException(503,"Module manager unavailable")
         if code!=202:
             raise HTTPException(code if code in (400,409) else 502,result.get("detail","Worker snapshot unavailable"))
+        return result
+
+    @api.post("/api/admin/backups/worker/verify-snapshot",status_code=202)
+    def worker_verify_snapshot(payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:
+            raise HTTPException(409,"Confirm isolated private worker restoration")
+        try:
+            code,result=call("/jobs",{"module":"kopia","action":"worker-verify-snapshot"})
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=202:
+            raise HTTPException(code if code in (400,409) else 502,result.get("detail","Worker restore verification unavailable"))
         return result
 
     @api.get("/api/admin/backups/core")

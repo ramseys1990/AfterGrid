@@ -235,6 +235,16 @@ $("backup-worker-snapshot").addEventListener("click",async()=>{
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{button.disabled=false;}
 });
+$("backup-worker-verify").addEventListener("click",async()=>{
+  if(!confirm("Restore the latest successful worker snapshot into a NEW private directory and verify the original export digest, database and generated secret sets. The restored envelope contains plaintext credentials. Keep it private and remove it manually when no longer needed. No live secrets or database will be changed. Continue?"))return;
+  const button=$("backup-worker-verify"),root=$("backup-core-result");
+  button.disabled=true;
+  try{
+    await api("/api/admin/backups/worker/verify-snapshot",{confirmed:true});
+    if(status?.admin){root.textContent="Worker restore verification queued. See installation activity.";await renderJobs();}
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
 $("backup-core-check").addEventListener("click",async()=>{
   const button=$("backup-core-check"),root=$("backup-core-result");
   button.disabled=true;root.textContent="Reading core backup requirements…";

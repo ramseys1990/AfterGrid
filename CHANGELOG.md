@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.10-dev
+- Verify isolated worker-state restores against an exact captured envelope digest, job markers, SQLite integrity and reviewed secret sets; reject queued/running jobs in the copy.
+- Add admin-only control and disposable original-secret comparison without exposing values. CI pending; no live recovery application.
+
 ## 0.8.9-dev
 - Add private worker database and reviewed generated-secret export into native encrypted Kopia snapshots, without mounting worker state into Kopia.
 - Mark unfinished jobs interrupted in the exported copy, bound size and time, transfer via stdin and clean owned staging.

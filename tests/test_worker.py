@@ -514,3 +514,38 @@ def test_worker_snapshot_uses_private_stdin_and_cleans_on_failure(tmp_path,monke
     assert len(calls)==2 and calls[0][1]["input"]==b"fixture-private-bytes" and calls[1][1]["input"] is None
     assert all("fixture-private-bytes" not in arg for argv,_ in calls for arg in argv)
     assert "fixture-private-bytes" not in worker.jobs()[0]["log"]
+
+
+def test_worker_restore_envelope_exact_and_safe(tmp_path,monkeypatch):
+    import hashlib,json,base64,sqlite3
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    worker.module_secrets("kopia",create=True)
+    worker.module_secrets("homebox",create=True)
+    j=worker.enqueue("kopia","worker-snapshot")
+    worker.change(j,state="running")
+    payload,count=worker.worker_recovery_payload(j)
+    digest=hashlib.sha256(payload).hexdigest()
+    assert worker.check_restored_worker(payload,j,digest)==count==2
+    with pytest.raises(RuntimeError):worker.check_restored_worker(payload+b" ",j,digest)
+    with pytest.raises(RuntimeError):worker.check_restored_worker(payload,j+1,digest)
+    value=json.loads(payload)
+    value["secrets"]["homebox"]["HBOX_AUTH_API_KEY_PEPPER"]="invalid"
+    bad=json.dumps(value).encode()
+    with pytest.raises(RuntimeError):worker.check_restored_worker(bad,j,hashlib.sha256(bad).hexdigest())
+    value=json.loads(payload)
+    path=tmp_path/"restored-worker.db"
+    path.write_bytes(base64.b64decode(value["jobs_sqlite3"]))
+    with sqlite3.connect(path) as conn:conn.execute("UPDATE jobs SET state='queued'")
+    value["jobs_sqlite3"]=base64.b64encode(path.read_bytes()).decode()
+    bad=json.dumps(value).encode()
+    with pytest.raises(RuntimeError):worker.check_restored_worker(bad,j,hashlib.sha256(bad).hexdigest())
+    worker.log(j,"Worker state export snapshot: "+"a"*32+"; 2 secret sets; restore not verified.")
+    worker.change(j,state="succeeded")
+    assert worker.managed_snapshot_record("worker")== (j,"a"*32)
+    with pytest.raises(RuntimeError):worker.worker_export_checksum(j)
+    worker.log(j,"Worker recovery envelope SHA-256: "+digest)
+    assert worker.worker_export_checksum(j)==digest
+    with pytest.raises(ValueError):worker.enqueue("grocy","worker-verify-snapshot")

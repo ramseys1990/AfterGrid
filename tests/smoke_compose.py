@@ -158,6 +158,17 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         assert subprocess.run(["docker","exec","aftergrid-kopia-kopia-1","test","!","-e","/tmp/aftergrid-worker-export"]).returncode==0
         assert api("/api/admin/status")
         print("Private worker state and generated secret snapshot, staging cleanup passed.",flush=True)
+        worker_verify=api("/api/admin/backups/worker/verify-snapshot",{"confirmed":True})["id"]
+        wait_job(worker_verify,"isolated worker restore verification")
+        worker_restored=next(j for j in api("/api/admin/jobs") if j["id"]==worker_verify)
+        assert "Exact worker envelope digest" in worker_restored["log"] and "2 reviewed secret sets verified" in worker_restored["log"]
+        target=re.search(r"Isolated restore directory: (/restore/aftergrid-worker-[0-9]+-[a-f0-9]{16})",worker_restored["log"]).group(1)
+        # Compare actual captured native secrets without printing either copy.
+        envelope=subprocess.check_output(["sudo","cat",str(Path("restore")/target.removeprefix("/restore/")/"data/worker-recovery.json")])
+        check=subprocess.run(["docker","compose","exec","-T","worker","python3","-c","import json,sys,pathlib,hmac; v=json.load(sys.stdin); assert set(v[\"secrets\"])=={\"homebox\",\"kopia\"}; assert all(hmac.compare_digest(secret,json.loads((pathlib.Path(\"/worker-state/secrets\")/(ident+\".json\")).read_text())[key]) for ident,fields in v[\"secrets\"].items() for key,secret in fields.items())"],input=envelope,capture_output=True)
+        assert check.returncode==0,"restored worker secret comparison failed"
+        del envelope,check
+        print("Isolated worker recovery and exact generated secret comparison passed.",flush=True)
         action("install","grocy")
         snapshot_job=api("/api/admin/modules/grocy/snapshot",{"confirmed":True})["id"]
         wait_job(snapshot_job,"quiesced Grocy snapshot")
