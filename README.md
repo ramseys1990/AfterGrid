@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.8.4-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.8.5-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -98,3 +98,5 @@ Optional online registry checks compare the exact reviewed image reference with 
 Kopia repository setup supports explicit creation at the configured empty local destination and native connection status. Existing repository connection remains in Kopia; no snapshots or restore verification are implied.
 
 Initial managed Grocy snapshots use a clean maintenance stop and native Kopia, restoring previous running state on ordinary failure. Restore verification and other application coverage remain pending.
+
+Grocy restore verification uses a fresh isolated destination and SQLite integrity checks; production data is never replaced. Native application startup and clean-machine recovery remain unverified.

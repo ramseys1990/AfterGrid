@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import tempfile
 import urllib.request
 import urllib.error
 from contextlib import contextmanager
@@ -21,7 +22,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -167,7 +168,7 @@ def enqueue(ident, action, backup_confirmed=False):
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
-    if action=="snapshot" and ident not in SNAPSHOT_SOURCES:
+    if action in ("snapshot","verify-snapshot") and ident not in SNAPSHOT_SOURCES:
         raise ValueError("Application snapshot not yet supported")
     if action == "initialize-repository" and ident!="kopia":
         raise ValueError("Kopia-only action")
@@ -410,6 +411,87 @@ def snapshot_application(job,ident):
                 raise RuntimeError("Application restart not confirmed; inspect and start manually") from None
     change(job,completed=4,state="succeeded",stage="Snapshot reported complete; restore not verified")
 
+def latest_managed_snapshot(ident):
+    with db() as conn:
+        row=conn.execute("SELECT id,log FROM jobs WHERE module=? AND action='snapshot' AND state='succeeded' ORDER BY id DESC LIMIT 1",(ident,)).fetchone()
+    if not row:raise RuntimeError("No successful managed snapshot recorded")
+    match=re.search(r"Native snapshot reported complete: ([a-f0-9]{32,64});",row["log"])
+    if not match:raise RuntimeError("Managed snapshot ID unavailable")
+    return match.group(1)
+
+def restore_manifest(ident,snapshot_id):
+    source=SNAPSHOT_SOURCES[ident]
+    try:
+        raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","30s","/bin/kopia",
+            "snapshot","list","--json","--manifest-id","--max-results=50",source),
+            env=compose_env("kopia"),capture_output=True,text=True,timeout=40,check=True).stdout
+        if len(raw)>4*1024*1024:raise ValueError("Oversized snapshot list")
+        rows=json.loads(raw)
+        matches=[row for row in rows if row.get("id")==snapshot_id and row.get("source",{}).get("path")==source]
+        if len(matches)!=1:raise ValueError("Snapshot missing or ambiguous")
+        row=matches[0]
+        stats=row["stats"]
+        root=row["rootEntry"]["obj"]
+        if (row.get("incomplete") or not re.fullmatch(r"[IZD]{0,8}[a-z]?[a-f0-9]{32,128}",root)
+                or any(type(stats.get(k)) is not int or stats[k]!=0 for k in
+                       ("errorCount","ignoredErrorCount","excludedFileCount","excludedDirCount"))
+                or type(stats.get("totalSize")) is not int or not 0<stats["totalSize"]<=512*1024*1024):
+            raise ValueError("Snapshot incomplete or exceeds 512 MiB verification limit")
+        return root
+    except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
+        raise RuntimeError("Managed snapshot missing, invalid or exceeds isolated restore limit") from None
+
+def check_restored_grocy(data):
+    if not isinstance(data,bytes) or not 0<len(data)<=64*1024*1024 or not data.startswith(b"SQLite format 3\x00"):
+        raise RuntimeError("Restored database missing, invalid or exceeds verification limit")
+    try:
+        with tempfile.TemporaryDirectory(prefix="aftergrid-db-check-") as tmp:
+            path=Path(tmp)/"grocy.db"
+            path.write_bytes(data)
+            deadline=time.monotonic()+15
+            conn=sqlite3.connect(path.as_uri()+"?mode=ro&immutable=1",uri=True)
+            try:
+                conn.execute("PRAGMA trusted_schema=OFF")
+                conn.set_progress_handler(lambda: int(time.monotonic()>deadline),10000)
+                if conn.execute("PRAGMA integrity_check").fetchmany(2)!=[("ok",)]:
+                    raise RuntimeError("Restored database integrity check failed")
+                tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('products','users')")}
+                if tables!={"products","users"}:
+                    raise RuntimeError("Expected Grocy schema missing")
+            finally:conn.close()
+    except (OSError,sqlite3.Error):
+        raise RuntimeError("Restored database integrity check unavailable") from None
+
+def verify_snapshot(job,ident):
+    if ident!="grocy":raise ValueError("Unsupported restore verification")
+    change(job,state="running",total=4,completed=0,stage="Locate latest managed snapshot")
+    if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
+    snapshot_id=latest_managed_snapshot(ident)
+    root=restore_manifest(ident,snapshot_id)
+    # Each verification gets a new private directory, never a live data mount.
+    target="/restore/aftergrid-grocy-"+str(job)+"-"+secrets.token_hex(8)
+    env=compose_env("kopia")
+    def execute(*args,timeout=20):
+        return subprocess.run(command("kopia","exec","-T","kopia",*args),env=env,
+                              capture_output=True,timeout=timeout,check=True).stdout
+    change(job,completed=1,stage="Prepare private restore directory")
+    try:
+        execute("/bin/sh","-c",'test -d /restore && test ! -L /restore && umask 077 && mkdir "$1"',"restore-target",target)
+        log(job,"\nIsolated restore directory: "+target+"\n")
+        change(job,completed=2,stage="Restore managed snapshot into isolated storage")
+        execute("timeout","--kill-after=10s","300s","/bin/kopia","restore","--no-overwrite-files",
+                "--no-overwrite-symlinks","--no-ignore-permission-errors",root,target+"/data",timeout=330)
+        change(job,completed=3,stage="Verify restored Grocy SQLite database")
+        # Reject symlink traversal, active journals and oversized databases.
+        data=execute("/bin/sh","-c",
+            'p="$1/data/data"; f="$p/grocy.db"; test -d "$1" && test ! -L "$1" && test -d "$1/data" && test ! -L "$1/data" && test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && test ! -e "$f-wal" && test ! -L "$f-wal" && test ! -e "$f-journal" && test ! -L "$f-journal" && size=$(stat -c %s "$f") && test "$size" -le 67108864 && cat "$f"',
+            "check-database",target,timeout=30)
+        check_restored_grocy(data)
+    except (OSError,subprocess.SubprocessError,ValueError):
+        raise RuntimeError("Isolated restore or database read failed; inspect private restore directory") from None
+    log(job,"\nSnapshot "+snapshot_id+" restored; SQLite integrity and expected schema passed. Native application startup not tested.\n")
+    change(job,completed=4,state="succeeded",stage="Isolated restore and SQLite check passed")
+
 def backup_sources(config, root):
     """Classify normalized Compose mounts; no host directory traversal."""
     result=[]
@@ -648,6 +730,9 @@ def execute(row):
             raise ValueError("Unsupported job")
         if action=="snapshot":
             snapshot_application(job,ident)
+            return
+        if action=="verify-snapshot":
+            verify_snapshot(job,ident)
             return
         if action=="initialize-repository":
             if ident!="kopia":raise ValueError("Kopia-only action")

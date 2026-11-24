@@ -340,3 +340,29 @@ def test_snapshot_rejects_partial_or_excluded_manifest(monkeypatch):
         value["stats"][field]=0
     value["incomplete"]="checkpoint"
     with pytest.raises(RuntimeError):worker.native_snapshot("grocy")
+
+
+def test_restored_grocy_database_integrity(tmp_path):
+    import sqlite3
+    path=tmp_path/"grocy.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE products(id INTEGER PRIMARY KEY)")
+        db.execute("CREATE TABLE users(id INTEGER PRIMARY KEY)")
+    worker.check_restored_grocy(path.read_bytes())
+    with pytest.raises(RuntimeError):worker.check_restored_grocy(b"invalid")
+    with sqlite3.connect(path) as db:db.execute("DROP TABLE users")
+    with pytest.raises(RuntimeError):worker.check_restored_grocy(path.read_bytes())
+
+def test_restore_uses_latest_successful_managed_snapshot(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    j=worker.enqueue("grocy","snapshot")
+    worker.log(j,"Native snapshot reported complete: "+"a"*32+"; restore not verified.")
+    worker.change(j,state="succeeded")
+    newer=worker.enqueue("grocy","snapshot")
+    worker.change(newer,state="failed")
+    assert worker.latest_managed_snapshot("grocy")=="a"*32
+    with pytest.raises(ValueError):worker.enqueue("homebox","verify-snapshot")
+    with pytest.raises(RuntimeError):worker.latest_managed_snapshot("homebox")

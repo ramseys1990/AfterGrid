@@ -129,7 +129,10 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         wait_job(job,"create disposable Kopia repository")
         connected=api("/api/admin/kopia/status")
         assert connected=={"connection":"connected","storage_type":"filesystem","snapshot_verified":False},connected
-        assert (Path("backups")/"kopia.repository").is_file()
+        # Reopen from persistent config and repository rather than assuming an
+        # upstream storage marker filename or host-side access permissions.
+        action("restart","kopia")
+        assert api("/api/admin/kopia/status")["connection"]=="connected"
         action("install","grocy")
         snapshot_job=api("/api/admin/modules/grocy/snapshot",{"confirmed":True})["id"]
         wait_job(snapshot_job,"quiesced Grocy snapshot")
@@ -137,6 +140,11 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         record=next(j for j in api("/api/admin/jobs") if j["id"]==snapshot_job)
         assert "Native snapshot reported complete:" in record["log"]
         assert "restore not verified" in record["stage"]
+        restore_job=api("/api/admin/modules/grocy/verify-snapshot",{"confirmed":True})["id"]
+        wait_job(restore_job,"isolated Grocy restore")
+        verification=next(j for j in api("/api/admin/jobs") if j["id"]==restore_job)
+        assert "SQLite integrity and expected schema passed" in verification["log"]
+        assert module("grocy")["status"]=="running"
         action("uninstall","grocy")
     else:
         with urllib.request.urlopen("http://127.0.0.1:"+str(port)+"/",timeout=10) as response:

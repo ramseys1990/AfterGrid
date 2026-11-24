@@ -286,3 +286,21 @@ def test_snapshot_requires_admin_and_confirmation(tmp_path,monkeypatch):
         assert c.post("/api/admin/modules/homebox/snapshot",json={"confirmed":True},headers=ORIGIN).status_code==400
         assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
         assert calls==[("/jobs",{"module":"grocy","action":"snapshot"})]
+
+
+def test_restore_verification_requires_admin_and_confirmation(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake(path,payload=None):
+        calls.append((path,payload))
+        return 202,{"id":6}
+    monkeypatch.setattr(core_app,"call",fake)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/modules/grocy/verify-snapshot"
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==401
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        assert c.post(path,json={"confirmed":True}).status_code==403
+        assert c.post(path,json={"confirmed":False},headers=ORIGIN).status_code==409
+        assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
+        assert calls==[("/jobs",{"module":"grocy","action":"verify-snapshot"})]

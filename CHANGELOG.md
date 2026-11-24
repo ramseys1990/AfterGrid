@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.5-dev
+- Add isolated latest managed Grocy snapshot restoration and SQLite integrity/schema checks, fixed private destinations and bounded native commands.
+- Replace Kopia host marker assertion with native restart/reconnection and extend disposable smoke test to restoration. Prior repository creation reached connected state; smoke stopped at marker assertion.
+- No live data replacement or automatic updates. CI pending.
+
 ## 0.8.4-dev
 - Add initial administrator-confirmed Grocy snapshot workflow with clean stop, native Kopia CLI, bounded runtime, manifest completeness checks and prior-state restart on ordinary failures.
 - Record native snapshot ID without claiming restore verification; reject unsupported apps and partial/excluded snapshots.

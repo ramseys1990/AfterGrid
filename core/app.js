@@ -102,6 +102,16 @@ async function renderModules(){
             catch(e){error(e.message);snapshot.disabled=false;}
           });backup.append(snapshot);
         }
+        if(mod.id==="grocy"){
+          const verify=document.createElement("button");verify.type="button";verify.textContent="Verify latest managed snapshot";
+          verify.disabled=pending.has(mod.id);
+          verify.addEventListener("click",async()=>{
+            if(!confirm("Restore the latest successful managed Grocy snapshot into a NEW private directory under /restore, then check its SQLite database. Live files are not replaced. Confirm space is available and no native backup administration is active. Restored files remain on disk for review. Continue?"))return;
+            verify.disabled=true;
+            try{await api("/api/admin/modules/grocy/verify-snapshot",{confirmed:true});await renderJobs();await renderModules();}
+            catch(e){error(e.message);verify.disabled=false;}
+          });backup.append(verify);
+        }
         card.append(backup);
         const versions=document.createElement("details");
         const summary=document.createElement("summary");summary.textContent="Image versions and update history";
