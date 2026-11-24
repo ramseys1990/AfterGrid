@@ -61,7 +61,8 @@ def test_kopia_credentials_are_admin_only(tmp_path, monkeypatch):
         assert client.post("/api/admin/kopia/credentials",json={},headers={"Origin":"http://127.0.0.1:8080"}).status_code==401
         setup={"username":"admin","password":"long test password","token":"test-token","server_name":"Test"}
         assert client.post("/api/setup",json=setup,headers={"Origin":"http://127.0.0.1:8080"}).status_code==201
-        assert client.get("/api/admin/kopia/credentials").json()["username"]=="aftergrid"
+        assert client.get("/api/admin/kopia/credentials").status_code==405
+        assert client.post("/api/admin/kopia/credentials",json={},headers={"Origin":"http://127.0.0.1:8080"}).json()["username"]=="aftergrid"
 
 
 def test_first_run_selection(tmp_path, monkeypatch):
