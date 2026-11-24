@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.26-dev
+- Add portable recovery package creation, verification and guided restore commands. Require a quiescent source, captured image inventory, exact verified snapshot selection, native manifest presence on copied repository, and deterministic repository byte digest.
+- Extend guided CI to assemble and verify package before and after recovery. Independent capture points remain explicitly non-atomic; CI pending.
+
 ## 0.8.25-dev
 - Add explicit writable Kopia working-copy opt-in before offline activation, with guarded replacement validation and native reconnect/rollback.
 - Permit reviewed managed offline backup jobs only with mapped images, opt-in and confirmed native writable repository. Extend guided CI to new snapshot/restore and source repository hash checks. CI pending.

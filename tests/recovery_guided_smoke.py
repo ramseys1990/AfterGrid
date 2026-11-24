@@ -118,15 +118,21 @@ def main(fixture):
             inventory=tmp/"inventory.json"
             inventory.write_text(json.dumps(call(old,"/api/admin/backups/recovery-manifest")))
             inventory.chmod(0o600)
-            bundle=tmp/"assets"
-            captured=assets.capture(original,bundle)
-            assert assets.verify(bundle)==captured
-            # Quiesce the original repository normally before copying or reading.
-            for ident in ("kiwix","kopia"):post_job(old,"/api/admin/modules/"+ident+"/uninstall")
-            run(cmd,"down","-v")
+            # Stop the original services but retain container image identities.
+            for ident in ("kiwix","kopia"):post_job(old,"/api/admin/modules/"+ident+"/stop")
+            run(cmd,"stop")
             repository=original/"backups"
             before=repository_digest(repository)
             assert before
+            package=tmp/"package"
+            packed=recover.pack(original,inventory,package,["kiwix"],password)
+            assert recover.verify_package(package)==packed and packed["omitted_captured"]==[]
+            assert repository_digest(repository)==before
+            bundle=package/"assets"
+            inventory=package/"inventory.json"
+            # Original is quiescent, and the recovery command reads only the copy.
+            cleanup_modules()
+            run(cmd,"down","-v")
             def reuse_exact_images(directory,confirmed):
                 assert confirmed is True and not assets.docker("ps","--all","--quiet")
                 rows=assets.recovery_image_rows(assets.verify(directory))
@@ -135,7 +141,7 @@ def main(fixture):
                     assets.docker("image","tag",row["image_id"],row["recovery_tag"])
                 return rows
             with patch.object(assets,"import_images",reuse_exact_images):
-                report=recover.recover(root,bundle,repository,inventory,["kiwix"],password)
+                report=recover.recover(root,bundle,package/"repository",inventory,["kiwix"],password)
             assert report["guarded"] and not report["complete_recovery"] and report["repository_readonly"]
             assert report["omitted_captured"]==[]
             assert not call(old,"/api/status")["admin"]
@@ -164,6 +170,8 @@ def main(fixture):
             post_job(fresh,"/api/admin/backups/core/snapshot",{"confirmed":True})
             post_job(fresh,"/api/admin/backups/core/verify-snapshot",{"confirmed":True})
             assert repository_digest(repository)==before
+            assert recover.verify_package(package)==packed
+            print("Coordinated portable package verified before and after recovery.",flush=True)
             print("Recovered writable copy: new managed core snapshot and isolated restore passed.",flush=True)
             print("Guided recovery passed: real native snapshots, exact local images, original login, household, Kiwix bytes and catalog, read-only Kopia reconnect, offline activation and lifecycle, original repository unchanged.",flush=True)
         finally:

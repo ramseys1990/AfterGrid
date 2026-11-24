@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -40,6 +41,104 @@ def core_records(inventory):
     if not re.fullmatch(r"[a-f0-9]{64}",records["worker"].get("envelope_sha256") or ""):
         raise ValueError("Worker envelope digest required")
     return records
+
+def repository_digest(path):
+    """Stream a deterministic digest of all regular repository files."""
+    path=assets.real_directory(path)
+    data.safe_tree(path)
+    digest=hashlib.sha256()
+    count=0
+    size=0
+    for current,dirs,files in os.walk(path,followlinks=False):
+        dirs.sort()
+        for name in sorted(files):
+            p=Path(current)/name
+            info=p.lstat()
+            if not stat.S_ISREG(info.st_mode):raise ValueError("Unexpected repository file")
+            relative=p.relative_to(path).as_posix()
+            record=[relative,info.st_size,assets.sha256_file(p)]
+            digest.update(json.dumps(record,ensure_ascii=True,separators=(",",":")).encode()+b"\n")
+            count+=1
+            size+=info.st_size
+    if not count:raise ValueError("Empty repository")
+    return {"sha256":digest.hexdigest(),"files":count,"bytes":size}
+
+def require_quiescent():
+    # Inspect only AfterGrid-labelled containers, never stop anything here.
+    raw=assets.docker("ps","--format",'{{.Label "com.docker.compose.project"}}')
+    if any(name.startswith("aftergrid-") for name in raw.splitlines()):
+        raise ValueError("Stop all AfterGrid services and external repository writers first")
+
+def pack(root,inventory,destination,modules,password):
+    """Bundle a quiescent source installation and verified independent captures."""
+    if os.geteuid()!=0:raise ValueError("Root required")
+    root=assets.real_directory(root)
+    destination=install.validate_root(destination)
+    if root in destination.parents or destination in root.parents:raise ValueError("Package must be outside installation")
+    inventory=Path(inventory).absolute()
+    records=core_records(inventory)
+    if not password or len(password)>1024:raise ValueError("Repository password required")
+    require_quiescent()
+    repository=assets.real_directory(root/"backups")
+    destination.mkdir(mode=0o700)
+    try:
+        value=assets.capture(root,destination/"assets")
+        rows=assets.recovery_image_rows(value)
+        captured={r["service"] for r in rows if r["project"]!="aftergrid-core"}
+        if "kopia" not in captured or len(modules)!=len(set(modules)) or any(m not in data.SOURCES or m not in captured for m in modules):
+            raise ValueError("Choose captured verified applications; Kopia must exist")
+        omitted=sorted(captured-{"kopia"}-set(modules))
+        checks=[(key,source,records[key]["snapshot_id"]) for key,source in (("core",CORE_SOURCE),("worker",WORKER_SOURCE))]
+        for m in modules:
+            checks.extend((key,source,sid) for key,source,_,sid in data.required_records(records,m))
+        prep.private_write(destination/"inventory.json",prep.read_private(inventory,65536))
+        before=repository_digest(repository)
+        target=destination/"repository"
+        target.mkdir(mode=0o700)
+        subprocess.run(["cp","-a","--reflink=auto",str(repository)+"/.",str(target)],check=True,capture_output=True,timeout=6*60*60)
+        require_quiescent()
+        if repository_digest(target)!=before or repository_digest(repository)!=before:
+            raise ValueError("Repository changed during copy")
+        kopia=next(r for r in rows if r["project"]=="aftergrid-kopia")
+        with tempfile.TemporaryDirectory(prefix=".verify-package-",dir=destination) as tmp:
+            run=data.native_repository_command(kopia["image_id"],target,Path(tmp),password)
+            native=data.native_manifest_rows(run)
+            for _,source,sid in checks:data.exact_native_manifest(native,source,sid)
+        require_quiescent()
+        report={"format":1,"selected":sorted(modules),"omitted_captured":omitted,
+                "assets_manifest_sha256":assets.sha256_file(destination/"assets/assets-manifest.json"),
+                "inventory_sha256":assets.sha256_file(destination/"inventory.json"),"repository":before,
+                "checked_snapshots":{key:sid for key,_,sid in checks},
+                "atomic":False,"complete_recovery":False}
+        prep.private_write(destination/"package.json",json.dumps(report,indent=2).encode())
+        return report
+    except Exception:
+        # Only this exclusively created output tree; never source data.
+        shutil.rmtree(destination)
+        raise
+
+def verify_package(directory):
+    directory=assets.real_directory(directory)
+    if {p.name for p in directory.iterdir()}!={"assets","inventory.json","repository","package.json"}:
+        raise ValueError("Unexpected package file set")
+    report=json.loads(prep.read_private(directory/"package.json",65536))
+    if report.get("format")!=1 or report.get("atomic") is not False or report.get("complete_recovery") is not False:
+        raise ValueError("Unsupported package format")
+    value=assets.verify(directory/"assets")
+    if (assets.sha256_file(directory/"assets/assets-manifest.json")!=report["assets_manifest_sha256"]
+        or assets.sha256_file(directory/"inventory.json")!=report["inventory_sha256"]
+        or repository_digest(directory/"repository")!=report["repository"]):
+        raise ValueError("Package checksum mismatch")
+    records=core_records(directory/"inventory.json")
+    selected=report["selected"]
+    captured={r["service"] for r in assets.recovery_image_rows(value) if r["project"]!="aftergrid-core"}
+    if not isinstance(selected,list) or len(selected)!=len(set(selected)) or "kopia" not in captured or any(m not in captured or m not in data.SOURCES for m in selected):
+        raise ValueError("Invalid package module selection")
+    if report["omitted_captured"]!=sorted(captured-{"kopia"}-set(selected)):raise ValueError("Package selection mismatch")
+    checks={k:records[k]["snapshot_id"] for k in ("core","worker")}
+    for m in selected:checks.update({k:sid for k,_,_,sid in data.required_records(records,m)})
+    if checks!=report["checked_snapshots"]:raise ValueError("Package snapshot selection mismatch")
+    return report
 
 def copy_and_connect_kopia(root,assets_dir,repository,inventory):
     """Use a separate working copy; no mutation of original repository."""
@@ -315,6 +414,18 @@ def main():
     run.add_argument("--repository",required=True,type=Path)
     run.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
     run.add_argument("--confirm-empty-replacement",action="store_true")
+    bundle=sub.add_parser("pack")
+    bundle.add_argument("--root",required=True,type=Path)
+    bundle.add_argument("--inventory",required=True,type=Path)
+    bundle.add_argument("--destination",required=True,type=Path)
+    bundle.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
+    bundle.add_argument("--confirm-quiescent",action="store_true")
+    verify=sub.add_parser("verify-package")
+    verify.add_argument("--package",required=True,type=Path)
+    restore_pack=sub.add_parser("restore-package")
+    restore_pack.add_argument("--package",required=True,type=Path)
+    restore_pack.add_argument("--root",required=True,type=Path)
+    restore_pack.add_argument("--confirm-empty-replacement",action="store_true")
     backups=sub.add_parser("enable-backups")
     backups.add_argument("--confirm-working-copy-writes",action="store_true")
     finish=sub.add_parser("activate-offline")
@@ -323,7 +434,19 @@ def main():
         for name in ("root","assets","inventory"):cmd.add_argument("--"+name,required=True,type=Path)
     args=parser.parse_args()
     try:
-        if args.action=="restore":
+        if args.action=="pack":
+            if not args.confirm_quiescent:raise ValueError("Confirm source maintenance and quiescent repository")
+            report=pack(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "))
+            print("Package created. Omitted captured modules: "+(", ".join(report["omitted_captured"]) or "none")+". Independent snapshots, not atomic recovery.")
+        elif args.action=="verify-package":
+            verify_package(args.package)
+            print("Recovery package file checksums and selected inventory verified; native recovery remains separate.")
+        elif args.action=="restore-package":
+            if not args.confirm_empty_replacement:raise ValueError("Replacement-only confirmation required")
+            report=verify_package(args.package)
+            recover(args.root,args.package/"assets",args.package/"repository",args.package/"inventory.json",report["selected"],getpass.getpass("Original Kopia repository password: "))
+            print("Guarded package recovery started. Native acceptance and activation remain separate.")
+        elif args.action=="restore":
             if not args.confirm_empty_replacement:raise ValueError("Replacement-only confirmation required")
             password=getpass.getpass("Original Kopia repository password: ")
             recover(args.root,args.assets,args.repository,args.inventory,args.module,password)

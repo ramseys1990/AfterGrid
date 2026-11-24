@@ -90,7 +90,7 @@ def placeholder(root,relative):
     elif names:raise ValueError("Recovery destination is not empty")
     return True
 
-def native_restore(image,repository,staging,password,source,sid):
+def native_repository_command(image,repository,staging,password):
     # Repository and output mounts are fixed local directories. The helper
     # has no Docker socket, no network and no writable repository access.
     for path in (repository,staging):
@@ -107,9 +107,16 @@ def native_restore(image,repository,staging,password,source,sid):
     def run(*args,timeout=60):
         return subprocess.run([*cmd,*args],env=env,check=True,capture_output=True,timeout=timeout).stdout
     run("repository","connect","filesystem","--path=/repository","--readonly","--no-check-for-updates",timeout=120)
+    return run
+
+def native_manifest_rows(run):
     raw=run("snapshot","list","--all","--json","--json-verbose","--manifest-id",timeout=120)
     if len(raw)>32*1024*1024:raise ValueError("Snapshot list exceeds recovery limit")
     rows=json.loads(raw)
+    if not isinstance(rows,list):raise ValueError("Invalid native snapshot list")
+    return rows
+
+def exact_native_manifest(rows,source,sid):
     matches=[row for row in rows if row.get("id")==sid and row.get("source",{}).get("path")==source]
     if len(matches)!=1:raise ValueError("Exact snapshot missing from copied repository")
     row=matches[0]
@@ -117,6 +124,11 @@ def native_restore(image,repository,staging,password,source,sid):
     obj=row["rootEntry"]["obj"]
     if not isinstance(obj,str) or not re.fullmatch(r"[IZD]{0,8}[a-z]?[a-f0-9]{32,128}",obj):
         raise ValueError("Invalid native object ID")
+    return obj
+
+def native_restore(image,repository,staging,password,source,sid):
+    run=native_repository_command(image,repository,staging,password)
+    obj=exact_native_manifest(native_manifest_rows(run),source,sid)
     run("restore","--no-overwrite-files","--no-overwrite-symlinks","--no-ignore-permission-errors",
         "--write-files-atomically","--flush-files",obj,"/work/data",timeout=6*60*60)
     result=staging/"data"

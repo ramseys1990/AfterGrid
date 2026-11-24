@@ -16,3 +16,18 @@ def test_inventory_rejects_unverified_core_and_duplicate(tmp_path):
     rows.append(rows[0])
     save()
     with pytest.raises(ValueError):recover.core_records(inventory)
+
+
+def test_repository_digest_detects_changed_bytes(tmp_path):
+    root=tmp_path/"repo"
+    root.mkdir()
+    (root/"b").write_bytes(b"123")
+    (root/"a").mkdir()
+    (root/"a/c").write_bytes(b"xyz")
+    original=recover.repository_digest(root)
+    assert original["files"]==2 and original["bytes"]==6
+    assert recover.repository_digest(root)==original
+    (root/"b").write_bytes(b"456")
+    assert recover.repository_digest(root)!=original
+    (root/"link").symlink_to(root/"b")
+    with pytest.raises(ValueError):recover.repository_digest(root)

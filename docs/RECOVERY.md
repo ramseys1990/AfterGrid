@@ -150,3 +150,27 @@ A dedicated disposable CI step now runs before broad lifecycle smoke. It creates
 ### Optional writable backup reconnection
 
 After guided restore and native account/content checks, but **before** activation, an administrator can run `sudo python3 recover.py enable-backups --root /opt/aftergrid --assets /secure/aftergrid-assets --inventory /secure/recovery-inventory.json --confirm-working-copy-writes`. This is a separate explicit choice: the original repository remains untouched, while native Kopia connects its independent copy writable. Existing repository policies may resume native maintenance or scheduling on that copy; inspect policies and retention before opting in. The guarded core remains active. After activation, the worker permits reviewed managed snapshot/verification/inventory jobs only for mapped modules and only when the opt-in marker and native writable status agree. Registry downloads and new installations remain blocked. A failed switch restores the previous config where possible; inspect before retrying. The guided fixture now requires a new core snapshot and isolated restore on the working copy and compares original repository hashes. CI pending.
+
+
+## Portable recovery package
+
+After generating the latest verified recovery inventory and completing all intended snapshots, enter an exclusive maintenance window. Stop all AfterGrid containers (do not uninstall; retained container IDs identify exact images), pause external repository writers, and keep the repository quiescent throughout the operation. The host command refuses running AfterGrid projects and does not stop services itself:
+
+```sh
+sudo python3 recover.py pack --root /opt/aftergrid \
+  --inventory /secure/recovery-inventory.json \
+  --destination /secure/aftergrid-package \
+  --module kiwix --module maps --confirm-quiescent
+sudo python3 recover.py verify-package --package /secure/aftergrid-package
+```
+
+The new private package contains assets/, inventory.json, repository/, and package.json. It captures exact stopped-container image IDs, copies the repository natively (reflink when available), compares deterministic path/size/content digests of original and copy, checks selected exact native manifests in the copy with an offline read-only helper, and records omitted captured modules. It is an independent snapshot set assembled during a maintenance window, NOT a simultaneous/atomic capture, retention pin, or proof of every application restoration. Native reads may be expensive for large repositories; reserve space and time. The host does not stop or restart services. Store on encrypted/off-host media and keep the password separately.
+
+On an empty replacement daemon:
+
+```sh
+sudo python3 recover.py restore-package --root /opt/aftergrid \
+  --package /secure/aftergrid-package --confirm-empty-replacement
+```
+
+This verifies package files and uses the selected snapshot set recorded in package.json. After native account/content checks, use enable-backups and activate-offline with the package's assets/ and inventory.json if desired. Do not modify the package's repository. The working copy is separate. Checksums do not authenticate a maliciously substituted package. Full disconnected acceptance and MicroTAK consistent backup remain outstanding. CI pending.
