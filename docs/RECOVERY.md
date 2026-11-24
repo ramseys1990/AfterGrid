@@ -41,3 +41,18 @@ Do not use this tool as evidence that the entire server can be rebuilt. It valid
 Generate and download the administrator recovery inventory after all intended snapshots and verification jobs finish. It lists the exact snapshot IDs, source jobs and worker envelope digest for the preparation command above, plus explicit missing sources. Preserve it off-server together with the repository password and independent repository copy. Do not infer that an uninstalled or missing source is safe to omit without reviewing the original application selection. The report does not pin snapshots or establish a coordinated system capture.
 
 New core exports also contain content-metadata.json. Preparation validates and reconstructs downloads.sqlite3 and reviewed regional records into the private core staging tree. Existing estimated downloads are reset to failed in the copy; new estimates are required. Rebuild place indexes after restoring routing content. Legacy core exports may lack metadata; recovery-metadata.json reports its inclusion. Capture points remain independent.
+
+
+## Offline installation assets (host command)
+
+During an exclusive administration window, with all installs/updates and external Docker changes paused, run from the installed release (Linux, Python 3.11+, local Docker Engine/Compose). Use an existing private destination parent on encrypted/off-server storage. The destination itself must not exist and must be outside the installed root:
+
+```sh
+sudo python3 /opt/aftergrid/recovery_assets.py capture \
+  --root /opt/aftergrid --destination /secure/aftergrid-assets
+sudo python3 /opt/aftergrid/recovery_assets.py verify /secure/aftergrid-assets
+```
+
+The export copies reviewed installed release source, module definitions, and raw .env (never evaluated), and uses native docker image save for the exact locally installed image IDs of the core and currently existing reviewed module containers (running or stopped). It records original references and state, platform, and SHA-256/size for each asset. No image pulls, builds, tag changes, or service restarts occur. Uninstalled apps without containers are not included; review the inventory before relying on it. The release copy is the current on-disk reviewed source, not proof of the Git commit or that a manually modified source matches the built images. The archive can be large; check space in advance. Capture is not a coordinated system snapshot and does not include the Kopia repository or data.
+
+The asset tree contains sensitive plaintext host configuration; private permissions are not encryption. Store securely and keep the data repository/password and recovery inventory separately. Verification checks the file set and checksums against the recorded manifest, not authenticity against a malicious replacement. Image restoration into a disposable Docker daemon and a no-pull Compose recovery launcher are next; do not load into a production daemon without reviewing tag conflicts. The target must already have compatible Linux, Python, Docker Engine and Compose; offline installation of Docker itself is not included.

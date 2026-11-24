@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.16-dev
+- Add host-only offline installation asset capture and verification: reviewed release files, raw private environment, exact local image IDs, native Docker archive and SHA-256 manifest.
+- Add unit tests and native disposable Docker archive save/load fixture. No live recovery application or image import command yet. CI pending.
+
 ## 0.8.15-dev
 - Add stable download and regional metadata to core exports, guarded against active operations; invalidate stale estimates in the copy.
 - Verify metadata on isolated restoration, reconstruct it in offline preparation and record its inclusion in recovery inventory. Legacy exports remain supported. CI pending.

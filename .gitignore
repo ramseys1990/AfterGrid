@@ -7,3 +7,5 @@ data/
 content/
 backups/
 logs/
+restore/
+recovery-assets/

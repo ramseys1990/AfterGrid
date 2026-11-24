@@ -89,3 +89,5 @@ Preparedness: shared LAN landing-page indicators for indexed knowledge, local ma
 0.8.14: native recovery inventory of exact snapshot IDs, job and verification evidence, worker envelope digest and manifest presence. Admin-only JSON download. Expanded application CI passed 45494302655; offline content CI running. Inventory is not atomic or a complete package. Next preserve download state and host/release metadata, then exact images and replacement installation.
 
 0.8.15: extend core recovery export to stable download and regional metadata, validate on isolated restore, reconstruct during offline preparation, expose inclusion in inventory. Legacy snapshots remain supported and labeled. CI pending. Next host configuration, exact release/images and coordinated recovery sets.
+
+0.8.16: host-only offline asset export of reviewed installed release and raw environment, exact existing container image IDs via docker image save, checksum manifest and verification. Native Docker fixture and unit tests pending. No data repository or recovery apply included. 0.8.14 inventory CI passed. Next no-pull image import/Compose recovery and coordinated recovery package.

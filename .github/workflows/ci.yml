@@ -12,7 +12,20 @@ jobs:
           python-version: '3.12'
       - run: pip install -r core/requirements-dev.txt
       - run: python -m pytest -q
-      - run: python recovery_prepare.py --help
+      - run: python recovery_prepare.py --help && python recovery_assets.py --help
+      - name: Native Docker image archive fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          printf 'fixture\n' > "$tmp/payload"
+          printf 'FROM scratch\nCOPY payload /payload\n' > "$tmp/Dockerfile"
+          docker build -q -t aftergrid-ci-archive-fixture "$tmp" > "$tmp/id"
+          python -c 'import recovery_assets as a,sys,pathlib; p=pathlib.Path(sys.argv[1]); a.save_images([{"image_id":(p/"id").read_text().strip()}],p/"images.tar")' "$tmp"
+          docker image rm aftergrid-ci-archive-fixture
+          docker image load -i "$tmp/images.tar"
+          docker image inspect "$(cat "$tmp/id")" --format '{{.Id}}' | grep -Fx "$(cat "$tmp/id")"
       - run: bash -n install.sh && for file in modules/routing/*.sh; do sh -n "$file"; done; sh -n modules/tak/start.sh
       - run: node --check core/app.js && node --check core/maps.js && node --check core/region.js && node --check core/communications.js
       - run: docker compose config -q
