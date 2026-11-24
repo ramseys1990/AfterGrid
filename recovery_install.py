@@ -89,6 +89,8 @@ def stage(assets_dir,core_dir,worker_dir,destination,core_job,worker_job,worker_
         assets.write_overrides(value,overrides)
         override=overrides/"aftergrid-core.json"
         config=json.loads(override.read_text())
+        for service in ("core","worker"):
+            config["services"][service]["environment"]={"AFTERGRID_RECOVERY_CORE_ONLY":"1"}
         # Compose merges volumes by target, replacing the named worker-state
         # mount with the private recovered directory. No volume seeding container.
         config["services"]["worker"]["volumes"]=[
@@ -134,6 +136,8 @@ def start_core(root,assets_dir,confirmed=False):
     for r in expected.values():
         if json.loads(assets.docker("image","inspect","--format","{{json .Id}}",r["recovery_tag"]))!=r["image_id"]:
             raise ValueError("Imported core image mismatch")
+        if assets.docker("image","inspect","--format",'{{index .Config.Labels "org.aftergrid.recovery-core-only"}}',r["recovery_tag"])!="1":
+            raise ValueError("Captured core images lack recovery-only write protection; capture compatible images first")
     # The original release and generated override must still resolve to
     # the exact local images and expected bind mounts. Ignore caller env.
     env={"PATH":os.environ["PATH"],"HOME":"/root","DOCKER_HOST":"unix:///var/run/docker.sock"}
@@ -146,6 +150,8 @@ def start_core(root,assets_dir,confirmed=False):
     for name,definition in services.items():
         if definition.get("image")!=expected[name]["recovery_tag"] or definition.get("pull_policy")!="never":
             raise ValueError("Recovery Compose image policy mismatch")
+        if definition.get("environment",{}).get("AFTERGRID_RECOVERY_CORE_ONLY")!="1":
+            raise ValueError("Recovery-only write guard missing")
     volumes=[v for v in services["worker"]["volumes"] if v.get("target")=="/worker-state"]
     if len(volumes)!=1 or volumes[0].get("type")!="bind" or volumes[0].get("source")!=str(root/"recovery-worker-state"):
         raise ValueError("Recovery worker bind mismatch")

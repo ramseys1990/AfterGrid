@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -84,6 +84,7 @@ def create_app(data_dir=None):
     data = Path(data_dir or os.environ.get("AFTERGRID_DATA", "./data/core"))
     secure_cookie = os.environ.get("AFTERGRID_SECURE_COOKIE", "false").lower() == "true"
     configured_origin = os.environ.get("AFTERGRID_ORIGIN", "").rstrip("/")
+    recovery_core_only = os.environ.get("AFTERGRID_RECOVERY_CORE_ONLY") == "1"
     downloads = Downloads(data, os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
     households = Households(data)
     inventory = Inventory(data)
@@ -135,14 +136,17 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.18-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.19-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
 
     @api.middleware("http")
     async def security(request, call_next):
-        response = await call_next(request)
+        if recovery_core_only and request.method not in {"GET","HEAD","OPTIONS"} and request.url.path not in {"/api/login","/api/logout"}:
+            response = JSONResponse({"detail":"Core-only recovery: application and configuration writes are disabled"},status_code=409)
+        else:
+            response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -417,7 +421,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.8.6-dev"}
+                "version": api.version, "recovery_core_only": recovery_core_only}
 
     @api.get("/api/preparedness")
     def preparedness():

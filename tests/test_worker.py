@@ -624,3 +624,15 @@ def test_recovery_inventory_exact_snapshot_evidence(tmp_path,monkeypatch):
     assert record["content/maps"]["repository_status"]=="no managed snapshot"
     assert (tmp_path/"recovery-manifest.json").stat().st_mode&0o777==0o600
     with pytest.raises(ValueError):worker.enqueue("grocy","recovery-manifest")
+
+
+def test_recovery_core_only_refuses_jobs(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    worker.init()
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",True)
+    with pytest.raises(ValueError):worker.enqueue("kiwix","install")
+    with pytest.raises(ValueError):worker.enqueue_batch("a"*48,["kiwix"])
+    worker.process()
+    assert worker.jobs()==[]

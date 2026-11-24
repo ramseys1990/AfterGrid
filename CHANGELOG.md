@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.19-dev
+- Add independent disposable recovered-core startup acceptance before application smoke, with original login, household, session exclusion, exact worker credentials/sharing, and no-pull startup checks.
+- Guard core-only recovery against portal and worker mutation requests; require compatible captured core image labels before starting. Fix stale portal version string. CI pending.
+
 ## 0.8.18-dev
 - Add host-only replacement core and worker staging, validated private files, ownership, preserved original environment, and explicit no-pull/no-build core-only start.
 - Add bounded shutdown refusal diagnostics; retain MicroTAK strict consistency gate. Routing native verification passed prior Core checks milestone; latest CI pending.

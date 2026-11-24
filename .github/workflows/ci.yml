@@ -30,6 +30,9 @@ jobs:
       - run: node --check core/app.js && node --check core/maps.js && node --check core/region.js && node --check core/communications.js
       - run: docker compose config -q
       - run: docker compose build core worker
+      - name: Disposable recovered-core startup acceptance
+        timeout-minutes: 15
+        run: sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 python3 tests/recovery_core_smoke.py
       - name: Validate module Compose definitions
         run: |
           export MESHMONITOR_ADMIN_PASSWORD=disposable-ci-mesh-password MESHMONITOR_SESSION_SECRET=disposable-ci-session-secret

@@ -441,3 +441,20 @@ def test_recovery_inventory_admin_only(tmp_path,monkeypatch):
         assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
         assert c.get(path).json()=={"format":1,"records":[]}
         assert calls==[("/jobs",{"module":"kopia","action":"recovery-manifest"}),("/recovery-manifest",None)]
+
+
+def test_core_only_recovery_login_and_write_guard(tmp_path,monkeypatch):
+    (tmp_path/"setup-token").write_text("token")
+    creds={"username":"admin","password":"long test password"}
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.post("/api/setup",json={**creds,"token":"token"},headers=ORIGIN).status_code==201
+        assert c.post("/api/admin/households",json={"name":"Recovered household"},headers=ORIGIN).status_code==200
+    monkeypatch.setenv("AFTERGRID_RECOVERY_CORE_ONLY","1")
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.get("/api/status").json()["recovery_core_only"] is True
+        assert c.post("/api/login",json=creds,headers=ORIGIN).status_code==200
+        assert c.get("/api/households").json()["households"][0]["name"]=="Recovered household"
+        assert c.post("/api/admin/modules/kiwix/install",json={},headers=ORIGIN).status_code==409
+        assert c.post("/api/admin/content/downloads",json={"key":"test"},headers=ORIGIN).status_code==409
+        assert c.post("/api/admin/households",json={"name":"New"},headers=ORIGIN).status_code==409
+        assert c.post("/api/logout",headers=ORIGIN).status_code==200

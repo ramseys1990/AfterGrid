@@ -30,6 +30,7 @@ ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
 LAN_DOMAIN = os.environ.get("AFTERGRID_LAN_DOMAIN", "")
+RECOVERY_CORE_ONLY = os.environ.get("AFTERGRID_RECOVERY_CORE_ONLY") == "1"
 MAX_LOG = 24000
 SECRET_LOCK = threading.Lock()
 REGISTRY_LOCK = threading.Lock()
@@ -168,6 +169,7 @@ def init():
         conn.execute("UPDATE jobs SET state='interrupted',stage='Worker restarted; inspect service and retry' WHERE state='running'")
 
 def enqueue(ident, action, backup_confirmed=False):
+    if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
@@ -191,6 +193,7 @@ def enqueue(ident, action, backup_confirmed=False):
         return cursor.lastrowid
 
 def enqueue_batch(token, selection):
+    if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
     manifests = catalog()
     if (not isinstance(token,str) or not re.fullmatch(r"[a-f0-9]{48}",token)
             or not isinstance(selection,list) or not 1 <= len(selection) <= 12
@@ -1287,6 +1290,7 @@ def execute(row):
         change(job, state="failed", stage="Failed; see output")
 
 def process():
+    if RECOVERY_CORE_ONLY:return
     while True:
         with db() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY id LIMIT 1").fetchone()
@@ -1342,6 +1346,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_json(404, {"detail": "Unknown endpoint"})
 
     def do_POST(self):
+        if RECOVERY_CORE_ONLY:
+            return self.send_json(409,{"detail":"Core-only recovery disables module actions"})
         if self.path not in {"/jobs", "/jobs/batch", "/registry-check"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
