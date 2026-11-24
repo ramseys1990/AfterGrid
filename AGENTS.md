@@ -1,0 +1,22 @@
+# AfterGrid development rules
+
+AfterGrid is an offline-first, modular preparedness appliance for ordinary users.
+
+## Non-negotiable design
+- Compose first: each optional module is a standard, independently named Docker Compose project. Use upstream maintained images and documented settings. Prefer configuration to custom deployment logic.
+- Install only the core by default. The initial CLI bootstraps Docker and core, then hands off to a browser wizard.
+- Let Compose pull, start, stop, restart, inspect and remove containers. Stream its real output; do not implement a second orchestrator, downloader or fake progress estimates.
+- Module prerequisites: ordinary intra-stack dependencies belong in Compose; shared module dependencies use a simple list. Only add special hooks for demonstrated needs.
+- Local administrator authentication, trusted-LAN shared resources, optional family profiles. Households are organizational groups; ownership and physical location are distinct. No mandatory OIDC, Authentik, SSO, identity service or external database.
+- Native app authentication is acceptable; never bypass an app's security. Sensitive modules retain their own access controls. Admin operations are authenticated and CSRF protected.
+- One shared Homebox for durable assets/QR labels and one shared Grocy for consumables/recipes. Avoid duplicating inventory. Use stable local hostnames for labels.
+- Kopia handles backups, encryption, retention and scheduling. Use application-consistent snapshots or database exports; use Docker image save/load for offline recovery. Initial installation can be online. Do not claim full offline recovery until tested.
+- Debian/Ubuntu, bare metal, Docker hosts and suitable Proxmox guests; no fixed VM/CT IDs, dev branches or lab-specific configuration. Never change unrelated Docker projects or install Docker on the Proxmox hypervisor.
+- No cloud dependencies or telemetry by default. No public exposure by default. Offline functionality must be tested, not assumed.
+- Docker access is privileged: portal does not expose arbitrary shell, Compose, volume or Docker commands. Use a narrow separate worker with reviewed module definitions and fixed actions; keep secrets out of logs.
+- Keep data on persistent storage; stop/uninstall preserves data by default; deletion requires distinct confirmation.
+- Pin reviewed application versions for releases. Auto-updates opt-in per module; preserve data and account for schema changes.
+- Do not add dependencies or abstractions for hypothetical future features. Keep core resource footprint small.
+
+## Workflow
+Build vertical slices, use small focused changes and practical tests. A module is complete only when install, real readiness, start/stop, configuration where needed, data preservation, offline behavior where applicable, backup/restore and uninstall have been exercised. Record untested behavior honestly. CI supports development, not a substitute for runtime validation. Never make unrelated changes, publish personal data or secrets, or claim unrun tests passed.

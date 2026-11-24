@@ -1,0 +1,27 @@
+name: aftergrid-core
+services:
+  core:
+    build: ./core
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${AFTERGRID_BIND:-127.0.0.1}:${AFTERGRID_PORT:-8080}:8080"
+    environment:
+      AFTERGRID_DATA: /data
+      AFTERGRID_SECURE_COOKIE: "${AFTERGRID_SECURE_COOKIE:-false}"
+      AFTERGRID_ORIGIN: "${AFTERGRID_ORIGIN:-}"
+    volumes:
+      - ./data/core:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
