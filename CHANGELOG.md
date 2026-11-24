@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1-dev
+- Regional PMTiles estimates and downloads using the pinned, SHA-256-checked upstream CLI; administrator confirmation, bounded region, storage checks and native structural verification.
+- Show actual tool output and archive sizes; never overwrite the existing PMTiles slot. Interrupted jobs require a fresh estimate. No automatic WAN requests.
+- Add API and publishing tests and native CLI verification of the existing map fixture. Prior map lifecycle CI passed; actual upstream extraction remains pending.
+
+
 ## 0.5.0-dev
 - Optional LAN-accessible TileServer GL Light module with local PMTiles/MBTiles sources and native previews.
 - Explicit configuration skips missing archives; no default map downloads. Map data mounted read-only and retained on uninstall.

@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("content-message").textContent="";}
+  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -236,7 +236,7 @@ const refreshModules=document.createElement("button");refreshModules.textContent
 setInterval(async()=>{
   if(polling||!status?.admin||$("dashboard").hidden)return;
   polling=true;
-  try{if(await renderJobs())await renderModules();await renderDownloads();}catch(e){error(e.message);}finally{polling=false;}
+  try{if(await renderJobs())await renderModules();await renderDownloads();await refreshMaps();}catch(e){error(e.message);}finally{polling=false;}
 },2000);
 
 for(const [id,path] of [["setup-form","/api/setup"],["login-form","/api/login"]]){
@@ -385,5 +385,26 @@ $("inventory-connect").addEventListener("submit",async event=>{
   try{const r=await api("/api/admin/inventory/connect",data);await refreshInventoryConnections();showNativeLocations(data.module,r.locations);$("household-message").textContent="Native key saved; select a location.";}
   catch(e){$("household-message").textContent=e.message;}
   finally{button.disabled=false;}
+});
+async function refreshMaps(){
+  const result=await api("/api/admin/maps");
+  if(!status?.admin)return;
+  const root=$("map-status");root.replaceChildren();
+  const state=document.createElement("p");state.textContent="Map operation: "+result.state+" — "+(result.detail||"");root.append(state);
+  if(result.estimate_bytes!==undefined){const p=document.createElement("p");p.textContent="Estimated archive: "+bytes(result.estimate_bytes)+" (approximate; extra space required)";root.append(p);}
+  const free=document.createElement("p");free.textContent="Available storage: "+bytes(result.free_bytes);root.append(free);
+  for(const file of result.files){const p=document.createElement("p");p.textContent=file.name+" — "+bytes(file.size_bytes);root.append(p);}
+  if(result.output){const pre=document.createElement("pre");pre.textContent=result.output;root.append(pre);}
+  $("map-download").hidden=result.state!=="estimated";
+}
+$("map-estimate").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const v=Object.fromEntries(new FormData(event.currentTarget));
+  try{await api("/api/admin/maps/estimate",{build:v.build,bbox:[v.west,v.south,v.east,v.north].map(Number),zoom:Number(v.zoom)});await refreshMaps();}
+  catch(e){error(e.message);}
+});
+$("map-download").addEventListener("click",async()=>{
+  if(!confirm("Download this regional archive? Internet and free storage are required."))return;
+  try{await api("/api/admin/maps/download",{});await refreshMaps();}catch(e){error(e.message);}
 });
 refresh().catch(e=>error(e.message));

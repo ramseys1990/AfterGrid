@@ -13,6 +13,7 @@ services:
     volumes:
       - ./data/core:/data
       - ./content/kiwix:/content/kiwix
+      - ./content/maps:/content/maps
       - worker_socket:/run/aftergrid:ro
     networks:
       - default

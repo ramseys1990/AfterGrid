@@ -17,3 +17,7 @@ The module never mounts the Docker socket or writes map content. Uninstall prese
 ## Next
 
 Regional selection and downloads with progress/storage estimates; a complete labeled basemap and local glyphs/sprites; waypoint and GPX/KML tools; independent Valhalla routing data and UI. No road routing is available in this milestone. Actual browser behavior with the WAN disconnected, local map attribution, and hardware performance remain to be tested. Hosted CI exercises a small pinned upstream PMTiles fixture and the normal module lifecycle.
+
+## Regional extracts
+
+The admin portal can estimate and extract a selected bounding box from a published Protomaps build. Use the official builds list for the date. Maximum zoom 15; development cap 4 GiB, with extra space reserved. The CLI downloads only relevant ranges. Estimate and actual size can differ. The file is published only after native structural verification; this does not prove every tile's checksum. The existing PMTiles slot is never overwritten. Interrupted jobs require a new estimate; no resume or automatic replacement yet. Restart Maps to use the result. Preserve OpenStreetMap attribution and the source date. For old installations, change ownership of the content/maps directory to UID/GID 10001 (not the whole server). Actual internet extraction and offline browser acceptance remain pending.

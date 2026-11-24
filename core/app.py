@@ -24,12 +24,14 @@ try:
     from .downloads import Downloads
     from .households import Households
     from .inventory import Inventory, InventoryError
+    from .map_downloads import MapDownloads
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
     from downloads import Downloads
     from households import Households
     from inventory import Inventory, InventoryError
+    from map_downloads import MapDownloads
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -72,6 +74,7 @@ def create_app(data_dir=None):
     downloads = Downloads(data, os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
     households = Households(data)
     inventory = Inventory(data)
+    maps = MapDownloads(data,os.environ.get('AFTERGRID_MAP_CONTENT','/content/maps'))
     attempts = deque()
     lock = threading.Lock()
 
@@ -103,12 +106,14 @@ def create_app(data_dir=None):
         households.init()
         inventory.init()
         downloads.start()
+        maps.start()
         try:
             yield
         finally:
+            maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.0-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.5.1-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -178,7 +183,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.0-dev"}
+                "version": "0.5.1-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -291,6 +296,36 @@ def create_app(data_dir=None):
         location=next((r for r in households.view()["locations"] if r["id"]==ident),None)
         if location is None: raise HTTPException(404,"Location mapping not found")
         return inventory_result(lambda: inventory.report(location))
+
+    class MapEstimate(BaseModel):
+        build: str = Field(min_length=8,max_length=8)
+        bbox: list[float] = Field(min_length=4,max_length=4)
+        zoom: int = Field(ge=0,le=15)
+
+    @api.get("/api/admin/maps")
+    def map_status(request: Request):
+        require_admin(request)
+        return maps.status()
+
+    @api.post("/api/admin/maps/estimate",status_code=202)
+    def map_estimate(payload: MapEstimate,request: Request):
+        require_admin(request)
+        same_origin(request)
+        try:
+            maps.estimate(payload.build,payload.bbox,payload.zoom)
+        except (ValueError,OSError) as exc:
+            raise HTTPException(400,str(exc))
+        return {"queued":True}
+
+    @api.post("/api/admin/maps/download",status_code=202)
+    def map_download(request: Request):
+        require_admin(request)
+        same_origin(request)
+        try:
+            maps.download()
+        except (ValueError,OSError) as exc:
+            raise HTTPException(409,str(exc))
+        return {"queued":True}
 
     @api.get("/api/admin/content/downloads")
     def content_downloads(request: Request):

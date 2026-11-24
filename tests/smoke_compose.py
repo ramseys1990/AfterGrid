@@ -143,7 +143,9 @@ map_base="http://127.0.0.1:8084"
 with urllib.request.urlopen(map_base+"/data.json",timeout=10) as response:
     assert json.load(response)==[]
 import shutil
-shutil.copyfile(os.environ["MAP_FIXTURE"],"content/maps/region.pmtiles")
+subprocess.run(["sudo","cp",os.environ["MAP_FIXTURE"],"content/maps/region.pmtiles"],check=True)
+subprocess.run(["docker","compose","exec","-T","core","pmtiles","verify","/content/maps/region.pmtiles"],check=True)
+assert any(x["name"]=="region.pmtiles" for x in api("/api/admin/maps")["files"])
 action("restart","maps")
 with urllib.request.urlopen(map_base+"/data/region-pmtiles.json",timeout=10) as response:
     tilejson=json.load(response)

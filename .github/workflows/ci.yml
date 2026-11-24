@@ -39,7 +39,7 @@ jobs:
           test "$(git hash-object "$RUNNER_TEMP/aftergrid-map-fixture.pmtiles")" = 8d170ca89ecf3197d14366db63679f198a198101
           export MAP_FIXTURE="$RUNNER_TEMP/aftergrid-map-fixture.pmtiles"
           printf '%s\n' "$SMOKE_TOKEN" > data/core/setup-token
-          sudo chown -R 10001:10001 data/core content/kiwix
+          sudo chown -R 10001:10001 data/core content/kiwix content/maps
           sudo chmod 700 data/core
           sudo chmod 600 data/core/setup-token
           cleanup() {
