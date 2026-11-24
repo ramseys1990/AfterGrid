@@ -296,8 +296,11 @@ def create_app(data_dir=None):
         values={"name":payload.name,"scope":payload.scope,"steps":{k:getattr(payload,k) for k in ("primary","alternate","contingency","emergency")}}
         return {"id":plan_operation(lambda:comms.save("plan",values,payload.id))}
 
+    class CommCheck(BaseModel):
+        id: int = Field(gt=0)
+
     @api.post("/api/admin/communications/checked")
-    def check_comm_device(payload: DeleteRequest,request: Request):
+    def check_comm_device(payload: CommCheck,request: Request):
         require_admin(request)
         same_origin(request)
         plan_operation(lambda:comms.checked(payload.id))
