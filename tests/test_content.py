@@ -20,5 +20,5 @@ def test_local(tmp_path):
     (tmp_path/"partial.zim.part").write_bytes(b"abc")
     (tmp_path/"symlink.zim").symlink_to(tmp_path/"book.zim")
     result=local_inventory(tmp_path)
-    assert result["files"]==[{"name":"book.zim","size_bytes":3}]
+    assert result["files"]==[{"name":"book.zim","size_bytes":3,"indexed":False}]
     assert result["free_bytes"]>0

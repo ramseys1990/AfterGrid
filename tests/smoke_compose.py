@@ -46,6 +46,33 @@ wait_job(batch["ids"][0],"kiwix initial install")
 assert module()["status"]=="running"
 with urllib.request.urlopen("http://127.0.0.1:8081/",timeout=10) as response:
     assert response.status==200
+# Exercise native indexing and real reader catalog reload with a local fixture.
+def local_action(action):
+    assert api("/api/admin/content/local",{"name":"fixture.zim","action":action})["ok"]
+def reader_contains(expected):
+    import xml.etree.ElementTree as ET
+    deadline=time.monotonic()+60
+    while time.monotonic()<deadline:
+        with urllib.request.urlopen("http://127.0.0.1:8081/catalog/v2/entries",timeout=10) as response:
+            root=ET.fromstring(response.read())
+        entries=root.findall("{http://www.w3.org/2005/Atom}entry")
+        if bool(entries)==expected:
+            return
+        time.sleep(2)
+    raise AssertionError("Reader catalog did not reload to expected state")
+local_action("index")
+assert any(x["name"]=="fixture.zim" and x["indexed"] for x in api("/api/admin/content/local")["files"])
+reader_contains(True)
+local_action("remove")
+reader_contains(False)
+assert Path("content/kiwix/.removed/fixture.zim").is_file()
+local_action("restore")
+reader_contains(True)
+local_action("remove")
+reader_contains(False)
+local_action("purge")
+assert not Path("content/kiwix/.removed/fixture.zim").exists()
+print("Native local archive indexing, reader reload, remove, restore and purge passed.")
 action("stop")
 assert module()["status"]=="stopped"
 action("start")

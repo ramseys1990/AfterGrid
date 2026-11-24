@@ -21,3 +21,5 @@ Install the core in a clean Debian/Ubuntu guest. Open setup, create admin, log o
 
 ## Content manager
 Initial admin catalog search and local storage inventory implemented. Native downloader, checksum checks, disk checks and indexing implemented. Next: validate real upstream metadata and transfer, verify native indexing and offline reader reload; then add safe removal and USB imports.
+
+Local import/index, recoverable removal, restore and purge implemented; CI fixture test added. Next: live official catalog/Metalink transfer, offline reading validation, then households and regional maps.

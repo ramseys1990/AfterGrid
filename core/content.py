@@ -6,9 +6,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 try:
-    from .downloads import key_for_url
+    from .downloads import key_for_url, indexed_books
 except ImportError:
-    from downloads import key_for_url
+    from downloads import key_for_url, indexed_books
 
 CATALOG = "https://opds.library.kiwix.org/catalog/v2/entries"
 MAX_FEED = 2_000_000
@@ -70,7 +70,7 @@ def search_catalog(query,language,start):
 def local_inventory(directory):
     path=Path(directory)
     if not path.is_dir():
-        return {"files":[],"free_bytes":None,"total_bytes":None}
+        return {"files":[],"removed":[],"free_bytes":None,"total_bytes":None}
     files=[]
     for item in sorted(path.glob("*.zim")):
         if item.is_symlink() or not item.is_file():
@@ -79,5 +79,14 @@ def local_inventory(directory):
             files.append({"name":item.name,"size_bytes":item.stat().st_size})
         except OSError:
             continue
+    indexed={b.get("path","").removeprefix("./") for b in indexed_books(path)}
+    for file in files:
+        file["indexed"]=file["name"] in indexed
+    removed=[]
+    trash=path/".removed"
+    if trash.is_dir() and not trash.is_symlink():
+        for item in sorted(trash.glob("*.zim")):
+            if item.is_file() and not item.is_symlink():
+                removed.append({"name":item.name,"size_bytes":item.stat().st_size})
     usage=shutil.disk_usage(path)
-    return {"files":files,"free_bytes":usage.free,"total_bytes":usage.total}
+    return {"files":files,"removed":removed,"free_bytes":usage.free,"total_bytes":usage.total}

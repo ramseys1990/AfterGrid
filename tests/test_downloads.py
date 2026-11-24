@@ -54,3 +54,30 @@ def test_verify_before_publish(tmp_path,monkeypatch):
     assert not partial.exists()
     assert indexed==["test.zim"]
     assert manager.list()[0]["state"]=="complete"
+
+
+def test_local_remove_restore_and_purge(tmp_path,monkeypatch):
+    from core import downloads
+    content=tmp_path/"content";content.mkdir()
+    manager=Downloads(tmp_path,content)
+    with manager.db() as con:
+        con.execute("CREATE TABLE downloads (key TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,state TEXT NOT NULL,size INTEGER,digest TEXT,detail TEXT NOT NULL DEFAULT '',updated INTEGER NOT NULL)")
+    archive=content/"test.zim";archive.write_bytes(b"local")
+    indexed=set()
+    monkeypatch.setattr(downloads,"index_archive",lambda directory,name:indexed.add(name))
+    monkeypatch.setattr(downloads,"unindex_archive",lambda directory,name:indexed.discard(name))
+    manager.local_action("test.zim","index")
+    assert indexed=={"test.zim"}
+    manager.local_action("test.zim","remove")
+    assert not archive.exists() and not indexed
+    assert (content/".removed/test.zim").read_bytes()==b"local"
+    manager.local_action("test.zim","restore")
+    assert archive.read_bytes()==b"local" and indexed=={"test.zim"}
+    manager.local_action("test.zim","remove")
+    manager.local_action("test.zim","purge")
+    assert not (content/".removed/test.zim").exists()
+    with pytest.raises(ValueError):manager.local_action("../other.zim","remove")
+    manager.operation.acquire()
+    try:
+        with pytest.raises(ValueError,match="running"):manager.local_action("test.zim","index")
+    finally:manager.operation.release()

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6-dev
+- Local ZIM indexing, recoverable removal, restoration and explicit purge; safe filenames and serialized native library mutations.
+- Display indexed and removed archives, with disk usage and administrator-only origin-checked actions.
+- Add local action tests and a real upstream-pinned ZIM fixture to the Docker smoke test for native indexing and reader catalog reload. New test results pending.
+- Prior LAN-first and content download logic CI passed; actual upstream download remains unverified.
+
+
 ## 0.3.5-dev
 - Persistent single-worker content queue with curl resume, free-space checks, actual partial-file byte counts and SHA-256 verification from official Metalink metadata.
 - Native kiwix-manage indexing and reader monitorLibrary option; no Docker access in downloader.

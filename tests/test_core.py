@@ -132,3 +132,15 @@ def test_content_catalog_admin_only(tmp_path,monkeypatch):
         assert client.get("/api/admin/content/catalog?q=medicine").json()=={"entries":[],"total":0}
         assert client.get("/api/admin/content/catalog?start=-1").status_code==400
         assert client.get("/api/admin/content/local").status_code==200
+
+
+def test_local_content_mutation_requires_admin_and_origin(tmp_path,monkeypatch):
+    monkeypatch.setenv("AFTERGRID_KIWIX_CONTENT",str(tmp_path))
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        body={"name":"../other.zim","action":"remove"}
+        assert client.post("/api/admin/content/local",json=body,headers=ORIGIN).status_code==401
+        setup={"username":"admin","password":"long test password","token":"test-token"}
+        assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
+        assert client.post("/api/admin/content/local",json=body).status_code==403
+        assert client.post("/api/admin/content/local",json=body,headers=ORIGIN).status_code==409

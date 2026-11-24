@@ -100,7 +100,7 @@ def create_app(data_dir=None):
         finally:
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.3.5-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.3.6-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -170,7 +170,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.3.5-dev"}
+                "version": "0.3.6-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -212,12 +212,29 @@ def create_app(data_dir=None):
             raise HTTPException(400,str(exc))
         return {"queued":True}
 
+    class LocalContentRequest(BaseModel):
+        name: str = Field(min_length=1,max_length=244)
+        action: str = Field(min_length=1,max_length=16)
+
+    @api.post("/api/admin/content/local")
+    def content_local_action(payload: LocalContentRequest,request: Request):
+        require_admin(request)
+        same_origin(request)
+        try:
+            return downloads.local_action(payload.name,payload.action)
+        except ValueError as exc:
+            raise HTTPException(409,str(exc))
+        except (OSError,sqlite3.Error):
+            raise HTTPException(503,"Local library operation failed; inspect content storage")
+        except Exception:
+            raise HTTPException(422,"Native library operation failed; archive retained")
+
     @api.get("/api/admin/content/local")
     def content_local(request: Request):
         require_admin(request)
         try:
             return local_inventory(os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
-        except OSError:
+        except (OSError,ValueError):
             raise HTTPException(503,"Local content storage unavailable")
 
     @api.get("/api/admin/content/catalog")

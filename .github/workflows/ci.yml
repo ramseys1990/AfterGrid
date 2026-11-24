@@ -31,6 +31,9 @@ jobs:
           export SMOKE_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(24))')"
           mkdir -p data/core content/kiwix
           cp modules/kiwix/library.xml content/kiwix/library.xml
+          # Small, pinned OpenZIM upstream fixture; no live catalog dependency.
+          curl --fail --silent --show-error --location --max-time 60 https://raw.githubusercontent.com/openzim/zim-testing-suite/2edf72096208e60c82b6ebbe313baa552cc6af52/data/withns/wikibooks_be_all_nopic_2017-02.zim -o content/kiwix/fixture.zim
+          test "$(git hash-object content/kiwix/fixture.zim)" = 6706e9b279753c759ea77c8bd0250ce950bc819c
           printf '%s\n' "$SMOKE_TOKEN" > data/core/setup-token
           sudo chown -R 10001:10001 data/core content/kiwix
           sudo chmod 700 data/core

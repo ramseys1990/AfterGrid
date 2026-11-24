@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+import uuid
 import time
 import urllib.parse
 import urllib.request
@@ -18,6 +19,12 @@ HOST = "download.kiwix.org"
 KEY = re.compile(r"/zim/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.zim")
 RESERVE = 512 * 1024**2
 LIMIT = 512 * 1024**3
+ACTIVE = ("queued","downloading","verifying","indexing")
+
+def safe_name(name):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,239}\.zim", name):
+        raise ValueError("Use a plain .zim filename (letters, digits, dots, underscores, hyphens)")
+    return name
 
 def key_for_url(value):
     u = urllib.parse.urlsplit(value)
@@ -57,12 +64,26 @@ def checksum(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream,"sha256").hexdigest()
 
+def indexed_books(directory):
+    library=directory/"library.xml"
+    if library.is_symlink():
+        raise ValueError("Unexpected library symlink")
+    if not library.exists():
+        return []
+    return list(ET.parse(library).getroot().iter("book"))
+
+def matching_books(directory,name):
+    return [b for b in indexed_books(directory) if b.get("path") in (name,"./"+name)]
+
 def index_archive(directory, name):
+    safe_name(name)
     # Work in the same directory so the native tool produces portable relative paths.
     library=directory/"library.xml"
     temp=directory/".library.pending.xml"
     if library.is_symlink() or temp.is_symlink():
         raise ValueError("Unexpected library symlink")
+    if matching_books(directory,name):
+        return
     if library.exists():
         shutil.copyfile(library,temp)
     else:
@@ -70,10 +91,40 @@ def index_archive(directory, name):
     try:
         subprocess.run(["kiwix-manage",temp.name,"add",name],cwd=directory,check=True,timeout=120,capture_output=True)
         parsed=ET.parse(temp)
+        previous={b.get("id") for b in indexed_books(directory)}
+        current={b.get("id") for b in parsed.getroot().iter("book")}
+        if not previous <= current:
+            raise ValueError("Native index would replace another entry")
         # Check the native output contains the expected local archive. Relative paths
         # work both here and inside the reader container, which mounts this directory.
         if not any(book.get("path")==name or book.get("path")=="./"+name for book in parsed.getroot().iter("book")):
             raise ValueError("Native index did not produce a portable archive path")
+        os.chmod(temp,0o644)
+        os.replace(temp,library)
+    finally:
+        temp.unlink(missing_ok=True)
+
+def unindex_archive(directory,name):
+    safe_name(name)
+    books=matching_books(directory,name)
+    if not books:
+        return
+    ids=[b.get("id","") for b in books]
+    if not all(re.fullmatch(r"[A-Za-z0-9-]{1,80}",i) for i in ids):
+        raise ValueError("Invalid native library ID")
+    library=directory/"library.xml"
+    temp=directory/".library.pending.xml"
+    if temp.is_symlink():
+        raise ValueError("Unexpected library symlink")
+    shutil.copyfile(library,temp)
+    try:
+        subprocess.run(["kiwix-manage",temp.name,"remove",*ids],cwd=directory,check=True,timeout=120,capture_output=True)
+        remaining=list(ET.parse(temp).getroot().iter("book"))
+        if any(b.get("id") in ids or b.get("path") in (name,"./"+name) for b in remaining):
+            raise ValueError("Native library removal did not succeed")
+        expected={b.get("id") for b in indexed_books(directory)}-set(ids)
+        if {b.get("id") for b in remaining}!=expected:
+            raise ValueError("Native library removal changed unrelated entries")
         os.chmod(temp,0o644)
         os.replace(temp,library)
     finally:
@@ -85,6 +136,8 @@ class Downloads:
         self.content=Path(content)
         self.stop=threading.Event()
         self.thread=None
+        self.operation=threading.Lock()
+        self.admission=threading.Lock()
 
     @contextmanager
     def db(self):
@@ -109,9 +162,19 @@ class Downloads:
         if self.thread: self.thread.join(timeout=5)
 
     def enqueue(self,key):
+        if not self.admission.acquire(blocking=False):
+            raise ValueError("Local library maintenance in progress; retry shortly")
+        try:
+            return self._enqueue(key)
+        finally:
+            self.admission.release()
+
+    def _enqueue(self,key):
         if key_for_url("https://"+HOST+key)!=key:
             raise ValueError("Choose an official Kiwix archive")
-        name=Path(key).name
+        name=safe_name(Path(key).name)
+        if (self.content/".removed"/name).exists():
+            raise ValueError("Restore or purge the removed archive before downloading again")
         if not self.content.is_dir() or not os.access(self.content,os.W_OK):
             raise ValueError("Content storage is not writable; see upgrade guide")
         with self.db() as con:
@@ -126,6 +189,67 @@ class Downloads:
             con.execute("""INSERT INTO downloads(key,name,state,updated) VALUES (?,?,'queued',?)
                 ON CONFLICT(key) DO UPDATE SET state='queued',detail='',updated=excluded.updated""",(key,name,int(time.time())))
 
+    def local_action(self,name,action):
+        safe_name(name)
+        if action not in ("index","remove","restore","purge"):
+            raise ValueError("Unsupported library action")
+        if not self.admission.acquire(blocking=False):
+            raise ValueError("Local library maintenance already in progress")
+        try:
+            if not self.operation.acquire(blocking=False):
+                raise ValueError("A download is running; retry after it completes")
+            try:
+                with self.db() as con:
+                    if con.execute("SELECT 1 FROM downloads WHERE name=? AND state IN ('queued','downloading','verifying','indexing')",(name,)).fetchone():
+                        raise ValueError("Archive has an active download")
+                source=self.content/name
+                trash=self.content/".removed"
+                removed=trash/name
+                if trash.is_symlink() or source.is_symlink() or removed.is_symlink():
+                    raise ValueError("Refusing symlink archive")
+                if action in ("index","remove"):
+                    if not source.is_file():
+                        raise ValueError("Local archive not found")
+                if action=="index":
+                    index_archive(self.content,name)
+                elif action=="remove":
+                    trash.mkdir(mode=0o700,exist_ok=True)
+                    if removed.exists():
+                        raise ValueError("A removed copy already exists; restore or purge it first")
+                    # Preserve a recoverable copy before changing the index.
+                    os.link(source,removed)
+                    try:
+                        unindex_archive(self.content,name)
+                    except Exception:
+                        removed.unlink()
+                        raise
+                    source.unlink()
+                    with self.db() as con:
+                        con.execute("UPDATE downloads SET state='removed',detail='Moved to removed content',updated=? WHERE name=?",(int(time.time()),name))
+                elif action=="restore":
+                    if not removed.is_file() or source.exists():
+                        raise ValueError("Removed file missing or destination already exists")
+                    os.link(removed,source)
+                    try:
+                        index_archive(self.content,name)
+                    except Exception:
+                        source.unlink()
+                        raise
+                    removed.unlink()
+                    with self.db() as con:
+                        con.execute("UPDATE downloads SET state='complete',detail='Restored local archive',updated=? WHERE name=? AND state='removed'",(int(time.time()),name))
+                else:
+                    if not removed.is_file():
+                        raise ValueError("Removed archive not found")
+                    if source.exists():
+                        raise ValueError("Active copy exists; inspect storage before purging")
+                    removed.unlink()
+                return {"ok":True}
+            finally:
+                self.operation.release()
+        finally:
+            self.admission.release()
+
     def list(self):
         with self.db() as con:
             rows=[dict(row) for row in con.execute("SELECT key,name,state,size,detail,updated FROM downloads ORDER BY updated DESC LIMIT 30")]
@@ -133,7 +257,10 @@ class Downloads:
             part=self.content/(row["name"]+".part")
             final=self.content/row["name"]
             path=final if final.is_file() and not final.is_symlink() else part
-            row["bytes"]=path.stat().st_size if path.is_file() and not path.is_symlink() else 0
+            try:
+                row["bytes"]=path.stat().st_size if path.is_file() and not path.is_symlink() else 0
+            except FileNotFoundError:
+                row["bytes"]=0
         return rows
 
     def update(self,key,state,detail="",size=None,digest=None):
@@ -143,13 +270,14 @@ class Downloads:
 
     def loop(self):
         while not self.stop.is_set():
-            with self.db() as con:
-                row=con.execute("SELECT * FROM downloads WHERE state='queued' ORDER BY updated LIMIT 1").fetchone()
-            if row:
-                try: self.execute(row)
-                except Exception as exc:
-                    self.update(row["key"],"failed",str(exc)[:240])
-            else: self.stop.wait(1)
+            with self.operation:
+                with self.db() as con:
+                    row=con.execute("SELECT * FROM downloads WHERE state='queued' ORDER BY updated LIMIT 1").fetchone()
+                if row:
+                    try: self.execute(row)
+                    except Exception as exc:
+                        self.update(row["key"],"failed",str(exc)[:240])
+            if not row: self.stop.wait(1)
 
     def execute(self,row):
         key,name=row["key"],row["name"]

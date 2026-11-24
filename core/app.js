@@ -131,7 +131,33 @@ async function refreshLocalContent(){
   if(!status?.admin)return;
   const root=$("local-inventory");root.replaceChildren();
   const p=document.createElement("p");p.textContent=bytes(info.free_bytes)+" free on content storage";root.append(p);
-  for(const file of info.files){const line=document.createElement("p");line.textContent=file.name+" — "+bytes(file.size_bytes);root.append(line);}
+  function control(parent,file,action,label,question){
+    const b=document.createElement("button");b.textContent=label;
+    b.addEventListener("click",async()=>{
+      if(question&&!confirm(question))return;
+      b.disabled=true;error("");
+      try{await api("/api/admin/content/local",{name:file.name,action});await refreshLocalContent();await renderDownloads();}
+      catch(e){error(e.message);}finally{b.disabled=false;}
+    });parent.append(b);
+  }
+  for(const file of info.files){
+    const row=document.createElement("article"),line=document.createElement("p");
+    line.textContent=file.name+" — "+bytes(file.size_bytes)+(file.indexed?" · indexed":" · not indexed");
+    row.append(line);
+    if(!file.indexed)control(row,file,"index","Add to library");
+    control(row,file,"remove","Remove","Remove "+file.name+" from the library? A recoverable copy will be kept.");
+    root.append(row);
+  }
+  if(info.removed?.length){
+    const h=document.createElement("h4");h.textContent="Removed archives (still use storage)";root.append(h);
+    for(const file of info.removed){
+      const row=document.createElement("article"),line=document.createElement("p");
+      line.textContent=file.name+" — "+bytes(file.size_bytes);row.append(line);
+      control(row,file,"restore","Restore");
+      control(row,file,"purge","Delete permanently","Permanently delete "+file.name+" and reclaim its storage? This cannot be undone.");
+      root.append(row);
+    }
+  }
   if(!info.files.length){const p=document.createElement("p");p.textContent="No local ZIM files found.";root.append(p);}
 }
 $("local-content").addEventListener("click",()=>refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;}));
