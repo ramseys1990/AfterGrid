@@ -306,6 +306,112 @@ def pack(root,inventory,destination,modules,password,*,require_sealed=False,ackn
         shutil.rmtree(destination)
         raise
 
+def source_containers(root):
+    """Identify exact reviewed containers bound to this source installation."""
+    root=assets.real_directory(root)
+    assets.local_docker()
+    projects={"aftergrid-core":{"core","worker"},**{"aftergrid-"+m:{m} for m in assets.MODULES}}
+    result={}
+    raw=assets.docker("ps","--all","--no-trunc","--filter","label=com.docker.compose.project",
+                      "--format",'{{json .ID}} {{json .Label "com.docker.compose.project"}}')
+    for line in raw.splitlines():
+        decoder=json.JSONDecoder()
+        cid,end=decoder.raw_decode(line)
+        project=json.loads(line[end:].strip())
+        if not project.startswith("aftergrid-"):continue
+        if project not in projects or not re.fullmatch(r"[a-f0-9]{64}",cid):
+            raise ValueError("Unexpected AfterGrid project or container")
+        obj=json.loads(assets.docker("container","inspect","--format","{{json .}}",cid))
+        labels=obj["Config"]["Labels"]
+        service=labels.get("com.docker.compose.service")
+        state=obj["State"]["Status"]
+        if (obj["Id"]!=cid or labels.get("com.docker.compose.project")!=project
+            or service not in projects[project] or service in result
+            or str(labels.get("com.docker.compose.oneoff","false")).lower()=="true"
+            or state not in {"running","exited","created"}
+            or not assets.IMAGE_ID.fullmatch(obj["Image"])):
+            raise ValueError("Unexpected or ambiguous AfterGrid container")
+        binds={m["Destination"]:Path(m["Source"]) for m in obj["Mounts"] if m["Type"]=="bind"}
+        # Every reviewed module has at least one installation bind. The worker
+        # also has the known Docker socket; never accept arbitrary host mounts.
+        expected={"core":("/data",root/"data/core"),"worker":("/modules",root/"modules"),
+                  "kopia":("/repository",root/"backups")}.get(service)
+        if expected and binds.get(expected[0])!=expected[1]:raise ValueError("Source root mismatch")
+        local=[p for dest,p in binds.items() if not (service=="worker" and dest=="/var/run/docker.sock" and p==Path("/var/run/docker.sock"))]
+        if not local or any(root not in p.parents or ".." in p.parts for p in local):
+            raise ValueError("Container bind outside source root")
+        result[service]={"id":cid,"image_id":obj["Image"],"project":project,"state":state}
+    if not {"core","worker","kopia"}<=result.keys():raise ValueError("Core, worker and Kopia containers required")
+    return result
+
+
+def source_identity(rows):
+    return {k:{n:v[n] for n in ("id","image_id","project")} for k,v in rows.items()}
+
+
+def resume_source(root):
+    """Restart only containers recorded as running; never recreate or pull."""
+    if os.geteuid()!=0:raise ValueError("Root required")
+    root=assets.real_directory(root)
+    journal=root/"recovery-source-restart.json"
+    saved=json.loads(prep.read_private(journal,65536))
+    if saved.get("format")!=1 or saved.get("root")!=str(root):
+        raise ValueError("Invalid source restart journal")
+    expected=saved["containers"]
+    current=source_containers(root)
+    if source_identity(current)!=source_identity(expected):raise ValueError("Source container identities changed; inspect manually")
+    if any(row["state"]!="running" and current[k]["state"]=="running" for k,row in expected.items()):
+        raise ValueError("Previously inactive container is running; inspect manually")
+    order=["kopia",*sorted(set(expected)-{"kopia","core","worker"}),"worker","core"]
+    for name in order:
+        row=expected[name]
+        if row["state"]=="running" and current[name]["state"]!="running":
+            assets.docker("start",row["id"],timeout=90)
+    final=source_containers(root)
+    if source_identity(final)!=source_identity(expected) or any(
+        (row["state"]=="running")!=(final[name]["state"]=="running") for name,row in expected.items()):
+        raise ValueError("Prior source running state not restored")
+    journal.unlink()
+
+
+def pack_and_resume(root,inventory,destination,modules,password,*,acknowledge_blocked=False):
+    """Host-only sealed handoff. Preserve exact source container running state."""
+    if os.geteuid()!=0:raise ValueError("Root required")
+    root=assets.real_directory(root)
+    destination=install.validate_root(destination)
+    if root in destination.parents or destination in root.parents:raise ValueError("Package must be outside installation")
+    raw=prep.read_private(inventory,65536)
+    package_handoff(root,raw,modules,True)
+    records=inventory_core_records(json.loads(raw))
+    for module in modules:data.required_records(records,module)
+    if not password or len(password)>1024:raise ValueError("Repository password required")
+    rows=source_containers(root)
+    validate_package_scope(set(rows)-{"core","worker"},modules,acknowledge_blocked)
+    if any(rows[k]["state"]!="running" for k in ("core","worker","kopia")):
+        raise ValueError("Source core, worker and Kopia must be running before handoff")
+    journal=root/"recovery-source-restart.json"
+    prep.private_write(journal,json.dumps({"format":1,"root":str(root),"containers":rows},indent=2).encode())
+    try:
+        # Stop portal and worker first; sealed admission has already checked
+        # idle work. Then stop app containers and the repository last.
+        for name in ["core","worker",*sorted(set(rows)-{"core","worker","kopia"}),"kopia"]:
+            if rows[name]["state"]=="running":
+                current=source_containers(root)
+                if source_identity(current)!=source_identity(rows):raise ValueError("Source container identities changed")
+                if current[name]["state"]!="running":raise ValueError("Source running state changed")
+                assets.docker("stop","--time","60",rows[name]["id"],timeout=90)
+        require_quiescent()
+        if source_identity(source_containers(root))!=source_identity(rows):raise ValueError("Source container identities changed")
+        report=pack(root,inventory,destination,modules,password,require_sealed=True,acknowledge_blocked=acknowledge_blocked)
+        if verify_package(destination)!=report:raise ValueError("Package verification mismatch")
+        return report
+    finally:
+        # On ordinary failure, restore prior running state where identities
+        # still match. If restart fails, journal remains for explicit resume.
+        # Maintenance remains sealed until the administrator releases it.
+        resume_source(root)
+
+
 def verify_package(directory):
     directory=assets.real_directory(directory)
     if {p.name for p in directory.iterdir()}!={"assets","inventory.json","repository","package.json"}:
@@ -630,6 +736,14 @@ def main():
     bundle.add_argument("--confirm-quiescent",action="store_true")
     bundle.add_argument("--require-sealed",action="store_true")
     bundle.add_argument("--acknowledge-blocked",action="store_true",help="Acknowledge that captured MicroTAK data is excluded from recovery")
+    handoff=sub.add_parser("pack-and-resume")
+    for name in ("root","inventory","destination"):handoff.add_argument("--"+name,required=True,type=Path)
+    handoff.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
+    handoff.add_argument("--confirm-maintenance-downtime",action="store_true")
+    handoff.add_argument("--acknowledge-blocked",action="store_true")
+    resume=sub.add_parser("resume-source")
+    resume.add_argument("--root",required=True,type=Path)
+    resume.add_argument("--confirm-resume",action="store_true")
     release=sub.add_parser("release-maintenance")
     release.add_argument("--url",required=True)
     release.add_argument("--origin")
@@ -674,6 +788,15 @@ def main():
                 try:call("/api/logout",{})
                 except Exception:print("Portal logout not confirmed; session will expire.",flush=True)
             print("Recovery maintenance released.")
+        elif args.action=="pack-and-resume":
+            if not args.confirm_maintenance_downtime:raise ValueError("Confirm source service downtime")
+            report=pack_and_resume(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "),acknowledge_blocked=args.acknowledge_blocked)
+            print("Package verified; original container running state restored. Inspect native readiness and explicitly release maintenance.")
+            print("Omitted captured modules: "+(", ".join(report["omitted_captured"]) or "none"))
+        elif args.action=="resume-source":
+            if not args.confirm_resume:raise ValueError("Confirm source restart journal and source inspection")
+            resume_source(args.root)
+            print("Original container running state restored. Inspect native readiness before releasing maintenance.")
         elif args.action=="pack":
             if not args.confirm_quiescent:raise ValueError("Confirm source maintenance and quiescent repository")
             report=pack(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "),require_sealed=args.require_sealed,acknowledge_blocked=args.acknowledge_blocked)
