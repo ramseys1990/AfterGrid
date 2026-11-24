@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0-dev
+- Add optional native MeshMonitor module for Meshtastic and MeshCore, generated initial credentials, disabled anonymous access, explicit LAN sharing and preserved native data.
+- No automatic source or hardware connection; native messaging/monitoring acceptance pending.
+- Pin CI to Ubuntu 24.04 for the existing Playwright runtime; bounded retry for known transient registry throttling in disposable install tests. Previous place/search CI passed; repeated graph update and browser test results still pending.
+
+
 ### Browser acceptance follow-up
 - Add pinned Playwright Chromium test in disposable CI with off-server browser HTTP(S) requests blocked and recorded. Exercise real raster map rendering, region presets, route overlay, search, saved plans and guest access.
 - Keep route/waypoint rendering enabled after the map's initial load even while subsequent tiles load. New browser CI pending.

@@ -1,0 +1,17 @@
+{
+  "id": "meshmonitor",
+  "name": "MeshMonitor (Meshtastic / MeshCore)",
+  "category": "Communications",
+  "description": "Native local mesh messaging and monitoring interface for compatible Meshtastic and MeshCore devices.",
+  "port": 8085,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-meshmonitor:3001/api/health",
+  "upstream": "https://meshmonitor.org/",
+  "loopback_only": true,
+  "lan_shareable": true,
+  "generated_secrets": [
+    "MESHMONITOR_ADMIN_PASSWORD",
+    "MESHMONITOR_SESSION_SECRET"
+  ],
+  "setup_note": "Reveal the generated first-login credentials as AfterGrid administrator. Native login is required. Add your own compatible LAN radio in MeshMonitor Sources. No radio or internet broker is configured automatically. Explicitly enable trusted LAN access after setup."
+}

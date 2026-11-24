@@ -20,8 +20,19 @@ def module(ident="kiwix"):
     return next(m for m in api("/api/modules") if m["id"]==ident)
 
 def action(name, ident="kiwix"):
-    job_id=api("/api/admin/modules/"+ident+"/"+name,{})["id"]
-    wait_job(job_id,name)
+    # Only retry a known transient registry pull failure; never retry graph
+    # switches or other state-changing jobs on arbitrary failures.
+    for attempt in range(3):
+        job_id=api("/api/admin/modules/"+ident+"/"+name,{})["id"]
+        try:
+            wait_job(job_id,name)
+            return
+        except AssertionError as exc:
+            job=exc.args[0] if exc.args else None
+            if not (attempt<2 and name=="install" and isinstance(job,dict) and job.get("completed")==1 and any(x in job.get("log","").lower() for x in ("retry-after","too many requests","toomanyrequests","429"))):
+                raise
+            print("Registry throttled; retrying install after bounded delay",ident,flush=True)
+            time.sleep(10*(attempt+1))
 
 def wait_job(job_id,name):
     deadline=time.monotonic()+240
@@ -229,3 +240,28 @@ print("Native routing graph, three costing modes and lifecycle passed.")
 
 assert api("/api/maps/places?q=Vaduz")["results"]
 print("Place index remains accessible with routing uninstalled.")
+
+# Native MeshMonitor lifecycle without radio hardware or remote broker.
+action("install","meshmonitor")
+assert module("meshmonitor")["status"]=="running"
+creds=api("/api/admin/meshmonitor/credentials",{})
+assert len(creds["initial_password"])==64 and creds["username"]=="admin"
+meshbase="http://127.0.0.1:8085"
+native=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+def mesh_login(password):
+    req=urllib.request.Request(meshbase+"/api/auth/login",data=json.dumps({"username":"admin","password":password}).encode(),headers={"Origin":meshbase,"Content-Type":"application/json"})
+    with native.open(req,timeout=20) as res:return json.load(res)
+assert mesh_login(creds["initial_password"])["success"]
+action("share","meshmonitor")
+assert module("meshmonitor")["shared"]
+action("unshare","meshmonitor")
+assert not module("meshmonitor")["shared"]
+action("stop","meshmonitor")
+assert module("meshmonitor")["status"]=="stopped"
+action("start","meshmonitor")
+assert module("meshmonitor")["status"]=="running"
+assert mesh_login(creds["initial_password"])["success"]
+action("uninstall","meshmonitor")
+assert module("meshmonitor")["status"]=="not installed"
+assert Path("data/meshmonitor").is_dir()
+print("MeshMonitor native login, sharing and lifecycle passed; no radio hardware tested.")

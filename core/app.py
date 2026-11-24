@@ -51,8 +51,7 @@ CATALOG = [
     ("grocy", "Grocy", "Consumables and recipes", "Inventory"),
     ("kopia", "Kopia", "Encrypted backups", "System"),
     ("maps", "Offline maps and routing", "Regional maps and navigation", "Navigation"),
-    ("meshtastic", "Meshtastic", "LoRa communications", "Communications"),
-    ("meshcore", "MeshCore", "Mesh communications", "Communications"),
+    ("meshmonitor", "MeshMonitor (Meshtastic / MeshCore)", "Local mesh communications", "Communications"),
     ("tak", "TAK", "Shared situational awareness", "Communications"),
     ("kolibri", "Kolibri", "Offline education", "Knowledge"),
     ("media", "Media library", "Offline videos and manuals", "Knowledge"),
@@ -129,7 +128,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.10-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.6.0-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -347,7 +346,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.10-dev"}
+                "version": "0.6.0-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -626,6 +625,20 @@ def create_app(data_dir=None):
             return any(addr in ipaddress.IPv4Network(n) for n in ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"))
         except ValueError:
             return False
+
+    @api.post("/api/admin/meshmonitor/credentials")
+    def meshmonitor_credentials(request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not local_credential_origin():
+            raise HTTPException(403,"Use the configured private LAN or trusted HTTPS portal to reveal credentials")
+        try:
+            code,result=call("/credentials/meshmonitor")
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=200:
+            raise HTTPException(code if code==404 else 502,result.get("detail","Module manager request failed"))
+        return result
 
     @api.post("/api/admin/kopia/credentials")
     def kopia_credentials(request: Request):

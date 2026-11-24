@@ -1,0 +1,29 @@
+services:
+  meshmonitor:
+    image: ghcr.io/yeraze/meshmonitor:4.18.0
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      COOKIE_SECURE: "false"
+      COOKIE_SAMESITE: strict
+      TRUST_PROXY: "false"
+      DISABLE_ANONYMOUS: "true"
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: "${MESHMONITOR_ADMIN_PASSWORD:?required}"
+      SESSION_SECRET: "${MESHMONITOR_SESSION_SECRET:?required}"
+      ALLOWED_ORIGINS: "${AFTERGRID_MESHMONITOR_ORIGINS:-http://localhost:8085,http://127.0.0.1:8085}"
+      TZ: UTC
+      PUID: "10001"
+      PGID: "10001"
+    ports:
+      - "${AFTERGRID_MODULE_BIND:-127.0.0.1}:8085:3001"
+    volumes:
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/data/meshmonitor:/data"
+    networks:
+      apps:
+        aliases: [aftergrid-meshmonitor]
+    security_opt: ["no-new-privileges:true"]
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps

@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.5.10-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.6.0-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -72,3 +72,5 @@ Offline point search uses native Osmium and SQLite FTS5, with an explicit admini
 Repeatable routing updates alternate the two graph slots. Archive the inactive slot through the portal to retain both its source and graph, then acquire another source and build the newly vacant slot. Archiving does not free disk space; no automatic deletion. The current graph stays selected during preparation. New lifecycle coverage pending.
 
 Browser acceptance uses a fresh Chromium context, blocks all off-server browser HTTP(S) requests and checks local raster PMTiles range loading, region presets, route overlay, place search, saved route/waypoint persistence and guest access. This is not a physical LAN WAN-disconnection test or proof of server egress isolation; styled vector label rendering is a separate gate. CI results pending.
+
+Optional [MeshMonitor](modules/meshmonitor/README.md) provides one native local interface for Meshtastic and MeshCore. Generated initial login, explicit LAN sharing, persistent native data; no automatic radio connection, broker or USB bridge. Native radio and disconnected acceptance pending.

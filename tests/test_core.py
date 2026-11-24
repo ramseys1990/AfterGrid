@@ -144,3 +144,16 @@ def test_local_content_mutation_requires_admin_and_origin(tmp_path,monkeypatch):
         assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
         assert client.post("/api/admin/content/local",json=body).status_code==403
         assert client.post("/api/admin/content/local",json=body,headers=ORIGIN).status_code==409
+
+
+def test_meshmonitor_credentials_admin_only(tmp_path,monkeypatch):
+    from core import app as core_app
+    monkeypatch.setenv("AFTERGRID_ORIGIN","http://127.0.0.1:8080")
+    monkeypatch.setattr(core_app,"call",lambda path:(200,{"username":"admin","initial_password":"initial-secret"}))
+    (tmp_path/"setup-token").write_text("token")
+    origin={"Origin":"http://127.0.0.1:8080"}
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.post("/api/admin/meshmonitor/credentials",json={},headers=origin).status_code==401
+        assert client.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=origin).status_code==201
+        assert client.post("/api/admin/meshmonitor/credentials",json={}).status_code==403
+        assert client.post("/api/admin/meshmonitor/credentials",json={},headers=origin).json()["initial_password"]=="initial-secret"

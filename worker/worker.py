@@ -120,6 +120,7 @@ def sharing_env(ident):
         "AFTERGRID_MODULE_BIND": LAN_BIND if enabled else "127.0.0.1",
         "AFTERGRID_HOMEBOX_REGISTRATION": "false" if closed or enabled else "true",
         "AFTERGRID_MODULE_URL": lan_url(ident,manifest) if enabled else "",
+        **({"AFTERGRID_MESHMONITOR_ORIGINS":",".join(["http://localhost:8085","http://127.0.0.1:8085"]+([lan_url(ident,manifest)] if enabled else []))} if ident=="meshmonitor" else {}),
     }
 
 def compose_env(ident, create=False):
@@ -387,6 +388,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json(200, [public_module(i,m) for i,m in catalog().items()])
         if self.path == "/jobs":
             return self.send_json(200, jobs())
+        if self.path == "/credentials/meshmonitor" and "meshmonitor" in catalog():
+            if not (STATE / "secrets" / "meshmonitor.json").is_file():
+                return self.send_json(404, {"detail":"Install MeshMonitor first"})
+            values=module_secrets("meshmonitor")
+            return self.send_json(200,{"username":"admin","initial_password":values["MESHMONITOR_ADMIN_PASSWORD"]})
         if self.path == "/credentials/kopia" and "kopia" in catalog():
             if not (STATE / "secrets" / "kopia.json").is_file():
                 return self.send_json(404, {"detail": "Install Kopia first"})

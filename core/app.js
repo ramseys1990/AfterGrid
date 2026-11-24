@@ -46,6 +46,15 @@ async function renderModules(){
         if(mod.loopback_only && !mod.shared && !["127.0.0.1","localhost"].includes(location.hostname)){
           const note=document.createElement("small");note.textContent="Local setup only. SSH forward port "+mod.port+" and open http://127.0.0.1:"+mod.port;card.append(note);
         }
+        if(mod.id==="meshmonitor" && mod.status==="running"){
+          const reveal=document.createElement("button");reveal.textContent="Show initial MeshMonitor credentials";
+          const credentials=document.createElement("pre");credentials.hidden=true;
+          reveal.addEventListener("click",async()=>{
+            if(!credentials.hidden){credentials.textContent="";credentials.hidden=true;reveal.textContent="Show initial MeshMonitor credentials";return;}
+            if(location.protocol!=="https:"&&!["127.0.0.1","localhost"].includes(location.hostname)&&!confirm("Initial credentials will travel over unencrypted HTTP. Continue only on a trusted LAN?"))return;
+            try{const c=await api("/api/admin/meshmonitor/credentials",{});credentials.textContent="Username: "+c.username+"\nInitial password: "+c.initial_password+"\nIf changed in MeshMonitor, use your new password.";credentials.hidden=false;reveal.textContent="Hide credentials";}catch(e){error(e.message);}
+          });card.append(reveal,credentials);
+        }
         if(mod.id==="kopia" && mod.status==="running"){
           const reveal=document.createElement("button");reveal.textContent="Show backup credentials";
           const credentials=document.createElement("pre");credentials.hidden=true;
@@ -61,7 +70,7 @@ async function renderModules(){
           const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+" HTTP is unencrypted.";card.append(note);
         }else if(mod.share_available){
           const note=document.createElement("p");note.textContent=(mod.lan_dns?"Add a local DNS record for "+new URL(mod.lan_url).hostname+". ":"")+"Complete native account setup before sharing. LAN URL: "+mod.lan_url;card.append(note);
-        }else if(["homebox","grocy","kopia"].includes(mod.id)){
+        }else if(["homebox","grocy","kopia","meshmonitor"].includes(mod.id)){
           const note=document.createElement("small");note.textContent="LAN sharing needs a private LAN bind configured on the server; see the LAN setup guide.";card.append(note);
         }
         if(mod.shared && mod.status!=="not installed")actions.push("unshare");
@@ -70,7 +79,7 @@ async function renderModules(){
         for(const action of actions){
           const b=document.createElement("button");b.textContent=action==="share"?"Share on LAN":action==="unshare"?"Return to local-only":action;b.addEventListener("click",async()=>{
             if(action==="share"){
-              const warning=mod.id==="homebox"?"Confirm you created your Homebox account. Sharing closes public registration.":mod.id==="grocy"?"Confirm you changed Grocy's default administrator password.":"Kopia uses its generated native administrator password. Keep it private.";
+              const warning=mod.id==="homebox"?"Confirm you created your Homebox account. Sharing closes public registration.":mod.id==="grocy"?"Confirm you changed Grocy's default administrator password.":mod.id==="meshmonitor"?"MeshMonitor requires native login. Confirm native account setup and permissions. Keep the initial password private.":"Kopia uses its generated native administrator password. Keep it private.";
               if(!confirm(warning+" "+(mod.lan_dns?"Confirm local DNS is configured. ":"")+"LAN HTTP is unencrypted. Continue only on a trusted LAN?"))return;
             }
             if(action==="unshare"&&!confirm("Return to loopback-only access? This recreates and starts the application while keeping its data."))return;
