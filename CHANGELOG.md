@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1-dev
+- Connect native Homebox and Grocy API keys, discover locations and populate household mappings.
+- On-demand administrator-only Homebox item-record counts and Grocy stock totals by product and native stock unit at mapped locations.
+- Fixed internal URLs, GET-only native requests, bounded responses, no arbitrary browser URLs and no key readback. Native credentials remain sensitive local SQLite data.
+- Unit and access tests added; native service API response and live reporting acceptance pending.
+
+
 ## 0.4.0-dev
 - Shared household directory and filter; administrator-only editing and deleting.
 - Manual Homebox/Grocy native location references with independent owning and storage households; shared/unassigned supported.

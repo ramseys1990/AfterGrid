@@ -278,7 +278,7 @@ function renderDirectory(){
   const filter=$("household-filter").value;
   const admin=!!status?.admin;
   $("household-editor").hidden=!admin;
-  if(!admin){$("household-form").reset();$("location-form").reset();$("household-message").textContent="";}
+  if(!admin){$("household-form").reset();$("location-form").reset();$("inventory-connect").reset();$("inventory-connections").replaceChildren();$("native-locations").replaceChildren();$("household-message").textContent="";}
   const root=$("household-list");root.replaceChildren();
   for(const h of directory.households){
     if(filter&&String(h.id)!==filter)continue;
@@ -304,6 +304,18 @@ function renderDirectory(){
     ref.textContent="Native location ID: "+l.native_id;card.append(title,detail,ref);
     if(admin){
       directoryButton(card,"Edit reference",()=>{const form=$("location-form");for(const key of ["id","module","native_id","label","owner_id","storage_id"])form.elements[key].value=l[key]??"";form.scrollIntoView();});
+      const report=document.createElement("div");
+      directoryButton(card,"Live inventory",async()=>{
+        report.textContent="Reading native inventory…";
+        try{
+          const r=await api("/api/admin/inventory/report/"+l.id);
+          report.replaceChildren();
+          if(r.module==="homebox"){report.textContent=r.item_records+" item records in "+r.location+" (not unit quantity; excludes child locations).";}
+          else if(!r.products.length){report.textContent="No stock entries in "+r.location+".";}
+          else for(const p of r.products){const line=document.createElement("p");line.textContent=p.product+": "+p.amount+" "+p.unit;report.append(line);}
+        }catch(e){report.textContent=e.message;}
+      });
+      card.append(report);
       directoryButton(card,"Remove reference",async()=>{if(confirm("Remove this AfterGrid reference only? Native inventory is not changed."))await changeDirectory("/locations/delete",{id:l.id});});
     }
     locations.append(card);
@@ -318,6 +330,7 @@ async function refreshHouseholds(){
     const select=$("location-form").elements[key];householdOptions(select,"Shared / unassigned",select.value);
   }
   renderDirectory();
+  if(status?.admin)await refreshInventoryConnections();
 }
 $("household-filter").addEventListener("change",renderDirectory);
 $("household-refresh").addEventListener("click",()=>refreshHouseholds().catch(e=>{$("household-message").textContent=e.message;}));
@@ -333,4 +346,44 @@ $("location-form").addEventListener("submit",async event=>{
   try{await changeDirectory("/locations",v);form.reset();}catch(e){$("household-message").textContent=e.message;}
 });
 
+async function refreshInventoryConnections(){
+  const result=await api("/api/admin/inventory/connections");
+  if(!status?.admin)return;
+  const root=$("inventory-connections");root.replaceChildren();
+  for(const [module,connected] of Object.entries(result)){
+    const row=document.createElement("article"),p=document.createElement("p");
+    p.textContent=module+" — "+(connected?"Key saved":"Not connected");row.append(p);
+    if(connected){
+      directoryButton(row,"Discover locations",async()=>showNativeLocations(module,(await api("/api/admin/inventory/locations/"+module)).locations));
+      directoryButton(row,"Disconnect",async()=>{
+        if(!confirm("Forget the saved API key? Native inventory and location mappings remain unchanged."))return;
+        await api("/api/admin/inventory/disconnect",{module});$("native-locations").replaceChildren();await refreshInventoryConnections();
+      });
+    }
+    root.append(row);
+  }
+}
+function showNativeLocations(module,locations){
+  if(!status?.admin)return;
+  const root=$("native-locations");root.replaceChildren();
+  if(!locations.length){root.textContent="No native locations found.";return;}
+  for(const l of locations){
+    const row=document.createElement("article"),p=document.createElement("p");p.textContent=l.label;row.append(p);
+    directoryButton(row,"Use location",()=>{
+      const existing=directory.locations.find(x=>x.module===module&&x.native_id===l.native_id);
+      const form=$("location-form");form.reset();
+      form.elements.module.value=module;form.elements.native_id.value=l.native_id;form.elements.label.value=l.label;
+      if(existing)for(const key of ["id","owner_id","storage_id"])form.elements[key].value=existing[key]??"";
+      form.scrollIntoView();
+    });
+    root.append(row);
+  }
+}
+$("inventory-connect").addEventListener("submit",async event=>{
+  event.preventDefault();const form=event.currentTarget,button=form.querySelector("button");button.disabled=true;
+  const data=Object.fromEntries(new FormData(form));form.elements.key.value="";
+  try{const r=await api("/api/admin/inventory/connect",data);await refreshInventoryConnections();showNativeLocations(data.module,r.locations);$("household-message").textContent="Native key saved; select a location.";}
+  catch(e){$("household-message").textContent=e.message;}
+  finally{button.disabled=false;}
+});
 refresh().catch(e=>error(e.message));

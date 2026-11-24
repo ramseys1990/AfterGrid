@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.4.0-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.4.1-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -49,4 +49,4 @@ Local archive management: copy trusted ZIMs to content/kiwix (USB or LAN transfe
 
 ## Households
 
-The shared LAN directory supports household names and manual native Homebox/Grocy location references, with separate ownership and storage households. Only the local administrator edits the directory. No personal accounts or duplicate inventory databases. Counts describe mapped locations, not stock quantities. Automatic native API discovery and live reporting are not yet implemented. Do not put sensitive details in the shared labels.
+The shared LAN directory supports household names and manual native Homebox/Grocy location references, with separate ownership and storage households. Only the local administrator edits the directory. No personal accounts or duplicate inventory databases. Counts describe mapped locations, not stock quantities. The administrator can connect native API keys, discover locations and request live location reports. Family-wide live reporting is not yet enabled. Do not put sensitive details in the shared labels.

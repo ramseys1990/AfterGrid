@@ -14,6 +14,9 @@ services:
       - ./data/core:/data
       - ./content/kiwix:/content/kiwix
       - worker_socket:/run/aftergrid:ro
+    networks:
+      - default
+      - apps
     depends_on:
       worker:
         condition: service_healthy

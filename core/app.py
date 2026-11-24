@@ -23,11 +23,13 @@ try:
     from .content import search_catalog, local_inventory, CatalogUnavailable
     from .downloads import Downloads
     from .households import Households
+    from .inventory import Inventory, InventoryError
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
     from downloads import Downloads
     from households import Households
+    from inventory import Inventory, InventoryError
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -69,6 +71,7 @@ def create_app(data_dir=None):
     configured_origin = os.environ.get("AFTERGRID_ORIGIN", "").rstrip("/")
     downloads = Downloads(data, os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
     households = Households(data)
+    inventory = Inventory(data)
     attempts = deque()
     lock = threading.Lock()
 
@@ -98,13 +101,14 @@ def create_app(data_dir=None):
             """)
             con.execute("INSERT OR IGNORE INTO first_run(id,token) VALUES (1,?)", (secrets.token_hex(24),))
         households.init()
+        inventory.init()
         downloads.start()
         try:
             yield
         finally:
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.4.0-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.4.1-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -174,7 +178,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.4.0-dev"}
+                "version": "0.4.1-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -246,6 +250,47 @@ def create_app(data_dir=None):
     @api.post("/api/admin/households/locations/delete")
     def location_delete(payload: DeleteRequest,request: Request):
         return household_change(request,lambda:households.delete_location(payload.id))
+
+    class InventoryConnection(BaseModel):
+        module: str = Field(max_length=16)
+        key: str = Field(default="",max_length=1024)
+
+    def inventory_result(operation):
+        try:
+            return operation()
+        except ValueError as exc:
+            raise HTTPException(400,str(exc))
+        except InventoryError as exc:
+            raise HTTPException(503,str(exc))
+
+    @api.get("/api/admin/inventory/connections")
+    def inventory_status(request: Request):
+        require_admin(request)
+        return inventory.status()
+
+    @api.post("/api/admin/inventory/connect")
+    def inventory_connect(payload: InventoryConnection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        return inventory_result(lambda: {"locations":inventory.save(payload.module,payload.key)})
+
+    @api.post("/api/admin/inventory/disconnect")
+    def inventory_disconnect(payload: InventoryConnection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        return inventory_result(lambda: {"ok":inventory.disconnect(payload.module) is None})
+
+    @api.get("/api/admin/inventory/locations/{module}")
+    def inventory_discover(module: str,request: Request):
+        require_admin(request)
+        return inventory_result(lambda: {"locations":inventory.discover(module)})
+
+    @api.get("/api/admin/inventory/report/{ident}")
+    def inventory_report(ident: int,request: Request):
+        require_admin(request)
+        location=next((r for r in households.view()["locations"] if r["id"]==ident),None)
+        if location is None: raise HTTPException(404,"Location mapping not found")
+        return inventory_result(lambda: inventory.report(location))
 
     @api.get("/api/admin/content/downloads")
     def content_downloads(request: Request):
