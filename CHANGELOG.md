@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.21-dev
+- Start restored modules explicitly using exact local images and restoration receipts while core-only recovery protection remains active. Validate mounts, loopback ports, credentials and readiness.
+- Add native read-only Kiwix restore fixture; continue unrelated integration checks after only the known MicroTAK backup refusal with confirmed restart. Keep TAK missing in recovery inventory. CI pending.
+
 ## 0.8.20-dev
 - Restore exact verified application and offline-content snapshots into a staged replacement root using a network-isolated native Kopia helper and read-only repository.
 - Preserve native ownership, refuse non-placeholder destinations and unsafe restored file types, record per-module restoration receipts. CI pending; optional startup not included.

@@ -45,3 +45,17 @@ def test_native_restore_exact_readonly_mount(tmp_path,monkeypatch):
     restored=data.native_restore("fixture",repo,stage,"fixture-password","/source/content/maps","a"*32)
     assert (restored/"archive").read_bytes()==b"fixture"
     assert "--readonly" in calls[0] and calls[-1][-2:]==["a"*32,"/work/data"]
+
+
+def test_module_config_no_pull_and_local_mount(tmp_path):
+    p=tmp_path/"content/maps"
+    p.mkdir(parents=True)
+    row={"recovery_tag":"aftergrid-recovery/maps:fixture"}
+    definition={"image":row["recovery_tag"],"pull_policy":"never","ports":[{"host_ip":"127.0.0.1"}],
+                "volumes":[{"type":"bind","source":str(p),"target":"/data"}],"networks":{"apps":{}}}
+    data.validate_module_config(tmp_path,"maps",definition,row)
+    definition["ports"][0]["host_ip"]="0.0.0.0"
+    with pytest.raises(ValueError):data.validate_module_config(tmp_path,"maps",definition,row)
+    definition["ports"][0]["host_ip"]="127.0.0.1"
+    definition["volumes"][0]["source"]="/var/run/docker.sock"
+    with pytest.raises(ValueError):data.validate_module_config(tmp_path,"maps",definition,row)

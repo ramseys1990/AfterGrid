@@ -101,3 +101,16 @@ sudo python3 recovery_data.py --root /opt/aftergrid \
 ```
 
 Supported sources are Grocy, Homebox, MeshMonitor, MicroTAK, Kolibri, notes, Kiwix, maps, routing and Jellyfin (both configuration and media). A verified inventory entry and matching captured image are required; MicroTAK remains blocked until its consistent snapshot passes. The downloaded inventory must match staged core/worker job IDs and worker digest. A locally imported Kopia container runs with no network and read-only repository mount, connects read-only using the recovered password, locates the exact native manifest by ID and source, checks completeness and restores into a new private directory on the replacement filesystem. Restored ownership is retained; symlinks and special files are refused. Only known empty placeholders are replaced. A per-module receipt records snapshot IDs and inventory checksum. Re-run only after inspecting any failed partial restoration. Kopia repository connection and optional app startup are separate. This workflow does not claim atomic multi-source capture or application startup acceptance. CI pending.
+
+
+## Start a restored optional module
+
+After all selected data has been restored and the guarded core started, explicitly start each desired restored module:
+
+```sh
+sudo python3 recovery_data.py --root /opt/aftergrid \
+  --assets /secure/aftergrid-assets --inventory /secure/recovery-inventory.json \
+  --module kiwix --start --confirm-replacement
+```
+
+The host command requires a matching unused restoration receipt and exact imported image, verifies the guarded core containers, preserves existing generated credentials, checks reviewed Compose mounts and loopback-only ports, and starts with --no-build --pull never. It checks the running image ID and existing worker readiness probe, then records readiness in the receipt. This is not full native login/content acceptance. The core-only guard remains active; do not disable it manually. Optional worker lifecycle mapping, Kopia repository reconnection, and reviewed recovery completion still need development. A failed start may leave a replacement container; inspect manually. MicroTAK remains blocked rather than silently skipped in the recovery inventory.

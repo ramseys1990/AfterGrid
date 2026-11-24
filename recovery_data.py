@@ -12,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import recovery_install as installation
 from pathlib import Path
 
 import recovery_assets as assets
@@ -161,6 +162,8 @@ def restore_module(root,assets_dir,repository,inventory,module):
         placeholder(root,relative)
     workspace=Path(tempfile.mkdtemp(prefix=".restore-"+module+"-",dir=root))
     published=[]
+    cache_created=False
+    rollback_complete=False
     try:
         for index,(_,source,relative,sid) in enumerate(required):
             current=workspace/str(index)
@@ -178,33 +181,141 @@ def restore_module(root,assets_dir,repository,inventory,module):
         if module=="media":
             cache=root/"data/media/cache"
             cache.mkdir(mode=0o700)
+            cache_created=True
             os.chown(cache,10001,10001)
         prep.private_write(receipt,json.dumps({"format":1,"module":module,
             "inventory_sha256":assets.sha256_file(inventory),
             "snapshots":{key:sid for key,_,_,sid in required},
             "native_restore":True,"application_started":False},indent=2).encode())
+        rollback_complete=True
     except Exception:
-        for target,old,had in reversed(published):
+        if cache_created:(root/"data/media/cache").rmdir()
+        for index,(target,old,had) in enumerate(reversed(published)):
             # Move only the new data we published, then put placeholders back.
-            target.rename(workspace/("failed-"+str(len(published))+"-"+target.name))
+            target.rename(workspace/("failed-"+str(index)))
             if had:old.rename(target)
+        rollback_complete=True
         raise
     finally:
-        shutil.rmtree(workspace)
+        # If rollback itself failed, retain the workspace for operator inspection.
+        if rollback_complete:shutil.rmtree(workspace)
+
+def module_command(root,module):
+    folder=root/"modules"/module
+    return ["docker","compose","--project-name","aftergrid-"+module,
+            "--project-directory",str(folder),"--file",str(folder/"compose.yaml"),
+            "--file",str(root/"recovery-overrides"/("aftergrid-"+module+".json"))]
+
+def validate_module_config(root,module,definition,row):
+    if definition.get("image")!=row["recovery_tag"] or definition.get("pull_policy")!="never" or definition.get("build") is not None or definition.get("privileged"):
+        raise ValueError("Module image policy or privilege mismatch")
+    for port in definition.get("ports",[]):
+        if port.get("host_ip")!="127.0.0.1":raise ValueError("Recovery ports must be loopback only")
+    for mount in definition.get("volumes",[]):
+        if mount.get("type")!="bind":raise ValueError("Unexpected recovery mount")
+        path=Path(mount["source"])
+        if root not in path.parents or ".." in path.parts:
+            raise ValueError("Module mount outside recovery root")
+        for parent in path.parents:
+            if not stat.S_ISDIR(parent.lstat().st_mode):raise ValueError("Unsafe mount parent")
+        if not (stat.S_ISREG(path.lstat().st_mode) or stat.S_ISDIR(path.lstat().st_mode)):
+            raise ValueError("Unsafe module mount")
+    if set(definition.get("networks",{}))!={"apps"}:raise ValueError("Unexpected recovery network")
+
+def start_module(root,assets_dir,inventory,module):
+    """Explicitly start a restored module while the recovered core is guarded."""
+    if os.geteuid()!=0:raise ValueError("Root required")
+    root,assets_dir=map(assets.real_directory,(root,assets_dir))
+    value,plan,metadata,rows=load_plan(root,assets_dir)
+    if assets.local_docker()!=value["platform"]:raise ValueError("Architecture mismatch")
+    required=required_records(inventory_records(inventory,plan,metadata),module)
+    receipt=root/"recovery-restored"/(module+".json")
+    record=json.loads(prep.read_private(receipt,65536))
+    if (record.get("format")!=1 or record.get("module")!=module or record.get("native_restore") is not True
+        or record.get("application_started") is not False
+        or record.get("inventory_sha256")!=assets.sha256_file(inventory)
+        or record.get("snapshots")!={key:sid for key,_,_,sid in required}):
+        raise ValueError("Matching unused restoration receipt required")
+    for _,_,relative,_ in required:safe_tree(root/relative)
+    row=next((r for r in rows if r["project"]=="aftergrid-"+module),None)
+    if row is None or json.loads(assets.docker("image","inspect","--format","{{json .Id}}",row["recovery_tag"]))!=row["image_id"]:
+        raise ValueError("Exact imported module image missing")
+    if assets.docker("ps","--all","--quiet","--filter","label=com.docker.compose.project=aftergrid-"+module):
+        raise ValueError("Existing module container; inspect before retrying")
+    # Verify the running core/worker are the guarded replacement installation.
+    core_cmd=installation.compose_command(root)
+    env={"PATH":os.environ["PATH"],"HOME":"/root","DOCKER_HOST":"unix:///var/run/docker.sock"}
+    def run(cmd,*args,timeout=30,environment=env):
+        return subprocess.run([*cmd,*args],env=environment,check=True,capture_output=True,text=True,timeout=timeout).stdout.strip()
+    core_ids={}
+    for core in (r for r in rows if r["project"]=="aftergrid-core"):
+        cid=run(core_cmd,"ps","-q",core["service"])
+        if not re.fullmatch(r"[a-f0-9]{12,64}",cid):raise ValueError("Recovered core not running")
+        info=json.loads(assets.docker("container","inspect","--format","{{json .}}",cid))
+        if (info["Image"]!=core["image_id"] or info["State"]["Running"] is not True
+            or info["Config"]["Labels"].get("com.docker.compose.project.working_dir")!=str(root)
+            or "AFTERGRID_RECOVERY_CORE_ONLY=1" not in info["Config"]["Env"]):
+            raise ValueError("Guarded recovered core not confirmed")
+        core_ids[core["service"]]=cid
+    # Match the worker's reviewed interpolation rules. No missing secret may
+    # be substituted with a placeholder or regenerated.
+    old=(worker.MODULES,worker.STATE,worker.ROOT,worker.BIND,worker.LAN_BIND,worker.LAN_DOMAIN)
+    worker.MODULES=root/"modules"
+    worker.STATE=root/"recovery-worker-state"
+    worker.ROOT=str(root)
+    worker.BIND=worker.LAN_BIND="127.0.0.1"
+    worker.LAN_DOMAIN=""
+    try:
+        names=worker.catalog()[module].get("generated_secrets",[])
+        if names:
+            secret=json.loads(prep.read_private(worker.STATE/"secrets"/(module+".json"),16384))
+            if set(secret)!=set(names) or not all(isinstance(v,str) and re.fullmatch(r"[a-f0-9]{64}",v) for v in secret.values()):
+                raise ValueError("Recovered module credentials required")
+        module_env=worker.compose_env(module)
+    finally:worker.MODULES,worker.STATE,worker.ROOT,worker.BIND,worker.LAN_BIND,worker.LAN_DOMAIN=old
+    cmd=module_command(root,module)
+    config=json.loads(run(cmd,"config","--format","json",environment=module_env))
+    if set(config["services"])!={row["service"]}:raise ValueError("Unexpected module service")
+    validate_module_config(root,module,config["services"][row["service"]],row)
+    if config.get("networks",{}).get("apps",{}).get("name")!="aftergrid-apps":
+        raise ValueError("Unexpected shared network")
+    run(cmd,"up","-d","--no-build","--pull","never","--wait","--wait-timeout","90",timeout=120,environment=module_env)
+    cid=run(cmd,"ps","-q",row["service"],environment=module_env)
+    if not re.fullmatch(r"[a-f0-9]{12,64}",cid) or json.loads(assets.docker("container","inspect","--format","{{json .Image}}",cid))!=row["image_id"]:
+        raise ValueError("Recovered module container image mismatch")
+    run(["docker","exec",core_ids["worker"],"python3","-c",
+         "import worker,sys; worker.wait_ready(sys.argv[1])",module],timeout=110)
+    record.update(application_started=True,image_id=row["image_id"],readiness="native readiness probe passed")
+    fd,tmp=tempfile.mkstemp(prefix=".receipt-",dir=receipt.parent)
+    try:
+        with os.fdopen(fd,"w") as stream:
+            json.dump(record,stream,indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp,receipt)
+    finally:Path(tmp).unlink(missing_ok=True)
+    return record
 
 def main():
     os.umask(0o077)
     p=argparse.ArgumentParser(description=__doc__)
-    for name in ("root","assets","repository","inventory"):p.add_argument("--"+name,required=True,type=Path)
+    for name in ("root","assets","inventory"):p.add_argument("--"+name,required=True,type=Path)
+    p.add_argument("--repository",type=Path)
+    p.add_argument("--start",action="store_true",help="Start a previously restored module after guarded core startup")
     p.add_argument("--module",required=True,choices=sorted(SOURCES))
     p.add_argument("--confirm-replacement",action="store_true")
     args=p.parse_args()
     try:
         if not args.confirm_replacement:raise ValueError("Confirm replacement-only restoration")
-        restore_module(args.root,args.assets,args.repository,args.inventory,args.module)
+        if args.start:
+            start_module(args.root,args.assets,args.inventory,args.module)
+            print("Recovered "+args.module+" started using its exact local image; readiness passed. Core-only guard remains active.")
+        else:
+            if args.repository is None:raise ValueError("Copied repository required")
+            restore_module(args.root,args.assets,args.repository,args.inventory,args.module)
+            print("Exact native data restored for "+args.module+". Application startup remains separate.")
     except Exception:
-        p.exit(1,"Native data restoration refused or failed. Check exact verified snapshot, copied repository, local images, destination and space. No application was started.\n")
-    print("Exact native data restored for "+args.module+". Application startup remains separate.")
+        p.exit(1,"Recovery operation refused or failed. Check exact verified snapshot, copied repository, local images, destination and space. A failed startup may leave containers; inspect manually.\n")
 
 if __name__=="__main__":
     main()
