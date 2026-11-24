@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5-dev
+- Shared local waypoints and saved route snapshots with admin-only writes, persistent SQLite and LAN viewing.
+- Use waypoint as start/destination, display map markers and saved geometry, export waypoint collections or individual routes to GPX/KML.
+- Add access, coordinate, persistence and XML escaping tests. Imports, native graph runtime, address search and browser acceptance pending.
+
+
 ## 0.5.4-dev
 - Optional Valhalla module with native regional graph preparation and preserved routing tiles; no directly exposed backend port.
 - Local same-origin route planning for driving, walking and cycling, coordinate selection, route overlay and directions.

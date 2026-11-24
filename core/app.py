@@ -27,6 +27,7 @@ try:
     from .inventory import Inventory, InventoryError
     from .map_downloads import MapDownloads
     from .routing import route, RouteError
+    from .waypoints import MapPlans
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
@@ -35,6 +36,7 @@ except ImportError:
     from inventory import Inventory, InventoryError
     from map_downloads import MapDownloads
     from routing import route, RouteError
+    from waypoints import MapPlans
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -77,6 +79,7 @@ def create_app(data_dir=None):
     downloads = Downloads(data, os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
     households = Households(data)
     inventory = Inventory(data)
+    plans = MapPlans(data)
     maps = MapDownloads(data,os.environ.get('AFTERGRID_MAP_CONTENT','/content/maps'))
     attempts = deque()
     lock = threading.Lock()
@@ -109,6 +112,7 @@ def create_app(data_dir=None):
         households.init()
         inventory.init()
         downloads.start()
+        plans.init()
         maps.start()
         try:
             yield
@@ -116,7 +120,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.4-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.5.5-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -191,6 +195,68 @@ def create_app(data_dir=None):
         except RouteError as exc:
             raise HTTPException(503,str(exc))
 
+    def require_setup():
+        with db() as con:
+            if not con.execute("SELECT 1 FROM admin WHERE id=1").fetchone():
+                raise HTTPException(403,"Complete initial setup first")
+
+    class WaypointRequest(BaseModel):
+        name: str = Field(min_length=1,max_length=100)
+        kind: str = Field(max_length=16)
+        coords: list[float] = Field(min_length=2,max_length=2)
+        id: int | None = Field(default=None,gt=0)
+
+    class SavedRouteRequest(BaseModel):
+        name: str = Field(min_length=1,max_length=100)
+        mode: str = Field(max_length=16)
+        coordinates: list[list[float]] = Field(min_length=2,max_length=20000)
+
+    class PlanDelete(BaseModel):
+        id: int = Field(gt=0)
+        kind: str = Field(max_length=16)
+
+    def plan_operation(operation):
+        try:
+            return operation()
+        except ValueError as exc:
+            raise HTTPException(400,str(exc))
+
+    @api.get("/api/maps/plans")
+    def map_plans():
+        require_setup()
+        return plans.directory()
+
+    @api.get("/api/maps/plans/routes/{ident}")
+    def saved_route(ident: int):
+        require_setup()
+        return plan_operation(lambda:plans.get_route(ident))
+
+    @api.post("/api/admin/maps/waypoints")
+    def save_waypoint(payload: WaypointRequest,request: Request):
+        require_admin(request)
+        same_origin(request)
+        return {"id":plan_operation(lambda:plans.waypoint(payload.name,payload.kind,payload.coords,payload.id))}
+
+    @api.post("/api/admin/maps/routes")
+    def save_route(payload: SavedRouteRequest,request: Request):
+        require_admin(request)
+        same_origin(request)
+        return {"id":plan_operation(lambda:plans.save_route(payload.name,payload.mode,payload.coordinates))}
+
+    @api.post("/api/admin/maps/plans/delete")
+    def delete_plan(payload: PlanDelete,request: Request):
+        require_admin(request)
+        same_origin(request)
+        plan_operation(lambda:plans.delete(payload.kind,payload.id))
+        return {"ok":True}
+
+    @api.get("/api/maps/export/{fmt}")
+    def export_map_plan(fmt: str,route_id: int | None = None):
+        require_setup()
+        raw=plan_operation(lambda:plans.export(fmt,route_id))
+        media={"gpx":"application/gpx+xml","kml":"application/vnd.google-earth.kml+xml"}[fmt]
+        return Response(content=raw,media_type=media,headers={"Content-Disposition":f'attachment; filename="aftergrid-map.{fmt}"'})
+
     @api.get("/maps")
     def map_view():
         return FileResponse(ROOT / "maps.html")
@@ -233,7 +299,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.4-dev"}
+                "version": "0.5.5-dev"}
 
     @api.get("/api/modules")
     def modules():
