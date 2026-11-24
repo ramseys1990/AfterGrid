@@ -636,3 +636,31 @@ def test_recovery_core_only_refuses_jobs(tmp_path,monkeypatch):
     with pytest.raises(ValueError):worker.enqueue_batch("a"*48,["kiwix"])
     worker.process()
     assert worker.jobs()==[]
+
+
+def test_offline_worker_uses_exact_reviewed_override(tmp_path,monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",True)
+    worker.init()
+    folder=tmp_path/"offline-images"
+    folder.mkdir()
+    image="sha256:"+"a"*64
+    tag="aftergrid-recovery/aftergrid-kiwix-kiwix:"+"a"*64
+    (folder/"mapping.json").write_text(json.dumps({"kiwix":{"image_id":image,"recovery_tag":tag}}))
+    override=folder/"kiwix.json"
+    override.write_text(json.dumps({"services":{"kiwix":{"image":tag,"pull_policy":"never"}}}))
+    monkeypatch.setattr(worker.subprocess,"run",lambda *a,**k:SimpleNamespace(stdout=json.dumps(image)))
+    cmd=worker.command("kiwix","up","-d","--pull","never")
+    assert cmd[-1]=="--no-build" and str(override) in cmd
+    assert worker.enqueue("kiwix","start")>0
+    with pytest.raises(ValueError):worker.enqueue("kiwix","update",True)
+    with pytest.raises(ValueError):worker.enqueue("kiwix","install")
+    with pytest.raises(ValueError):worker.enqueue("maps","start")
+    with pytest.raises(ValueError):worker.command("kiwix","pull")
+    with pytest.raises(RuntimeError):worker.registry_report("kiwix")
+    override.write_text(json.dumps({"services":{"kiwix":{"image":tag,"pull_policy":"always"}}}))
+    with pytest.raises(ValueError):worker.command("kiwix","ps")

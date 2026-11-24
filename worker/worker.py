@@ -31,6 +31,8 @@ BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
 LAN_DOMAIN = os.environ.get("AFTERGRID_LAN_DOMAIN", "")
 RECOVERY_CORE_ONLY = os.environ.get("AFTERGRID_RECOVERY_CORE_ONLY") == "1"
+RECOVERY_OFFLINE = os.environ.get("AFTERGRID_RECOVERY_OFFLINE") == "1"
+OFFLINE_ACTIONS={"start","stop","restart","uninstall","share","unshare"}
 MAX_LOG = 24000
 SECRET_LOCK = threading.Lock()
 REGISTRY_LOCK = threading.Lock()
@@ -53,12 +55,57 @@ def public_module(ident, manifest):
     return {**manifest, "status": state(ident), "share_available": available, "shared": shared,
             "lan_url": lan_url(ident,manifest) if available else "", "registration_closed": closed, "lan_dns": bool(LAN_DOMAIN)}
 
+def offline_mapping(ident):
+    """Accept only the fixed, host-prepared service mapping, never arbitrary Compose."""
+    if ident not in catalog():raise ValueError("Unknown module")
+    folder=STATE/"offline-images"
+    if not stat.S_ISDIR(folder.lstat().st_mode):raise ValueError("Offline image policy unavailable")
+    path=folder/"mapping.json"
+    if not stat.S_ISREG(path.lstat().st_mode) or not 0<path.stat().st_size<=65536:
+        raise ValueError("Offline image policy invalid")
+    mapping=json.loads(path.read_text())
+    row=mapping.get(ident)
+    if not isinstance(row,dict) or set(row)!={"image_id","recovery_tag"}:
+        raise ValueError("Module is not available in offline recovery")
+    image_id=row["image_id"]
+    if not isinstance(image_id,str) or not re.fullmatch(r"sha256:[a-f0-9]{64}",image_id):
+        raise ValueError("Invalid offline image ID")
+    tag="aftergrid-recovery/aftergrid-"+ident+"-"+ident+":"+image_id.removeprefix("sha256:")
+    if row["recovery_tag"]!=tag:raise ValueError("Invalid offline image tag")
+    override=folder/(ident+".json")
+    if not stat.S_ISREG(override.lstat().st_mode) or not 0<override.stat().st_size<=4096:
+        raise ValueError("Offline Compose override invalid")
+    if json.loads(override.read_text())!={"services":{ident:{"image":tag,"pull_policy":"never"}}}:
+        raise ValueError("Unexpected offline Compose override")
+    return row,override
+
+def offline_admission(ident,action):
+    if action not in OFFLINE_ACTIONS:raise ValueError("Action unavailable in offline recovery")
+    try:
+        row,_=offline_mapping(ident)
+        if catalog()[ident].get("generated_secrets"):
+            path=STATE/"secrets"/(ident+".json")
+            if not stat.S_ISREG(path.lstat().st_mode):raise ValueError("Recovered credentials missing")
+            module_secrets(ident)
+        raw=subprocess.run(["docker","image","inspect","--format","{{json .Id}}",row["recovery_tag"]],
+                           env=compose_env(ident),capture_output=True,text=True,timeout=8,check=True).stdout
+        if json.loads(raw)!=row["image_id"]:raise ValueError("Offline image changed")
+    except (OSError,subprocess.SubprocessError,ValueError,TypeError,AttributeError):
+        raise ValueError("Offline image or recovered credentials unavailable") from None
+
 def command(ident, *args):
     if ident not in catalog():
         raise ValueError("Unknown module")
     directory = MODULES / ident
-    return ["docker", "compose", "--project-name", "aftergrid-" + ident,
-            "--project-directory", str(directory), "--file", str(directory / "compose.yaml"), *args]
+    cmd=["docker", "compose", "--project-name", "aftergrid-" + ident,
+            "--project-directory", str(directory), "--file", str(directory / "compose.yaml")]
+    if RECOVERY_OFFLINE:
+        try:_,override=offline_mapping(ident)
+        except (OSError,ValueError,TypeError,AttributeError):raise ValueError("Offline module image unavailable") from None
+        cmd.extend(("--file",str(override)))
+        if args and args[0] in {"pull","build"}:raise ValueError("Offline recovery forbids image downloads and builds")
+        if args and args[0]=="up":args=(*args,"--no-build")
+    return [*cmd,*args]
 
 def module_secrets(ident, create=False):
     manifest = catalog()[ident]
@@ -170,6 +217,7 @@ def init():
 
 def enqueue(ident, action, backup_confirmed=False):
     if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
+    if RECOVERY_OFFLINE:offline_admission(ident,action)
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
@@ -193,6 +241,7 @@ def enqueue(ident, action, backup_confirmed=False):
         return cursor.lastrowid
 
 def enqueue_batch(token, selection):
+    if RECOVERY_OFFLINE:raise ValueError("Offline recovery disables new installations")
     if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
     manifests = catalog()
     if (not isinstance(token,str) or not re.fullmatch(r"[a-f0-9]{48}",token)
@@ -239,7 +288,7 @@ def log(job, line):
 
 def run(job, ident, *args):
     # Fixed argv, no shell, no arbitrary parameters from the browser.
-    proc = subprocess.Popen(command(ident, *args), env=compose_env(ident, create=True),
+    proc = subprocess.Popen(command(ident, *args), env=compose_env(ident, create=not RECOVERY_OFFLINE),
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, errors="replace", bufsize=1)
     private_values = module_secrets(ident)
@@ -1114,6 +1163,7 @@ def registry_config_digest(target, platform, read):
     return config["digest"],selected
 
 def registry_report(ident):
+    if RECOVERY_OFFLINE:raise RuntimeError("Offline recovery disables registry checks")
     if not REGISTRY_LOCK.acquire(blocking=False):
         raise RuntimeError("Another registry check is running; try again later")
     try:
@@ -1204,6 +1254,7 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if RECOVERY_OFFLINE:offline_admission(ident,action)
         if action=="recovery-manifest":
             if ident!="kopia":raise ValueError("Kopia-only action")
             recovery_manifest(job)

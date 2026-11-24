@@ -296,17 +296,60 @@ def start_module(root,assets_dir,inventory,module):
     finally:Path(tmp).unlink(missing_ok=True)
     return record
 
+def prepare_offline_policy(root,assets_dir,inventory,modules):
+    """Stage mappings for explicitly selected, started recovered modules.
+
+    Do not remove the core-only guard or recreate containers here.
+    """
+    if os.geteuid()!=0:raise ValueError("Root required")
+    root,assets_dir=map(assets.real_directory,(root,assets_dir))
+    value,plan,metadata,rows=load_plan(root,assets_dir)
+    records=inventory_records(inventory,plan,metadata)
+    if not modules or len(modules)!=len(set(modules)):raise ValueError("Choose distinct recovered modules")
+    if assets.local_docker()!=value["platform"]:raise ValueError("Architecture mismatch")
+    mapping={}
+    for module in sorted(modules):
+        required=required_records(records,module)
+        receipt=json.loads(prep.read_private(root/"recovery-restored"/(module+".json"),65536))
+        row=next((r for r in rows if r["project"]=="aftergrid-"+module),None)
+        if (row is None or receipt.get("module")!=module or receipt.get("native_restore") is not True
+            or receipt.get("application_started") is not True or receipt.get("image_id")!=row["image_id"]
+            or receipt.get("inventory_sha256")!=assets.sha256_file(inventory)
+            or receipt.get("snapshots")!={key:sid for key,_,_,sid in required}):
+            raise ValueError("Matching restored and started module required")
+        if json.loads(assets.docker("image","inspect","--format","{{json .Id}}",row["recovery_tag"]))!=row["image_id"]:
+            raise ValueError("Recovered image changed")
+        mapping[module]={"image_id":row["image_id"],"recovery_tag":row["recovery_tag"]}
+    state=assets.real_directory(root/"recovery-worker-state")
+    target=state/"offline-images"
+    target.mkdir(mode=0o700)
+    try:
+        for ident,row in mapping.items():
+            prep.private_write(target/(ident+".json"),json.dumps({"services":{ident:{"image":row["recovery_tag"],"pull_policy":"never"}}}).encode())
+        prep.private_write(target/"mapping.json",json.dumps(mapping,indent=2).encode())
+    except Exception:
+        shutil.rmtree(target)
+        raise
+    return mapping
+
 def main():
     os.umask(0o077)
     p=argparse.ArgumentParser(description=__doc__)
     for name in ("root","assets","inventory"):p.add_argument("--"+name,required=True,type=Path)
     p.add_argument("--repository",type=Path)
     p.add_argument("--start",action="store_true",help="Start a previously restored module after guarded core startup")
-    p.add_argument("--module",required=True,choices=sorted(SOURCES))
+    p.add_argument("--module",choices=sorted(SOURCES))
+    p.add_argument("--prepare-offline-module",action="append",choices=sorted(SOURCES),help="Stage offline policy for selected already-started modules; repeat for each")
     p.add_argument("--confirm-replacement",action="store_true")
     args=p.parse_args()
     try:
         if not args.confirm_replacement:raise ValueError("Confirm replacement-only restoration")
+        if args.prepare_offline_module:
+            if args.start or args.module or args.repository:raise ValueError("Choose one recovery operation")
+            mapping=prepare_offline_policy(args.root,args.assets,args.inventory,args.prepare_offline_module)
+            print("Offline worker image policy prepared for "+str(len(mapping))+" modules. Guard remains active; not enabled.")
+            return
+        if not args.module:raise ValueError("Select module")
         if args.start:
             start_module(args.root,args.assets,args.inventory,args.module)
             print("Recovered "+args.module+" started using its exact local image; readiness passed. Core-only guard remains active.")

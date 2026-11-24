@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.22-dev
+- Prepare exact offline worker image policy from selected started module receipts. Add worker-side fail-closed local image mapping, credential and no-build/no-pull checks, restrict lifecycle operations and registry access in future offline mode.
+- Do not activate offline mode or lift core-only guard yet. CI pending.
+
 ## 0.8.21-dev
 - Start restored modules explicitly using exact local images and restoration receipts while core-only recovery protection remains active. Validate mounts, loopback ports, credentials and readiness.
 - Add native read-only Kiwix restore fixture; continue unrelated integration checks after only the known MicroTAK backup refusal with confirmed restart. Keep TAK missing in recovery inventory. CI pending.
