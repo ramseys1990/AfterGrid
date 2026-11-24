@@ -133,7 +133,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.2-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.3-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -415,7 +415,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.8.2-dev"}
+                "version": "0.8.3-dev"}
 
     @api.get("/api/preparedness")
     def preparedness():
@@ -766,6 +766,34 @@ def create_app(data_dir=None):
             raise HTTPException(503, "Module manager unavailable")
         if code != 200:
             raise HTTPException(code if code == 404 else 502, result.get("detail", "Module manager request failed"))
+        return result
+
+    @api.get("/api/admin/kopia/status")
+    def kopia_repository_status(request: Request):
+        require_admin(request)
+        try:
+            code,result=call("/kopia/status")
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=200:
+            raise HTTPException(502,"Native Kopia status unavailable")
+        return result
+
+    class RepositoryConfirmation(BaseModel):
+        confirmed: bool = Field(strict=True)
+
+    @api.post("/api/admin/kopia/initialize",status_code=202)
+    def kopia_initialize(payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:
+            raise HTTPException(409,"Confirm destination and secure recovery credentials")
+        try:
+            code,result=call("/jobs",{"module":"kopia","action":"initialize-repository"})
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=202:
+            raise HTTPException(code if code in (400,409) else 502,result.get("detail","Repository initialization unavailable"))
         return result
 
     @api.get("/api/admin/backups/core")

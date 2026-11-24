@@ -7,3 +7,5 @@ Use Kopia's UI to create/connect a repository and configure snapshot policies. F
 This is the native backup UI integration, not automatic application-consistent backup. Stop applications or use documented database exports before backing up live databases; the core needs a consistent SQLite export. No automatic snapshots or retention policies are created by AfterGrid. Docker image export, core configuration/worker secret backup, recovery package and clean-machine restore remain future work. Never lose the worker state volume or repository password. No host-wide mounts, Docker socket, FUSE or privileged container are required for this initial integration.
 
 The AfterGrid administrator now has per-application and core backup source plans. See [backup coverage](../../docs/BACKUPS.md). These are recommendations only, not proof of a configured repository or successful snapshot.
+
+The portal can now explicitly initialize a new empty local repository and read native connection status. Existing repositories still use native Kopia connect. See the backup guide for prerequisites and failure handling.

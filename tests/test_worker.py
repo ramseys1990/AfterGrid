@@ -244,3 +244,40 @@ def test_backup_plan_never_claims_snapshot_or_exposes_secrets(tmp_path,monkeypat
     assert "private-value" not in str(result)
     assert all(s["kopia_path"] is None for s in worker.backup_plan("kopia")["sources"])
     assert worker.jobs()==[]
+
+
+def test_kopia_initialization_is_scoped_and_empty_only(tmp_path,monkeypatch):
+    import subprocess
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    with pytest.raises(ValueError):worker.enqueue("homebox","initialize-repository")
+    created=[]
+    class Client:
+        def status(self):
+            return {"connection":"connected" if created else "not connected","storage_type":"filesystem" if created else None}
+        def create_local(self):created.append(True)
+    monkeypatch.setattr(worker,"KopiaClient",Client)
+    def nonempty(argv,**kwargs):raise subprocess.CalledProcessError(1,argv)
+    monkeypatch.setattr(worker.subprocess,"run",nonempty)
+    worker.enqueue("kopia","initialize-repository")
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed" and not created
+    monkeypatch.setattr(worker.subprocess,"run",lambda *args,**kwargs:None)
+    worker.enqueue("kopia","initialize-repository")
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="succeeded" and created==[True]
+    worker.enqueue("kopia","initialize-repository")
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed" and created==[True]
+
+def test_native_kopia_status_filters_response(monkeypatch):
+    import json
+    client=worker.KopiaClient.__new__(worker.KopiaClient)
+    monkeypatch.setattr(client,"read",lambda path:json.dumps({"connected":True,"storage":"filesystem","configFile":"private-path","password":"private-secret"}).encode())
+    assert client.status()=={"connection":"connected","storage_type":"filesystem","snapshot_verified":False}
+    monkeypatch.setattr(client,"read",lambda path:b'{"connected":false,"initTaskID":"some-task"}')
+    assert client.status()["connection"]=="initializing"
+    monkeypatch.setattr(client,"read",lambda path:b'{"connected":"true"}')
+    with pytest.raises(RuntimeError):client.status()

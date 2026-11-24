@@ -1,5 +1,7 @@
 """Small, privileged Compose worker. Only reviewed manifests and fixed actions."""
 import http.server
+import http.cookiejar
+import base64
 import ipaddress
 import json
 import os
@@ -19,7 +21,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -165,6 +167,8 @@ def enqueue(ident, action, backup_confirmed=False):
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
+    if action == "initialize-repository" and ident!="kopia":
+        raise ValueError("Kopia-only action")
     if action == "update" and (backup_confirmed is not True or ident == "routing"):
         raise ValueError("Update requires backup confirmation and a supported module")
     if action in ROUTING_ACTIONS and ident != "routing":
@@ -260,6 +264,87 @@ def state(ident):
         return "degraded"
     except (OSError, subprocess.SubprocessError, ValueError, TypeError):
         return "unavailable"
+
+class KopiaNoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,*args,**kwargs):
+        return None
+
+class KopiaClient:
+    """Fixed native UI calls, with a private session and no forwarded error bodies."""
+    def __init__(self):
+        if not (STATE/"secrets"/"kopia.json").is_file():
+            raise RuntimeError("Install Kopia first")
+        self.secrets=module_secrets("kopia")
+        self.opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),KopiaNoRedirect())
+        self.headers={"Authorization":"Basic "+base64.b64encode(("aftergrid:"+self.secrets["KOPIA_UI_PASSWORD"]).encode()).decode()}
+        try:
+            html=self.read("/")
+            match=re.search(rb'<meta name="kopia-csrf-token" content="([a-f0-9]{64})"\s*/?>',html)
+            if not match:raise ValueError("Missing native session")
+            self.headers["X-Kopia-Csrf-Token"]=match.group(1).decode()
+        except (OSError,ValueError):
+            raise RuntimeError("Native Kopia session unavailable") from None
+
+    def read(self,path,body=None):
+        if path not in ("/","/api/v1/repo/status","/api/v1/repo/create"):
+            raise ValueError("Unsupported native request")
+        headers={**self.headers,"Accept":"application/json"}
+        if body is not None:headers["Content-Type"]="application/json"
+        req=urllib.request.Request("http://aftergrid-kopia:51515"+path,
+            data=None if body is None else json.dumps(body).encode(),headers=headers)
+        with self.opener.open(req,timeout=25 if body is not None else 5) as response:
+            data=response.read(1024*1024+1)
+            if len(data)>1024*1024:raise ValueError("Oversized native response")
+            return data
+
+    def status(self):
+        try:
+            value=json.loads(self.read("/api/v1/repo/status"))
+            if not isinstance(value,dict) or type(value.get("connected")) is not bool:
+                raise ValueError("Unexpected native status")
+            connected=value["connected"]
+            storage=value.get("storage")
+            return {"connection":"connected" if connected else "initializing" if value.get("initTaskID") else "not connected",
+                    "storage_type":storage if connected and isinstance(storage,str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,40}",storage) else None,
+                    "snapshot_verified":False}
+        except (OSError,ValueError):
+            raise RuntimeError("Native Kopia repository status unavailable") from None
+
+    def create_local(self):
+        try:
+            self.read("/api/v1/repo/create",{"storage":{"type":"filesystem","config":{"path":"/repository"}},
+                      "password":self.secrets["KOPIA_PASSWORD"],"options":{}})
+        except (OSError,ValueError):
+            raise RuntimeError("Native creation failed or timed out; inspect Kopia before retrying") from None
+
+def kopia_status():
+    try:
+        return KopiaClient().status()
+    except (RuntimeError,ValueError,OSError):
+        return {"connection":"unavailable","storage_type":None,"snapshot_verified":False}
+
+def initialize_repository(job):
+    change(job,state="running",total=3,completed=0,stage="Check native repository status")
+    client=KopiaClient()
+    if client.status()["connection"]!="not connected":
+        raise RuntimeError("Repository is connected or initializing; refusing creation")
+    change(job,completed=1,stage="Require empty repository directory")
+    # Fixed command in the reviewed Kopia container. Never accept a host path.
+    try:
+        subprocess.run(command("kopia","exec","-T","kopia","/bin/sh","-c",
+            'test -d /repository && test ! -L /repository && first=$(find /repository -mindepth 1 -maxdepth 1 -print -quit) && test -z "$first"'),
+            env=compose_env("kopia"),capture_output=True,text=True,timeout=8,check=True)
+    except (OSError,subprocess.SubprocessError,ValueError):
+        raise RuntimeError("Repository directory is not empty or could not be checked; connect existing storage in Kopia") from None
+    if client.status()["connection"]!="not connected":
+        raise RuntimeError("Repository state changed; refusing creation")
+    change(job,completed=2,stage="Create encrypted repository using native Kopia")
+    client.create_local()
+    result=client.status()
+    if result["connection"]!="connected" or result["storage_type"]!="filesystem":
+        raise RuntimeError("Creation outcome unconfirmed; inspect native Kopia before retrying")
+    change(job,completed=3,state="succeeded",stage="Repository connected; snapshots not verified")
 
 def backup_sources(config, root):
     """Classify normalized Compose mounts; no host directory traversal."""
@@ -497,6 +582,10 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="initialize-repository":
+            if ident!="kopia":raise ValueError("Kopia-only action")
+            initialize_repository(job)
+            return
         if action=="update" and (ident=="routing" or state(ident)!="running"):
             raise ValueError("Manual update requires a running supported module; routing upgrades need a separate graph migration")
         if action in {"activate-graph","rollback-graph","archive-original","archive-replacement"} and state(ident)!="running":
@@ -574,6 +663,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json(200, [public_module(i,m) for i,m in catalog().items()])
         if self.path == "/jobs":
             return self.send_json(200, jobs())
+        if self.path=="/kopia/status":
+            return self.send_json(200,kopia_status())
         if self.path.startswith("/backup-plan/"):
             ident=self.path.removeprefix("/backup-plan/")
             if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})

@@ -248,3 +248,22 @@ def test_backup_plans_require_admin(tmp_path,monkeypatch):
         assert calls==["/backup-plan/homebox"]
         c.cookies.clear()
         assert all(c.get(path).status_code==401 for path in paths)
+
+
+def test_kopia_repository_admin_and_confirmation(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake(path,payload=None):
+        calls.append((path,payload))
+        return (200,{"connection":"not connected","snapshot_verified":False}) if path=="/kopia/status" else (202,{"id":7})
+    monkeypatch.setattr(core_app,"call",fake)
+    (tmp_path/"setup-token").write_text("token")
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.get("/api/admin/kopia/status").status_code==401
+        assert c.post("/api/admin/kopia/initialize",json={"confirmed":True},headers=ORIGIN).status_code==401
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        assert c.get("/api/admin/kopia/status").json()["connection"]=="not connected"
+        assert c.post("/api/admin/kopia/initialize",json={"confirmed":False},headers=ORIGIN).status_code==409
+        assert c.post("/api/admin/kopia/initialize",json={"confirmed":True}).status_code==403
+        assert c.post("/api/admin/kopia/initialize",json={"confirmed":True},headers=ORIGIN).status_code==202
+        assert calls==[("/kopia/status",None),("/jobs",{"module":"kopia","action":"initialize-repository"})]

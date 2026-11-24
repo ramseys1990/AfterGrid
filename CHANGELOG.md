@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3-dev
+- Add native authenticated Kopia repository connection status and explicit empty local repository initialization through the existing job queue.
+- Refuse connected/initializing servers and nonempty or unreadable destinations; preserve native existing-repository connection workflow.
+- Add authorization, empty-destination and disposable native repository smoke tests; CI pending. No verified snapshots yet.
+
 ## 0.8.2-dev
 - Add administrator-only backup source plans for core and reviewed application mounts, using native Kopia paths and application consistency guidance.
 - Exclude Kopia self-backup and regenerable media cache; identify missing worker secrets/state, host configuration and images.

@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -163,6 +163,27 @@ async function renderModules(){
       $("catalog").append(card);
     }
 }
+$("kopia-status-check").addEventListener("click",async()=>{
+  const button=$("kopia-status-check"),create=$("kopia-initialize"),root=$("kopia-repository-result");
+  button.disabled=true;create.disabled=true;root.textContent="Checking native Kopia…";
+  try{
+    const result=await api("/api/admin/kopia/status");
+    if(!status?.admin)return;
+    root.textContent="Repository: "+result.connection+(result.storage_type?" · "+result.storage_type:"")+". Snapshot and restore verification pending.";
+    create.disabled=result.connection!=="not connected";
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
+$("kopia-initialize").addEventListener("click",async()=>{
+  if(!confirm("Create a NEW encrypted repository in the configured empty /repository directory? Confirm the intended backup destination is mounted and the generated repository password is stored securely off-server. Do not use this to connect existing storage."))return;
+  $("kopia-initialize").disabled=true;
+  try{
+    await api("/api/admin/kopia/initialize",{confirmed:true});
+    if(!status?.admin)return;
+    $("kopia-repository-result").textContent="Initialization queued. See installation activity; check repository connection after completion.";
+    await renderJobs();
+  }catch(e){if(status?.admin)$("kopia-repository-result").textContent=e.message;}
+});
 $("backup-core-check").addEventListener("click",async()=>{
   const button=$("backup-core-check"),root=$("backup-core-result");
   button.disabled=true;root.textContent="Reading core backup requirements…";

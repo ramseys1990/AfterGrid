@@ -124,6 +124,12 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         req=urllib.request.Request("http://127.0.0.1:51515/",headers={"Authorization":"Basic "+auth})
         with urllib.request.urlopen(req,timeout=10) as response:
             assert response.status==200
+        assert api("/api/admin/kopia/status")["connection"]=="not connected"
+        job=api("/api/admin/kopia/initialize",{"confirmed":True})["id"]
+        wait_job(job,"create disposable Kopia repository")
+        connected=api("/api/admin/kopia/status")
+        assert connected=={"connection":"connected","storage_type":"filesystem","snapshot_verified":False},connected
+        assert (Path("backups")/"kopia.repository").is_file()
     else:
         with urllib.request.urlopen("http://127.0.0.1:"+str(port)+"/",timeout=10) as response:
             assert response.status==200
