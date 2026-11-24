@@ -88,3 +88,65 @@ def test_pack_pins_inventory_and_detects_late_repository_change(tmp_path, monkey
         assert report["checked_snapshots"]=={"core":"a"*32,"worker":"b"*32}
         assert (package/"repository/blob").read_bytes()==b"original"
     assert checked==[(recover.CORE_SOURCE,"a"*32),(recover.WORKER_SOURCE,"b"*32)]
+
+
+def test_capture_steps_media_includes_both_sources_and_worker_last():
+    steps=recover.capture_steps(["media","kiwix"])
+    assert [step[0] for step in steps]==["content/kiwix","application/media","content/media","core","worker"]
+    with pytest.raises(ValueError,match="MicroTAK"):
+        recover.capture_steps(["tak"])
+    with pytest.raises(ValueError):
+        recover.capture_steps(["media","media"])
+
+
+@pytest.mark.parametrize("failure",[None,"stale","concurrent","failed","busy"])
+def test_fresh_capture_inventory_exact_job_binding(failure):
+    jobs=[]
+    records=[]
+    steps=recover.capture_steps(["kiwix"])
+    paths={}
+    for key,module,snapshot,verify,snapshot_path,verify_path in steps:
+        paths[snapshot_path]=(key,module,snapshot,False)
+        paths[verify_path]=(key,module,verify,True)
+    paths["/api/admin/backups/recovery-manifest"]=("manifest","kopia","recovery-manifest",False)
+    sources={"core":recover.CORE_SOURCE,"worker":recover.WORKER_SOURCE,
+             "content/kiwix":"/source/content/kiwix"}
+    if failure=="busy":
+        jobs.append({"id":1,"state":"running"})
+    def call(path,payload=None):
+        if path=="/api/status":return {"admin":True}
+        if path=="/api/admin/kopia/status":return {"connection":"connected"}
+        if path=="/api/admin/jobs":return list(reversed(jobs))
+        if path=="/api/admin/backups/recovery-manifest" and payload is None:
+            if failure=="stale":records[0]["verification_job"]-=1
+            return {"format":1,"atomic":False,"manifest_job":jobs[-1]["id"],"records":records}
+        assert payload=={"confirmed":True}
+        key,module,action,verify=paths[path]
+        ident=len(jobs)+1
+        jobs.append({"id":ident,"module":module,"action":action,
+                     "state":"failed" if failure=="failed" else "succeeded","completed":1,"total":1})
+        if failure=="concurrent":
+            jobs.append({"id":ident+1,"state":"succeeded"})
+        if key!="manifest":
+            if verify:
+                row=next(r for r in records if r["key"]==key)
+                row["verification_job"]=ident
+            else:
+                records.append({"key":key,"source":sources[key],"snapshot_id":"a"*32,
+                                "snapshot_job":ident,"verification":"read-only" if key.startswith("content/") else "isolated",
+                                "repository_status":"present","envelope_sha256":"b"*64})
+        return {"id":ident}
+    if failure:
+        with pytest.raises(ValueError):
+            recover.capture_inventory(call,["kiwix"],progress=lambda *a,**k:None)
+    else:
+        value=recover.capture_inventory(call,["kiwix"],progress=lambda *a,**k:None)
+        assert value["manifest_job"]==7
+        assert [r["snapshot_job"] for r in value["records"]]==[1,3,5]
+        assert [r["verification_job"] for r in value["records"]]==[2,4,6]
+
+
+@pytest.mark.parametrize("url",["http://192.168.1.10:8080","http://example.com","https://user:pass@example.com","https://example.com/other"])
+def test_capture_client_rejects_unsafe_urls(url):
+    with pytest.raises(ValueError):
+        recover.capture_client(url)
