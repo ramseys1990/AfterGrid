@@ -5,7 +5,7 @@ Keep milestones functional, not paperwork-heavy.
 | Milestone | Scope | State |
 |---|---|---|
 | 0.1 | Core bootstrap, browser setup, local administrator and shared landing page | Initial implementation; runtime validation pending |
-| 0.2 | Generic Compose worker, catalog, dependency checks, live job progress and lifecycle | Planned |
+| 0.2 | Generic Compose worker, catalog, live job progress and lifecycle | Initial implementation; dependency checks and runtime validation pending |
 | 0.3 | Kiwix, Homebox, Grocy, Kopia independently installable | Planned |
 | 0.4 | Household organization, ownership/location mapping, inventory reporting, stable QR links | Planned |
 | 0.5 | Regional maps, downloads, offline routing | Planned |

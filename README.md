@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.1.0-dev). The core contains local setup, administrator authentication and a shared dashboard. The module catalog is a roadmap preview, not an operational installer. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.2.0-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The first Compose worker and Kiwix lifecycle are implemented; real deployment validation is pending. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -27,3 +27,7 @@ Kiwix for knowledge, Homebox for QR-tagged equipment, Grocy for consumables and 
 Households organize shared resources rather than enforce tenant isolation. Administration requires a local login; applications may retain native authentication. No mandatory OIDC, Authentik or cloud accounts.
 
 See [development rules](AGENTS.md), [architecture](docs/ARCHITECTURE.md) and [roadmap](docs/ROADMAP.md).
+
+## First module
+
+Sign in as administrator, choose Kiwix, and inspect installation activity. The worker runs fixed Compose commands and persists jobs. The reader starts with an empty content library; see [Kiwix setup](modules/kiwix/README.md). Refresh applications to see current Docker state. Update currently re-pulls the reviewed image digest; automatic version selection and backups are later milestones.

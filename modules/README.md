@@ -1,7 +1,5 @@
 # Optional modules
 
-No optional module is installed with the core.
+Kiwix is the first implemented Compose module. No optional services are installed with the core. Homebox, Grocy and Kopia are next.
 
-Next milestone: a small Compose worker with scoped operations and persistent jobs. First vertical slice: Kiwix. Then Homebox, Grocy and Kopia.
-
-Use a standard Compose file and a minimal module.yaml. Do not introduce a custom install script unless upstream cannot be configured with ordinary Compose. Do not publish placeholder manifests as installable modules.
+Use a standard Compose file and minimal module.yaml (currently JSON-formatted YAML for dependency-free reading). Only reviewed definitions are available to the worker. Keep content and state separate; never remove volumes by default.

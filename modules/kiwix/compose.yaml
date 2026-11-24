@@ -1,0 +1,21 @@
+services:
+  kiwix:
+    image: ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:e478554a9920412eeb5ce1d73f24e4b28445ebed233187cdd03c623c32be46a5
+    command: ["--library", "/data/library.xml"]
+    restart: unless-stopped
+    ports:
+      - "${AFTERGRID_BIND:-127.0.0.1}:8081:8080"
+    volumes:
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/content/kiwix
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      apps:
+        aliases: [aftergrid-kiwix]
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps

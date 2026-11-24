@@ -19,3 +19,7 @@ Kiwix, Kolibri, Jellyfin/media, notes, file library; regional MapLibre/PMTiles a
 
 ## Recovery
 Kopia is the optional recommended backup module. Use its native scheduling, retention, encryption and restore. Coordinate SQLite/database consistency via native tools or stopped services. Full recovery includes selected images (docker image save/load), Compose files, config, data, content, compatible offline Docker prerequisites and backup tools. Validate an actual clean offline restore. Proxmox backup is optional external protection.
+
+## 0.2 worker implementation
+
+A separate core worker container has root-equivalent local Docker access; the web container has no daemon socket. The worker accepts fixed module/action requests over a group-restricted Unix socket, reads root-controlled module files mounted read-only, and uses SQLite for job status and bounded Docker output. It has no published port. Jobs survive browser closure, and interrupted jobs are marked for inspection rather than silently replayed. This is a privilege separation boundary, not a Docker sandbox. Kiwix is the only reviewed module in this build. The shared application network and fixed port are an initial development choice; port checks, generic dependencies, content management, HTTPS and full recovery are still planned.

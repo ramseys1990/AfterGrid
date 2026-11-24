@@ -15,6 +15,11 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+try:
+    from .worker_client import call, WorkerUnavailable
+except ImportError:
+    from worker_client import call, WorkerUnavailable
+
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
 TTL = 12 * 60 * 60
@@ -76,7 +81,7 @@ def create_app(data_dir=None):
             """)
         yield
 
-    api = FastAPI(title="AfterGrid", version="0.1.0-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.2.0-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -143,12 +148,52 @@ def create_app(data_dir=None):
             row = con.execute("SELECT server_name FROM admin WHERE id=1").fetchone()
         return {"setup_required": row is None, "admin": admin_session(request),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.1.0-dev"}
+                "version": "0.2.0-dev"}
 
     @api.get("/api/modules")
     def modules():
-        return [{"id": i, "name": n, "description": d, "category": c,
-                 "status": "planned"} for i,n,d,c in CATALOG]
+        result = [{"id": i, "name": n, "description": d, "category": c,
+                   "status": "planned", "installable": False} for i,n,d,c in CATALOG]
+        try:
+            code, installed = call("/modules")
+            if code == 200:
+                by_id = {m["id"]: m for m in installed}
+                for item in result:
+                    if item["id"] in by_id:
+                        m = by_id[item["id"]]
+                        item.update(status=m["status"], installable=True, port=m["port"])
+        except WorkerUnavailable:
+            pass
+        return result
+
+    def require_admin(request):
+        if not admin_session(request):
+            raise HTTPException(401, "Administrator login required")
+
+    @api.get("/api/admin/jobs")
+    def list_jobs(request: Request):
+        require_admin(request)
+        try:
+            code, result = call("/jobs")
+        except WorkerUnavailable:
+            raise HTTPException(503, "Module manager unavailable")
+        if code != 200:
+            raise HTTPException(502, "Module manager request failed")
+        return result
+
+    @api.post("/api/admin/modules/{ident}/{action}", status_code=202)
+    def module_action(ident: str, action: str, request: Request):
+        require_admin(request)
+        same_origin(request)
+        if ident not in {m[0] for m in CATALOG} or action not in {"install","start","stop","restart","update","uninstall"}:
+            raise HTTPException(400, "Unsupported module or action")
+        try:
+            code, result = call("/jobs", {"module": ident, "action": action})
+        except WorkerUnavailable:
+            raise HTTPException(503, "Module manager unavailable")
+        if code != 202:
+            raise HTTPException(code if code in {400,409} else 502, result.get("detail", "Module manager request failed"))
+        return result
 
     @api.post("/api/setup", status_code=201)
     def setup(payload: Setup, request: Request, response: Response):
@@ -207,7 +252,7 @@ def create_app(data_dir=None):
     def admin_status(request: Request):
         if not admin_session(request):
             raise HTTPException(401,"Administrator login required")
-        return {"core":"running","module_manager":"planned"}
+        return {"core":"running","module_manager":"compose-worker"}
 
     return api
 

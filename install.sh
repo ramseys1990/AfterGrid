@@ -52,6 +52,8 @@ mkdir -m 0755 "$ROOT"
 cp -a "$tmp/source/." "$ROOT/"
 chmod 0755 "$ROOT"
 install -d -m 0700 -o 10001 -g 10001 "$ROOT/data/core"
+install -d -m 0755 "$ROOT/content/kiwix"
+install -m 0644 "$ROOT/modules/kiwix/library.xml" "$ROOT/content/kiwix/library.xml"
 token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 printf '%s\n' "$token" > "$ROOT/data/core/setup-token"
 chown 10001:10001 "$ROOT/data/core/setup-token"
@@ -72,6 +74,7 @@ echo "Open http://$BIND:$PORT"
 if [[ $BIND == 127.0.0.1 ]]; then
   echo "Remote browser? On your computer run: ssh -L $PORT:127.0.0.1:$PORT USER@SERVER"
   echo "Then open http://127.0.0.1:$PORT"
+  echo "For Kiwix after optional installation, add: -L 8081:127.0.0.1:8081"
 else
   echo "WARNING: trusted LAN HTTP is unencrypted. Prefer an SSH tunnel or HTTPS for credentials."
 fi

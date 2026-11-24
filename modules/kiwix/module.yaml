@@ -1,0 +1,10 @@
+{
+  "id": "kiwix",
+  "name": "Kiwix",
+  "category": "Knowledge",
+  "description": "Offline reference library; content is installed separately.",
+  "port": 8081,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-kiwix:8080/",
+  "upstream": "https://kiwix.org/"
+}

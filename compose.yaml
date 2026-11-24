@@ -12,6 +12,10 @@ services:
       AFTERGRID_ORIGIN: "${AFTERGRID_ORIGIN:-}"
     volumes:
       - ./data/core:/data
+      - worker_socket:/run/aftergrid:ro
+    depends_on:
+      worker:
+        condition: service_started
     read_only: true
     tmpfs:
       - /tmp
@@ -25,3 +29,25 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+  worker:
+    build: ./worker
+    init: true
+    restart: unless-stopped
+    environment:
+      AFTERGRID_ROOT: "${AFTERGRID_ROOT:-/opt/aftergrid}"
+      AFTERGRID_BIND: "${AFTERGRID_BIND:-127.0.0.1}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./modules:/modules:ro
+      - worker_socket:/run/aftergrid
+      - worker_state:/worker-state
+    networks:
+      - apps
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  worker_socket:
+  worker_state:
+networks:
+  apps:
+    name: aftergrid-apps
