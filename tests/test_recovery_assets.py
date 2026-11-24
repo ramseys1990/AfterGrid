@@ -56,3 +56,43 @@ def test_save_exact_ids(tmp_path,monkeypatch):
     path=tmp_path/"images.tar"
     assets.save_images([{"image_id":ident},{"image_id":ident}],path)
     assert calls==[["docker","image","save","--output",str(path),ident]]
+
+
+def test_import_refuses_nonempty_and_checks_exact_ids(tmp_path,monkeypatch):
+    first="sha256:"+"a"*64
+    second="sha256:"+"b"*64
+    value={"platform":"linux/amd64","images":[{"project":"aftergrid-core","service":"core","image_id":first},{"project":"aftergrid-core","service":"worker","image_id":second}]}
+    monkeypatch.setattr(assets,"verify",lambda path:value)
+    monkeypatch.setattr(assets,"local_docker",lambda:"linux/amd64")
+    calls=[]
+    loaded=False
+    busy=True
+    tags={}
+    def docker(*args,**kwargs):
+        if args==("ps","--all","--quiet"):return "existing" if busy else ""
+        if args[:2]==("image","ls"):return first+"\n"+second if loaded else ""
+        if args[:2]==("image","inspect"):return json.dumps(tags.get(args[-1],args[-1]))
+        if args[:2]==("image","tag"):
+            tags[args[-1]]=args[-2]
+            return ""
+        raise AssertionError(args)
+    def load(argv,**kwargs):
+        nonlocal loaded
+        calls.append(argv)
+        loaded=True
+    monkeypatch.setattr(assets,"docker",docker)
+    monkeypatch.setattr(assets.subprocess,"run",load)
+    with pytest.raises(ValueError):assets.import_images(tmp_path,True)
+    assert not calls
+    busy=False
+    with pytest.raises(ValueError):assets.import_images(tmp_path,False)
+    assert not calls
+    rows=assets.import_images(tmp_path,True)
+    assert len(rows)==2 and set(tags.values())=={first,second}
+    assert calls==[["docker","image","load","--input",str(tmp_path/"images.tar")]]
+    output=tmp_path/"overrides"
+    assets.write_overrides(value,output)
+    override=json.loads((output/"aftergrid-core.json").read_text())
+    assert all(x["pull_policy"]=="never" for x in override["services"].values())
+    assert all(x["image"] in tags for x in override["services"].values())
+    with pytest.raises(FileExistsError):assets.write_overrides(value,output)

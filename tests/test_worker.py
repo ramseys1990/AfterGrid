@@ -576,7 +576,7 @@ def test_content_snapshot_and_native_verification(tmp_path,monkeypatch):
     monkeypatch.setattr(worker,"compose_env",lambda ident:{})
     def native(argv,**kwargs):
         assert "--verify-files-percent=100" in argv and argv[-1]=="a"*32
-        return SimpleNamespace(stdout=json.dumps({"errorCount":0,"stats":{"readFileCount":2}}))
+        return SimpleNamespace(stdout=json.dumps({"errorCount":0,"stats":{"readFileCount":1,"processedObjectCount":2,"expectedTotalFileCount":2}}))
     monkeypatch.setattr(worker.subprocess,"run",native)
     worker.enqueue("maps","content-verify")
     worker.execute(worker.jobs()[0])

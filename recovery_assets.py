@@ -196,6 +196,65 @@ def verify(directory):
         raise ValueError("Invalid image inventory")
     return value
 
+def recovery_image_rows(value):
+    projects={"aftergrid-core":{"core","worker"},**{"aftergrid-"+m:{m} for m in MODULES}}
+    rows=value["images"]
+    seen=set()
+    result=[]
+    for row in rows:
+        project,service,ident=row["project"],row["service"],row["image_id"]
+        key=(project,service)
+        if project not in projects or service not in projects[project] or key in seen or not IMAGE_ID.fullmatch(ident):
+            raise ValueError("Invalid recovery service image mapping")
+        seen.add(key)
+        result.append({"project":project,"service":service,"image_id":ident,
+                       "recovery_tag":"aftergrid-recovery/"+project+"-"+service+":"+ident.removeprefix("sha256:")})
+    if not {("aftergrid-core","core"),("aftergrid-core","worker")}<=seen:
+        raise ValueError("Missing core images")
+    return result
+
+def import_images(directory,confirmed=False):
+    """Explicitly import on an empty replacement daemon; no services are started."""
+    if confirmed is not True:raise ValueError("Confirm empty replacement daemon")
+    directory=real_directory(directory)
+    value=verify(directory)
+    rows=recovery_image_rows(value)
+    if local_docker()!=value["platform"]:raise ValueError("Recovery architecture mismatch")
+    # docker load can restore archive tags. Refuse any preexisting images or
+    # containers rather than risk changing another application's image tag.
+    if docker("ps","--all","--quiet") or docker("image","ls","--all","--quiet"):
+        raise ValueError("Replacement Docker daemon must be empty")
+    subprocess.run(["docker","image","load","--input",str(directory/"images.tar")],check=True,
+                   stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=6*60*60)
+    expected={r["image_id"] for r in rows}
+    actual=set(docker("image","ls","--all","--no-trunc","--quiet").splitlines())
+    if actual!=expected:raise ValueError("Imported image set differs from inventory")
+    for row in rows:
+        ident=row["image_id"]
+        if json.loads(docker("image","inspect","--format","{{json .Id}}",ident))!=ident:
+            raise ValueError("Imported image ID mismatch")
+        docker("image","tag",ident,row["recovery_tag"])
+        if json.loads(docker("image","inspect","--format","{{json .Id}}",row["recovery_tag"]))!=ident:
+            raise ValueError("Recovery image tag mismatch")
+    return rows
+
+def write_overrides(value,destination):
+    """Generate Compose overrides, not a runnable installation."""
+    rows=recovery_image_rows(value)
+    destination=Path(destination).absolute()
+    real_directory(destination.parent)
+    destination.mkdir(mode=0o700)
+    try:
+        for project in sorted({r["project"] for r in rows}):
+            services={r["service"]:{"image":r["recovery_tag"],"pull_policy":"never"} for r in rows if r["project"]==project}
+            path=destination/(project+".json")
+            with path.open("x") as stream:json.dump({"services":services},stream,indent=2)
+            path.chmod(0o600)
+    except Exception:
+        shutil.rmtree(destination)
+        raise
+    return rows
+
 def main():
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
@@ -205,11 +264,25 @@ def main():
     create.add_argument("--destination",type=Path,required=True)
     check=sub.add_parser("verify")
     check.add_argument("directory",type=Path)
+    load=sub.add_parser("import-images")
+    load.add_argument("directory",type=Path)
+    load.add_argument("--confirm-empty-daemon",action="store_true")
+    overrides=sub.add_parser("prepare-overrides")
+    overrides.add_argument("directory",type=Path)
+    overrides.add_argument("--destination",type=Path,required=True)
     args=parser.parse_args()
     try:
+        if args.action=="import-images":
+            rows=import_images(args.directory,args.confirm_empty_daemon)
+            print("Imported and checked "+str(len(rows))+" service image mappings. No services started.")
+            return
+        if args.action=="prepare-overrides":
+            rows=write_overrides(verify(args.directory),args.destination)
+            print("Prepared no-pull Compose overrides for "+str(len(rows))+" services. No services started.")
+            return
         value=capture(args.root,args.destination) if args.action=="capture" else verify(args.directory)
     except Exception:
-        parser.exit(1,"Offline asset operation refused or failed. Check local Docker, maintenance window, release files, destination, storage and checksums. No live services were modified.\n")
+        parser.exit(1,"Offline asset operation refused or failed. Check local Docker, maintenance window, release files, destination, storage and checksums. No services were started; a failed image import may leave images in the replacement daemon.\n")
     print("Offline installation assets "+("captured" if args.action=="capture" else "verified")+": "+str(len(value["images"]))+" service images. Not a complete recovery package.")
 
 if __name__=="__main__":

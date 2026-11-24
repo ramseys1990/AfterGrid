@@ -491,11 +491,15 @@ def verify_content(job,ident):
         if len(raw)>1024*1024:raise ValueError("Oversized verification output")
         value=json.loads(raw)
         result=value["stats"]
-        if type(value["errorCount"]) is not int or value["errorCount"]!=0 or type(result["readFileCount"]) is not int or result["readFileCount"]!=stats["fileCount"]:
+        # Kopia walks each distinct object once, not each pathname.
+        if (type(value["errorCount"]) is not int or value["errorCount"]!=0
+                or type(result["readFileCount"]) is not int or result["readFileCount"]<1
+                or type(result["processedObjectCount"]) is not int or result["processedObjectCount"]<result["readFileCount"]
+                or type(result["expectedTotalFileCount"]) is not int or result["expectedTotalFileCount"]!=stats["fileCount"]):
             raise ValueError("Verification incomplete")
     except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError):
         raise RuntimeError("Native content verification failed or incomplete; inspect Kopia") from None
-    log(job,"\nContent snapshot "+snapshot_id+" verified: "+str(result["readFileCount"])+" files read; zero reported errors. No files restored.\n")
+    log(job,"\nContent snapshot "+snapshot_id+" verified: "+str(result["readFileCount"])+" distinct file objects read; zero reported errors. No files restored.\n")
     change(job,completed=2,state="succeeded",stage="Native content read verification passed; restore not tested")
 
 def recovery_sources():

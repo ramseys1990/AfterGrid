@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.17-dev
+- Add explicit image import on an empty matching replacement daemon, exact image-ID checks, recovery-only tags and no-pull Compose override generation.
+- Correct native content read verification to account for Kopia's distinct-object tree traversal rather than requiring one read per path. Preserve zero-error and manifest count checks.
+- Full integration remains blocked by MicroTAK clean shutdown and pending CI. No live startup or restore application.
+
 ## 0.8.16-dev
 - Add host-only offline installation asset capture and verification: reviewed release files, raw private environment, exact local image IDs, native Docker archive and SHA-256 manifest.
 - Add unit tests and native disposable Docker archive save/load fixture. No live recovery application or image import command yet. CI pending.

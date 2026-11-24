@@ -56,3 +56,16 @@ sudo python3 /opt/aftergrid/recovery_assets.py verify /secure/aftergrid-assets
 The export copies reviewed installed release source, module definitions, and raw .env (never evaluated), and uses native docker image save for the exact locally installed image IDs of the core and currently existing reviewed module containers (running or stopped). It records original references and state, platform, and SHA-256/size for each asset. No image pulls, builds, tag changes, or service restarts occur. Uninstalled apps without containers are not included; review the inventory before relying on it. The release copy is the current on-disk reviewed source, not proof of the Git commit or that a manually modified source matches the built images. The archive can be large; check space in advance. Capture is not a coordinated system snapshot and does not include the Kopia repository or data.
 
 The asset tree contains sensitive plaintext host configuration; private permissions are not encryption. Store securely and keep the data repository/password and recovery inventory separately. Verification checks the file set and checksums against the recorded manifest, not authenticity against a malicious replacement. Image restoration into a disposable Docker daemon and a no-pull Compose recovery launcher are next; do not load into a production daemon without reviewing tag conflicts. The target must already have compatible Linux, Python, Docker Engine and Compose; offline installation of Docker itself is not included.
+
+
+## Import saved images (replacement host only)
+
+The replacement Linux host must already have local Docker and the matching architecture. The daemon must have no containers or images; the command deliberately refuses nonempty daemons because native Docker load can restore tags. Use the trusted matching recovery utility and verified private asset directory:
+
+```sh
+sudo python3 recovery_assets.py import-images /secure/aftergrid-assets --confirm-empty-daemon
+sudo python3 recovery_assets.py prepare-overrides /secure/aftergrid-assets \
+  --destination /secure/aftergrid-overrides
+```
+
+Import verifies the entire asset file set first, loads images natively, checks the exact set of image IDs and adds deterministic recovery-only tags. Overrides reference those tags with pull_policy: never. Future Compose startup must additionally specify --no-build --pull never; this step does not start any service, alter live data, or reconnect Kopia. Failed imports may leave images on the replacement daemon; inspect manually, never automatically prune. The eventual recovery launcher must reconcile worker-managed module actions and digest-pinned references with recovered images. Use only trusted archives; checksums are integrity evidence, not signatures.
