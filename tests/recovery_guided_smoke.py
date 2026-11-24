@@ -109,15 +109,13 @@ def main(fixture):
                 time.sleep(1)
             password=call(old,"/api/admin/kopia/credentials",{})["repository_password"]
             post_job(old,"/api/admin/kopia/initialize",{"confirmed":True})
-            for scope in ("core","worker"):
-                for action in ("snapshot","verify-snapshot"):
-                    post_job(old,"/api/admin/backups/"+scope+"/"+action,{"confirmed":True})
-            for action in ("snapshot","verify"):
-                post_job(old,"/api/admin/backups/content/kiwix/"+action,{"confirmed":True})
-            post_job(old,"/api/admin/backups/recovery-manifest",{"confirmed":True})
+            # Exercise the real fresh-capture coordinator through the authenticated portal.
             inventory=tmp/"inventory.json"
-            inventory.write_text(json.dumps(call(old,"/api/admin/backups/recovery-manifest")))
-            inventory.chmod(0o600)
+            capture=recover.capture_inventory(lambda path,payload=None:call(old,path,payload,202 if payload is not None else 200),
+                                              ["kiwix"],job_timeout=240)
+            recover.prep.private_write(inventory,json.dumps(capture).encode())
+            assert capture["atomic"] is False
+            assert recover.core_records(inventory)["worker"]["verification_job"]>recover.core_records(inventory)["worker"]["snapshot_job"]
             # Stop the original services but retain container image identities.
             for ident in ("kiwix","kopia"):post_job(old,"/api/admin/modules/"+ident+"/stop")
             run(cmd,"stop")
