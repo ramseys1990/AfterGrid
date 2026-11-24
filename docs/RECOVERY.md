@@ -244,3 +244,47 @@ MicroTAK remains usable as an optional application but is excluded from supporte
 The supported guided capture, package and data restore paths refuse MicroTAK selection even if a historical inventory reports a verified snapshot. A captured MicroTAK container image may remain in the installation archive, but the package explicitly lists the module as omitted and records the blocker. When packing a host with that captured module, explicitly add `--acknowledge-blocked` to the pack command; it acknowledges missing coverage, not acceptance. Do not treat the archive or the Kopia repository as a supported MicroTAK data recovery path. Preserve its sensitive state separately under a reviewed native procedure; no new backup schedule is enabled. Normal installation/lifecycle is unchanged. The existing diagnostic snapshot continues to require clean exit, and the inventory reports the blocked reason.
 
 Reopen support only after a reviewed upstream version or supported native quiescence/export path is available and a disposable native fixture restores original CA, enrolled identities, mission/event state and uploaded content, validates client authentication and rejects interrupted/corrupt captures. Do not bypass certificate verification or modify upstream exit codes. The rest of the recovery milestone can proceed with an explicitly restricted module set; full all-application recovery remains unaccepted.
+
+## Single-command source package creation and restart
+
+Run on the original installation host, with external writers and native scheduled
+repository maintenance paused and the repository password retained separately.
+Use the local portal via loopback or a trusted HTTPS endpoint associated with
+this installation. Explicitly select recovery modules or use `--core-only`.
+
+```sh
+sudo python3 recover.py create-package --root /opt/aftergrid \
+  --url http://127.0.0.1:8080 --destination /secure/aftergrid-package \
+  --module kiwix --module maps --confirm-maintenance-downtime
+```
+
+If MicroTAK is installed, add `--acknowledge-blocked` to acknowledge that its
+data is excluded. The command creates fresh verified snapshots, seals the
+inventory, records exact original container identities and running states,
+stops reviewed source containers, verifies the package, and restarts only
+previously running containers by ID. It does not uninstall, recreate, pull or
+touch unrelated Compose projects. All reviewed source services may experience
+downtime even when not selected for recovery. The local source root must match
+the container bind mounts. The new package must be outside the source root.
+
+Maintenance remains sealed after restart. Inspect native service readiness
+and package verification, then use `release-maintenance`. If the process is
+interrupted and a private `recovery-source-restart.json` remains, inspect it
+and the host state and run `sudo python3 recover.py resume-source --root
+/opt/aftergrid --confirm-resume`. This refuses replaced or missing containers
+and leaves the journal on failure. On ordinary packaging failure the same
+restart path attempts to restore the original running set; a partial package
+or seal requires inspection. Do not manually delete the journal or release
+maintenance before checking source state. Native writes and external Docker
+changes are still outside the portal lock. This is not a simultaneous snapshot.
+
+The lower-level `capture-inventory`, `pack-and-resume`, `pack` and
+`verify-package` commands remain available. The combined path is exercised
+by the native guided CI fixture. A separate hosted CI step prepares an empty
+nested Docker daemon with its outer network set to none, mounts the private
+fixture read-only, imports the real archive, restores core/worker/Kiwix,
+checks original login and reader data, opts into a writable Kopia working
+copy, verifies a new snapshot, and checks the package again. The fixture
+contains disposable credentials and is deleted on the runner, never uploaded.
+This new disconnected gate is pending execution. It covers a representative
+module set, not every optional application or physical LAN/Proxmox behavior.

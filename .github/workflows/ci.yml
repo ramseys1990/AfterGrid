@@ -34,7 +34,9 @@ jobs:
         timeout-minutes: 15
         run: sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 python3 tests/recovery_core_smoke.py
       - name: Guided native recovery acceptance
-        timeout-minutes: 15
+        timeout-minutes: 20
+        env:
+          EXPORT_DISCONNECTED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && runner.environment == 'github-hosted' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -43,7 +45,44 @@ jobs:
           test "$(git hash-object "$fixture")" = 6706e9b279753c759ea77c8bd0250ce950bc819c
           docker pull ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:e478554a9920412eeb5ce1d73f24e4b28445ebed233187cdd03c623c32be46a5
           docker pull kopia/kopia:0.23.1
-          sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 python3 tests/recovery_guided_smoke.py "$fixture"
+          export_args=()
+          if [[ "$EXPORT_DISCONNECTED" == "true" ]]; then
+            export_args+=("$RUNNER_TEMP/aftergrid-recovery-acceptance")
+          fi
+          sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 python3 tests/recovery_guided_smoke.py "$fixture" "${export_args[@]}"
+      - name: Disconnected replacement archive acceptance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && runner.environment == 'github-hosted'
+        timeout-minutes: 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build only the disposable test harness online. The target receives
+          # no host Docker socket, no WAN, and only read-only fixture/test binds.
+          docker build -t aftergrid-ci-disconnected-runner - <<'DOCKERFILE'
+          FROM docker:28-dind
+          RUN apk add --no-cache python3 coreutils
+          DOCKERFILE
+          docker run --rm --privileged --network none \
+            --mount "type=bind,src=$RUNNER_TEMP/aftergrid-recovery-acceptance,dst=/fixture,readonly" \
+            --mount "type=bind,src=$PWD/tests,dst=/tests,readonly" \
+            --env AFTERGRID_DISPOSABLE_DISCONNECTED_TEST=1 \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint /bin/sh aftergrid-ci-disconnected-runner -ec '
+              unset DOCKER_HOST DOCKER_CONTEXT
+              dockerd --host unix:///var/run/docker.sock --storage-driver=vfs >/tmp/daemon.log 2>&1 &
+              daemon=$!
+              trap "kill $daemon 2>/dev/null || true" EXIT
+              for i in $(seq 1 60); do
+                if docker info >/dev/null 2>&1; then break; fi
+                sleep 1
+              done
+              if ! docker info >/dev/null 2>&1; then tail -40 /tmp/daemon.log; exit 1; fi
+              python3 /tests/recovery_disconnected_smoke.py /fixture
+            '
+      - name: Remove disposable private recovery fixture
+        if: always()
+        shell: bash
+        run: sudo rm -rf -- "$RUNNER_TEMP/aftergrid-recovery-acceptance"
       - name: Validate module Compose definitions
         run: |
           export MESHMONITOR_ADMIN_PASSWORD=disposable-ci-mesh-password MESHMONITOR_SESSION_SECRET=disposable-ci-session-secret

@@ -48,7 +48,7 @@ def reader_fixture():
     with urllib.request.urlopen("http://127.0.0.1:8081/catalog/v2/entries",timeout=10) as response:
         return ET.fromstring(response.read()).findall("{http://www.w3.org/2005/Atom}entry")
 
-def main(fixture):
+def main(fixture,exported=None):
     if os.geteuid()!=0 or os.environ.get("AFTERGRID_DISPOSABLE_RECOVERY_TEST")!="1":
         raise RuntimeError("Disposable CI only")
     if assets.docker("ps","--all","--quiet"):raise RuntimeError("Expected no containers")
@@ -56,6 +56,9 @@ def main(fixture):
         if any(x.startswith("aftergrid-") for x in assets.docker(kind,"ls","--format","{{.Name}}").splitlines()):
             raise RuntimeError("Existing AfterGrid resources")
     fixture=Path(fixture).resolve(strict=True)
+    if exported is not None:
+        exported=install.validate_root(Path(exported))
+        exported.mkdir(mode=0o700)
     original_source=Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="aftergrid-guided-ci-") as tmp:
         tmp=Path(tmp)
@@ -120,7 +123,7 @@ def main(fixture):
                     assert call(old,"/api/admin/households",{"name":"Must be blocked"},409)["detail"]
                 return result
             repository=original/"backups"
-            package=tmp/"package"
+            package=(exported if exported is not None else tmp)/"package"
             packed=recover.create_package(capture_call,original,package,["kiwix"],password,job_timeout=240)
             assert recover.verify_package(package)==packed and packed["omitted_captured"]==[]
             assert not (original/"recovery-source-restart.json").exists()
@@ -207,6 +210,11 @@ def main(fixture):
             post_job(fresh,"/api/admin/backups/core/verify-snapshot",{"confirmed":True})
             assert repository_digest(repository)==before
             assert recover.verify_package(package)==packed
+            if exported is not None:
+                recover.prep.private_write(exported/"acceptance.json",json.dumps({
+                    "credentials":creds,"repository_password":password,
+                    "fixture_sha256":assets.sha256_file(fixture)
+                }).encode())
             print("Portable package verified before and after recovery; snapshot capture points remain independent.",flush=True)
             print("Recovered writable copy: new managed core snapshot and isolated restore passed.",flush=True)
             print("Guided recovery passed: real native snapshots, exact local images, original login, household, Kiwix bytes and catalog, read-only Kopia reconnect, offline activation and lifecycle, original repository unchanged.",flush=True)
@@ -217,5 +225,5 @@ def main(fixture):
             subprocess.run([*cmd,"down","-v"],capture_output=True,timeout=90)
 
 if __name__=="__main__":
-    if len(sys.argv)!=2:raise SystemExit("Pinned ZIM fixture path required")
-    main(sys.argv[1])
+    if len(sys.argv) not in (2,3):raise SystemExit("Pinned ZIM fixture and optional private CI export path required")
+    main(sys.argv[1],sys.argv[2] if len(sys.argv)==3 else None)
