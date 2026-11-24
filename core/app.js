@@ -271,6 +271,7 @@ $("cancel").addEventListener("click",()=>{error("");view("dashboard");});
 
 
 let directory={households:[],locations:[]};
+let overviewGeneration=0,overviewOffset=0,overviewNext=null;
 function option(select,value,label){
   const node=document.createElement("option");node.value=value;node.textContent=label;select.append(node);
 }
@@ -293,6 +294,7 @@ function renderDirectory(){
   const filter=$("household-filter").value;
   const admin=!!status?.admin;
   $("household-editor").hidden=!admin;
+  if(!admin)clearOverview();
   if(!admin){$("household-form").reset();$("location-form").reset();$("inventory-connect").reset();$("inventory-connections").replaceChildren();$("native-locations").replaceChildren();$("household-message").textContent="";}
   const root=$("household-list");root.replaceChildren();
   for(const h of directory.households){
@@ -344,9 +346,72 @@ async function refreshHouseholds(){
   for(const key of ["owner_id","storage_id"]){
     const select=$("location-form").elements[key];householdOptions(select,"Shared / unassigned",select.value);
   }
+  const overviewHousehold=$("inventory-overview-household");
+  const previous=overviewHousehold.value;
+  householdOptions(overviewHousehold,"All households",previous);
+  option(overviewHousehold,"0","Shared / unassigned");
+  if(previous==="0")overviewHousehold.value="0";
+  clearOverview();
   renderDirectory();
   if(status?.admin)await refreshInventoryConnections();
 }
+function clearOverview(){
+  overviewGeneration++;
+  overviewOffset=0;overviewNext=null;
+  $("inventory-overview-results").replaceChildren();
+  $("inventory-overview-prev").disabled=true;
+  $("inventory-overview-next").disabled=true;
+  $("inventory-overview-form").querySelector("button").disabled=false;
+}
+async function loadOverview(offset){
+  const generation=++overviewGeneration;
+  const root=$("inventory-overview-results");
+  const form=$("inventory-overview-form");
+  const household=$("inventory-overview-household").value;
+  const q=new URLSearchParams({basis:$("inventory-overview-basis").value,offset:String(offset)});
+  if(household!=="")q.set("household",household);
+  root.textContent="Reading native inventory…";
+  form.querySelector("button").disabled=true;
+  $("inventory-overview-prev").disabled=true;$("inventory-overview-next").disabled=true;
+  try{
+    const result=await api("/api/admin/inventory/overview?"+q);
+    if(generation!==overviewGeneration||!status?.admin)return;
+    overviewOffset=result.offset;overviewNext=result.next_offset;
+    root.replaceChildren();
+    const summary=document.createElement("p");
+    summary.textContent=result.locations.length?
+      "Locations "+(result.offset+1)+"–"+(result.offset+result.locations.length)+" of "+result.total_locations+" · "+result.available_locations+" available · "+result.unavailable_locations+" unavailable. Homebox item records on this page: "+(result.homebox_item_records??"not available")+". Not unit quantities.":
+      "No mapped locations match this filter.";
+    root.append(summary);
+    for(const item of result.locations){
+      const card=document.createElement("article"),title=document.createElement("strong"),detail=document.createElement("p");
+      title.textContent=item.label+" · "+item.module;
+      detail.textContent="Owner: "+(item.owner_name||"Shared / unassigned")+" · Storage: "+(item.storage_name||"Shared / unassigned");
+      card.append(title,detail);
+      const line=document.createElement("p");
+      if(item.state!=="available"){line.textContent="Unavailable: "+item.error;card.append(line);}
+      else if(item.module==="homebox"){line.textContent=item.item_records+" direct item records in "+item.native_label;card.append(line);}
+      else{
+        line.textContent=item.products.length?"Stock in "+item.native_label:"No stock entries in "+item.native_label;
+        card.append(line);
+        if(item.products.length){
+          const list=document.createElement("ul");
+          for(const product of item.products){const li=document.createElement("li");li.textContent=product.product+": "+product.amount+" "+product.unit;list.append(li);}
+          card.append(list);
+        }
+      }
+      root.append(card);
+    }
+    $("inventory-overview-prev").disabled=offset===0;
+    $("inventory-overview-next").disabled=overviewNext===null;
+  }catch(e){if(generation===overviewGeneration&&status?.admin){root.textContent=e.message;$("inventory-overview-prev").disabled=overviewOffset===0;}}
+  finally{if(generation===overviewGeneration)form.querySelector("button").disabled=false;}
+}
+$("inventory-overview-form").addEventListener("submit",event=>{event.preventDefault();loadOverview(0);});
+$("inventory-overview-household").addEventListener("change",clearOverview);
+$("inventory-overview-basis").addEventListener("change",clearOverview);
+$("inventory-overview-prev").addEventListener("click",()=>loadOverview(Math.max(0,overviewOffset-8)));
+$("inventory-overview-next").addEventListener("click",()=>{if(overviewNext!==null)loadOverview(overviewNext);});
 $("household-filter").addEventListener("change",renderDirectory);
 $("household-refresh").addEventListener("click",()=>refreshHouseholds().catch(e=>{$("household-message").textContent=e.message;}));
 $("household-reset").addEventListener("click",()=>$("household-form").reset());
@@ -372,7 +437,7 @@ async function refreshInventoryConnections(){
       directoryButton(row,"Discover locations",async()=>showNativeLocations(module,(await api("/api/admin/inventory/locations/"+module)).locations));
       directoryButton(row,"Disconnect",async()=>{
         if(!confirm("Forget the saved API key? Native inventory and location mappings remain unchanged."))return;
-        await api("/api/admin/inventory/disconnect",{module});$("native-locations").replaceChildren();await refreshInventoryConnections();
+        await api("/api/admin/inventory/disconnect",{module});clearOverview();$("native-locations").replaceChildren();await refreshInventoryConnections();
       });
     }
     root.append(row);
@@ -397,7 +462,7 @@ function showNativeLocations(module,locations){
 $("inventory-connect").addEventListener("submit",async event=>{
   event.preventDefault();const form=event.currentTarget,button=form.querySelector("button");button.disabled=true;
   const data=Object.fromEntries(new FormData(form));form.elements.key.value="";
-  try{const r=await api("/api/admin/inventory/connect",data);await refreshInventoryConnections();showNativeLocations(data.module,r.locations);$("household-message").textContent="Native key saved; select a location.";}
+  try{const r=await api("/api/admin/inventory/connect",data);clearOverview();await refreshInventoryConnections();showNativeLocations(data.module,r.locations);$("household-message").textContent="Native key saved; select a location.";}
   catch(e){$("household-message").textContent=e.message;}
   finally{button.disabled=false;}
 });

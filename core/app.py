@@ -132,7 +132,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.7.2-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.7.3-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -414,7 +414,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.7.2-dev"}
+                "version": "0.7.3-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -520,6 +520,20 @@ def create_app(data_dir=None):
     def inventory_discover(module: str,request: Request):
         require_admin(request)
         return inventory_result(lambda: {"locations":inventory.discover(module)})
+
+    @api.get("/api/admin/inventory/overview")
+    def inventory_overview(request: Request, household: int | None = None, basis: str = "owner", offset: int = 0):
+        require_admin(request)
+        if basis not in ("owner","storage") or offset<0 or offset>2000 or (household is not None and household<0):
+            raise HTTPException(400,"Invalid inventory filter or offset")
+        directory=households.view()
+        if household and not any(h["id"]==household for h in directory["households"]):
+            raise HTTPException(404,"Household not found")
+        locations=directory["locations"]
+        if household is not None:
+            selected=household or None
+            locations=[loc for loc in locations if loc[basis+"_id"]==selected]
+        return inventory.overview(locations,offset)
 
     @api.get("/api/admin/inventory/report/{ident}")
     def inventory_report(ident: int,request: Request):

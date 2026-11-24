@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.7.2-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.7.3-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -84,3 +84,5 @@ Optional [Kolibri](modules/kolibri/README.md) uses the official image for native
 Optional [Jellyfin media library](modules/media/README.md) uses the official native image, local accounts and read-only original media under content/media. Complete native setup and explicitly enable LAN sharing. No automatic media downloads or GPU passthrough. Existing development installations need module directories prepared. Actual playback and offline acceptance remain unverified.
 
 Optional [DokuWiki](modules/notes/README.md) supplies shared notes, emergency instructions and document attachments with local accounts, ACLs and a persistent file-based store. Complete native private setup on port 8097, then explicitly share on LAN. No additional database. Native CI pending.
+
+The administrator consolidated inventory overview reads mapped Homebox and Grocy locations together, with separate ownership and storage filters, native units and explicit unavailable states. It does not duplicate stock records or expose inventory keys to LAN guests.

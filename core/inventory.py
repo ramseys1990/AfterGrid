@@ -5,6 +5,7 @@ import sqlite3
 import urllib.request
 import urllib.error
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from uuid import UUID
@@ -168,3 +169,46 @@ class Inventory:
         products=get(module,"/objects/products?limit=10001",key)
         units=get(module,"/objects/quantity_units?limit=10001",key)
         return {"module":module,"location":found["label"],"products":grocy_stock(stock,products,units,native)}
+
+    def overview(self, locations, offset=0):
+        """Read at most eight mapped locations per page; never persist stock or sum unlike units."""
+        page=locations[offset:offset+8]
+        results={}
+        def unavailable(loc,exc):
+            return {**loc,"state":"unavailable","error":str(exc)}
+        def read_group(module,group):
+            try:
+                key=self.token(module)
+                discovered={r["native_id"]:r for r in self.discover(module,key)}
+                if module=="grocy":
+                    products=get(module,"/objects/products?limit=10001",key)
+                    units=get(module,"/objects/quantity_units?limit=10001",key)
+            except InventoryError as exc:
+                return [unavailable(loc,exc) for loc in group]
+            def read_one(loc):
+                try:
+                    native=loc["native_id"]
+                    found=discovered.get(native)
+                    if found is None:
+                        raise InventoryError("Mapped native location not found")
+                    if module=="homebox":
+                        return {**loc,"state":"available","native_label":found["label"],"item_records":found["item_records"]}
+                    stock=get(module,"/stock/locations/"+numeric(native)+"/entries?limit=1001",key)
+                    return {**loc,"state":"available","native_label":found["label"],"products":grocy_stock(stock,products,units,native)}
+                except InventoryError as exc:
+                    return unavailable(loc,exc)
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                return list(pool.map(read_one,group))
+        groups=[(m,[loc for loc in page if loc["module"]==m]) for m in BASE]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures=[pool.submit(read_group,m,group) for m,group in groups if group]
+            for future in futures:
+                for item in future.result():
+                    results[item["id"]]=item
+        ordered=[results[loc["id"]] for loc in page]
+        available=[r for r in ordered if r["state"]=="available"]
+        equipment=[r for r in available if r["module"]=="homebox"]
+        return {"offset":offset,"total_locations":len(locations),"next_offset":offset+len(page) if offset+len(page)<len(locations) else None,
+                "available_locations":len(available),"unavailable_locations":len(page)-len(available),
+                "homebox_item_records":sum(r["item_records"] for r in equipment) if equipment else None,
+                "locations":ordered}

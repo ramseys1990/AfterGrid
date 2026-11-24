@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.3-dev
+- Add administrator-only consolidated live inventory across mapped Homebox/Grocy locations, with ownership/storage filters and shared/unassigned selection.
+- Bounded eight-location pages, reused native metadata, explicit partial failures, preserved units and no inventory database duplication.
+- Add mocked integration, filter, authorization and pagination tests. Native authenticated acceptance and CI pending.
+
 ## 0.7.2-dev
 - Add optional DokuWiki 2026-07-14c for local notes, revision history and emergency document attachments, with native ACL setup and persistent storage.
 - Add disposable native setup, page editing, guest access denial, LAN sharing and lifecycle tests; CI pending.
