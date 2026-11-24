@@ -146,6 +146,12 @@ import shutil
 subprocess.run(["sudo","cp",os.environ["MAP_FIXTURE"],"content/maps/region.pmtiles"],check=True)
 subprocess.run(["docker","compose","exec","-T","core","pmtiles","verify","/content/maps/region.pmtiles"],check=True)
 assert any(x["name"]=="region.pmtiles" for x in api("/api/admin/maps")["files"])
+for asset in ("/maps","/maps.js","/maps.css","/map-assets/maplibre-gl.js","/map-assets/pmtiles.js","/map-assets/basemaps.js","/map-assets/fonts/Noto%20Sans%20Regular/0-255.pbf","/map-assets/sprites/v4/light.json"):
+    with urllib.request.urlopen(BASE+asset,timeout=10) as response:
+        assert response.status==200 and response.read(1)
+request=urllib.request.Request(BASE+"/maps/archive.pmtiles",headers={"Range":"bytes=0-6"})
+with urllib.request.urlopen(request,timeout=10) as response:
+    assert response.status==206 and response.read()==b"PMTiles"
 action("restart","maps")
 with urllib.request.urlopen(map_base+"/data/region-pmtiles.json",timeout=10) as response:
     tilejson=json.load(response)

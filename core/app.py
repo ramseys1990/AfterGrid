@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 try:
@@ -113,8 +114,10 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.1-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.5.2-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
+
+    api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
 
     @api.middleware("http")
     async def security(request, call_next):
@@ -122,7 +125,7 @@ def create_app(data_dir=None):
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        response.headers["Content-Security-Policy"] = ("default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; worker-src blob:; child-src blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'" if request.url.path == "/maps" else "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         return response
 
     def same_origin(request):
@@ -168,6 +171,29 @@ def create_app(data_dir=None):
     def javascript():
         return FileResponse(ROOT / "app.js", media_type="text/javascript")
 
+    @api.get("/maps")
+    def map_view():
+        return FileResponse(ROOT / "maps.html")
+
+    @api.get("/maps.js")
+    def map_script():
+        return FileResponse(ROOT / "maps.js",media_type="text/javascript")
+
+    @api.get("/maps.css")
+    def map_style():
+        return FileResponse(ROOT / "maps.css",media_type="text/css")
+
+    @api.get("/maps/archive.pmtiles")
+    @api.head("/maps/archive.pmtiles")
+    def map_archive():
+        with db() as con:
+            if not con.execute("SELECT 1 FROM admin WHERE id=1").fetchone():
+                raise HTTPException(403,"Complete initial setup first")
+        path=maps.content/"region.pmtiles"
+        if path.is_symlink() or not path.is_file():
+            raise HTTPException(404,"No local PMTiles archive")
+        return FileResponse(path,media_type="application/octet-stream")
+
     @api.get("/health")
     def health():
         with db() as con:
@@ -183,7 +209,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.1-dev"}
+                "version": "0.5.2-dev"}
 
     @api.get("/api/modules")
     def modules():

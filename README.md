@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.5.1-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.5.2-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -56,3 +56,5 @@ The shared LAN directory supports household names and manual native Homebox/Groc
 Install the optional [Maps module](modules/maps/README.md) for local PMTiles/MBTiles serving and native browser previews over the LAN (port 8084). Map content is separate: copy a trusted regional archive into the map content directory and restart. No automatic demo download. Styled vector basemaps, regional downloads, waypoints and routing are later slices. New Docker smoke tests are pending.
 
 Regional map extracts: select a published Protomaps build date, bounding box and maximum zoom, run an estimate and explicitly confirm the download. Native pmtiles CLI performs range extraction and structural verification. Existing PMTiles never overwritten. Development limit 4 GiB per extract; logs show actual tool output, not file-size progress (the CLI preallocates). Existing installations must give UID 10001 ownership of content/maps directory before downloading. Live upstream extraction and styled vector rendering remain unverified.
+
+Styled offline map: open the Maps card's styled viewer. It uses local MapLibre, PMTiles and Protomaps styles, fonts and sprites, served by the core. Compatible Protomaps MVT and raster PMTiles supported; other vector schemas and MBTiles retain the native viewer. No browser CDN dependency. Local range serving and packaged assets are covered by tests; actual browser/WebGL and vector label rendering still need acceptance.

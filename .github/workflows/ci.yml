@@ -13,7 +13,7 @@ jobs:
       - run: pip install -r core/requirements-dev.txt
       - run: python -m pytest -q
       - run: bash -n install.sh
-      - run: node --check core/app.js
+      - run: node --check core/app.js && node --check core/maps.js
       - run: docker compose config -q
       - run: docker compose build core worker
       - name: Validate module Compose definitions

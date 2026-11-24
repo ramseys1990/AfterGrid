@@ -1,0 +1,1 @@
+html,body{height:100%;margin:0;font-family:system-ui,sans-serif;color:#e8efe8;background:#17241c}body{display:flex;flex-direction:column}header,footer{padding:.65rem;display:flex;gap:.8rem;align-items:center;flex-wrap:wrap;font-size:.9rem}header a,footer a{color:#b9dcaa}#map{flex:1;min-height:0}#map-status{font-size:.85rem}footer{font-size:.75rem}

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2-dev
+- LAN styled offline map viewer with bundled MapLibre, PMTiles and Protomaps basemap assets; no CDN runtime requests.
+- Read-only range serving of the existing PMTiles slot; no duplicate archive, no Docker access. Map-only CSP allows local workers and styling.
+- Map controls, scale and click coordinates; compatible Protomaps MVT and raster PMTiles. Other formats remain in native tile viewer.
+- Add range, asset, setup and symlink tests; actual browser acceptance and routing pending.
+
+
 ## 0.5.1-dev
 - Regional PMTiles estimates and downloads using the pinned, SHA-256-checked upstream CLI; administrator confirmation, bounded region, storage checks and native structural verification.
 - Show actual tool output and archive sizes; never overwrite the existing PMTiles slot. Interrupted jobs require a fresh estimate. No automatic WAN requests.
