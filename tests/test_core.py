@@ -184,3 +184,9 @@ def test_preparedness_shared_counts_no_private_fields(tmp_path,monkeypatch):
         monkeypatch.setattr(core_app,"local_inventory",unavailable)
         r=c.get("/api/preparedness").json()
         assert r["knowledge"] is None and r["resources"]["households"]==1
+        import xml.etree.ElementTree as ET
+        def malformed(directory):raise ET.ParseError("private-library")
+        monkeypatch.setattr(core_app,"local_inventory",malformed)
+        response=c.get("/api/preparedness")
+        assert response.status_code==200 and response.json()["knowledge"] is None
+        assert "private-library" not in response.text

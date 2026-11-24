@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import xml.etree.ElementTree as ET
 from collections import deque
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -424,7 +425,7 @@ def create_app(data_dir=None):
         def read(operation):
             try:
                 return operation()
-            except (OSError, ValueError, sqlite3.Error):
+            except (OSError, ValueError, sqlite3.Error, ET.ParseError):
                 return None
         def knowledge():
             directory=Path(os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
