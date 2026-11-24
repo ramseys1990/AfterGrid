@@ -15,7 +15,7 @@ services:
       - worker_socket:/run/aftergrid:ro
     depends_on:
       worker:
-        condition: service_started
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp
@@ -43,6 +43,11 @@ services:
       - worker_state:/worker-state
     networks:
       - apps
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(2); s.connect('/run/aftergrid/worker.sock'); s.sendall(b'GET /health HTTP/1.0\\r\\n\\r\\n'); assert b'200 OK' in s.recv(1024)"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
     security_opt:
       - no-new-privileges:true
 volumes:

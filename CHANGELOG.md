@@ -1,6 +1,9 @@
 # Changelog
 
 ## 0.2.0-dev
+- Catalog entries are derived from module manifests; additional reviewed modules need no core allowlist edits.
+- Refresh module state when a job changes; keep expanded output visible.
+- Add worker socket readiness and a disposable end-to-end Compose lifecycle CI test.
 - Add a private Compose worker, persistent jobs and actual Docker output.
 - Add Kiwix using upstream pinned image and independent project; content remains separate.
 - Add admin lifecycle buttons, progress and job history. Runtime tests pending.

@@ -157,11 +157,12 @@ def create_app(data_dir=None):
         try:
             code, installed = call("/modules")
             if code == 200:
-                by_id = {m["id"]: m for m in installed}
-                for item in result:
-                    if item["id"] in by_id:
-                        m = by_id[item["id"]]
-                        item.update(status=m["status"], installable=True, port=m["port"])
+                by_id = {item["id"]: item for item in result}
+                for m in installed:
+                    item = {key: m[key] for key in ("id", "name", "description", "category", "status", "port")}
+                    item["installable"] = True
+                    by_id[m["id"]] = item
+                result = list(by_id.values())
         except WorkerUnavailable:
             pass
         return result
@@ -185,7 +186,7 @@ def create_app(data_dir=None):
     def module_action(ident: str, action: str, request: Request):
         require_admin(request)
         same_origin(request)
-        if ident not in {m[0] for m in CATALOG} or action not in {"install","start","stop","restart","update","uninstall"}:
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", ident) or action not in {"install","start","stop","restart","update","uninstall"}:
             raise HTTPException(400, "Unsupported module or action")
         try:
             code, result = call("/jobs", {"module": ident, "action": action})

@@ -16,3 +16,25 @@ jobs:
       - run: docker compose config -q
       - run: docker compose build core worker
       - run: docker compose -f modules/kiwix/compose.yaml config -q
+      - name: Disposable Compose lifecycle smoke test
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          export AFTERGRID_ROOT="$PWD"
+          export AFTERGRID_BIND=127.0.0.1 AFTERGRID_PORT=8080 AFTERGRID_ORIGIN=http://127.0.0.1:8080
+          export SMOKE_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(24))')"
+          mkdir -p data/core content/kiwix
+          cp modules/kiwix/library.xml content/kiwix/library.xml
+          printf '%s\n' "$SMOKE_TOKEN" > data/core/setup-token
+          sudo chown -R 10001:10001 data/core
+          sudo chmod 700 data/core
+          sudo chmod 600 data/core/setup-token
+          cleanup() {
+            docker compose -p aftergrid-kiwix -f modules/kiwix/compose.yaml down || true
+            docker compose logs --tail 50 || true
+            docker compose down -v || true
+          }
+          trap cleanup EXIT
+          docker compose up -d --wait --wait-timeout 90
+          python tests/smoke_compose.py

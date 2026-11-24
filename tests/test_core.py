@@ -34,3 +34,19 @@ def test_throttle(tmp_path):
         for _ in range(8):
             assert client.post("/api/login",json={"username":"x","password":"x"},headers=ORIGIN).status_code==401
         assert client.post("/api/login",json={"username":"x","password":"x"},headers=ORIGIN).status_code==429
+
+
+def test_manifest_catalog_is_generic(tmp_path, monkeypatch):
+    from core import app as core_app
+    def fake_call(path, payload=None):
+        if path == "/modules":
+            return 200, [{"id":"new-app","name":"New App","description":"Example","category":"Tools","port":8099,"status":"not installed"}]
+        assert payload == {"module":"new-app","action":"install"}
+        return 202, {"id":1}
+    monkeypatch.setattr(core_app,"call",fake_call)
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        assert any(m["id"]=="new-app" and m["installable"] for m in client.get("/api/modules").json())
+        setup={"username":"admin","password":"long test password","token":"test-token","server_name":"Test"}
+        assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
+        assert client.post("/api/admin/modules/new-app/install",json={},headers=ORIGIN).status_code==202
