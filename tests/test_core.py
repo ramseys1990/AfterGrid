@@ -228,3 +228,23 @@ def test_registry_check_requires_admin_and_same_origin(tmp_path,monkeypatch):
         assert c.post(path,json={}).status_code==403
         assert c.post(path,json={},headers=ORIGIN).json()=={"comparison":"unavailable"}
         assert calls==[("/registry-check",{"module":"kiwix"},45)]
+
+
+def test_backup_plans_require_admin(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake(path,payload=None):
+        calls.append(path)
+        return 200,{"module":"homebox","snapshot_verified":False}
+    monkeypatch.setattr(core_app,"call",fake)
+    (tmp_path/"setup-token").write_text("token")
+    with TestClient(create_app(tmp_path)) as c:
+        paths=["/api/admin/backups/core","/api/admin/modules/homebox/backup-plan"]
+        assert all(c.get(path).status_code==401 for path in paths)
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        core=c.get(paths[0]).json()
+        assert not core["snapshot_verified"] and any("Worker state" in x for x in core["missing"])
+        assert c.get(paths[1]).json()["snapshot_verified"] is False
+        assert calls==["/backup-plan/homebox"]
+        c.cookies.clear()
+        assert all(c.get(path).status_code==401 for path in paths)

@@ -261,6 +261,71 @@ def state(ident):
     except (OSError, subprocess.SubprocessError, ValueError, TypeError):
         return "unavailable"
 
+def backup_sources(config, root):
+    """Classify normalized Compose mounts; no host directory traversal."""
+    result=[]
+    root=Path(root)
+    for service,definition in sorted(config["services"].items()):
+        for mount in definition.get("volumes",[]):
+            if not isinstance(mount,dict):
+                raise ValueError("Expected normalized Compose mounts")
+            kind=mount.get("type")
+            source=mount.get("source")
+            target=mount.get("target","")
+            relative=None
+            if kind=="bind" and isinstance(source,str):
+                path=Path(source)
+                if path.is_absolute() and ".." not in path.parts and path.is_relative_to(root):
+                    relative=path.relative_to(root)
+            kopia_path=None
+            if relative and relative.parts[0] in ("data","content","modules") and len(relative.parts)>1:
+                if relative.parts[:2]==("data","kopia"):
+                    role="excluded"
+                elif relative.parts[:3]==("data","media","cache"):
+                    role="regenerable cache"
+                elif relative.parts[0]=="modules":
+                    role="reviewed configuration"
+                else:
+                    role="application data" if relative.parts[0]=="data" else "offline content"
+                if role not in ("excluded","regenerable cache"):
+                    kopia_path="/source/"+relative.as_posix()
+            else:
+                role="outside backup source mounts"
+            result.append({"service":service,"container_path":target,"role":role,"kopia_path":kopia_path,
+                           "read_only":bool(mount.get("read_only",False))})
+    return result
+
+BACKUP_GUIDANCE={
+    "homebox":"Stop Homebox or use a validated native database export; preserve its worker-generated API-key pepper.",
+    "grocy":"Stop Grocy before snapshotting its database and configuration.",
+    "kiwix":"Finish core downloads, index changes and removals before snapshotting archives and the library index.",
+    "maps":"Finish regional downloads and file changes before snapshotting map content.",
+    "routing":"Finish downloads, graph builds, switches and archives; stop routing before snapshotting the complete routing directory.",
+    "meshmonitor":"Stop MeshMonitor before snapshotting data; preserve its worker-generated credentials and session secret.",
+    "tak":"Stop MicroTAK before capturing database, backups and CA/private-key material; protect the encrypted repository.",
+    "kolibri":"Stop Kolibri and finish imports before capturing facility databases and learning content.",
+    "media":"Stop Jellyfin before snapshotting configuration; finish media imports; cache is regenerable.",
+    "notes":"Stop DokuWiki or prevent all edits before snapshotting documents, ACLs and accounts.",
+    "kopia":"Do not snapshot the active repository or Kopia's working directories into itself; retain repository credentials and independent repository recovery instructions."
+}
+
+def backup_plan(ident):
+    manifest=catalog().get(ident)
+    if not manifest:raise ValueError("Unknown module")
+    try:
+        raw=subprocess.run(command(ident,"config","--format","json"),env=compose_env(ident),
+                           capture_output=True,text=True,timeout=8,check=True).stdout
+        sources=backup_sources(json.loads(raw),ROOT)
+    except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
+        raise RuntimeError("Reviewed backup sources unavailable") from None
+    if ident=="kopia":
+        # Repository, restore destinations and working directories are not
+        # backup sources, even if a future mount is added below /source.
+        sources=[{**source,"role":"excluded from self-backup","kopia_path":None} for source in sources]
+    return {"module":ident,"sources":sources,"guidance":BACKUP_GUIDANCE.get(ident,"Establish an application-consistent backup procedure before scheduling."),
+            "worker_secrets_required":bool(manifest.get("generated_secrets")),
+            "coverage":"planned only","snapshot_verified":False}
+
 def version_report(ident):
     """Local Docker evidence only: no registry lookup, secrets or environment returned."""
     if ident not in catalog():
@@ -509,6 +574,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json(200, [public_module(i,m) for i,m in catalog().items()])
         if self.path == "/jobs":
             return self.send_json(200, jobs())
+        if self.path.startswith("/backup-plan/"):
+            ident=self.path.removeprefix("/backup-plan/")
+            if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})
+            try:return self.send_json(200,backup_plan(ident))
+            except RuntimeError:return self.send_json(503,{"detail":"Reviewed backup sources unavailable"})
         if self.path.startswith("/versions/"):
             ident=self.path.removeprefix("/versions/")
             if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})

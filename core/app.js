@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -73,6 +73,25 @@ async function renderModules(){
           });card.append(reveal,credentials);
         }
         const actions=mod.status==="not installed"?["install"]:mod.status==="running"?["stop","restart",...(mod.id==="routing"?[]:["update"]),"uninstall"]:["start","install","stop","uninstall"];
+        const backup=document.createElement("details"),backupTitle=document.createElement("summary");
+        backupTitle.textContent="Backup source plan";
+        const backupButton=document.createElement("button"),backupInfo=document.createElement("div");
+        backupButton.type="button";backupButton.textContent="Read backup sources";
+        backupButton.addEventListener("click",async()=>{
+          backupButton.disabled=true;backupInfo.textContent="Reading reviewed Compose mounts…";
+          try{
+            const plan=await api("/api/admin/modules/"+mod.id+"/backup-plan");
+            if(!status?.admin||!card.isConnected)return;
+            backupInfo.replaceChildren();
+            function line(value){const p=document.createElement("p");p.textContent=value;backupInfo.append(p);}
+            line("Source plan only — no verified snapshot.");
+            line(plan.guidance);
+            for(const source of plan.sources)line(source.role+" · "+(source.kopia_path||"not included in native source plan")+" (container: "+source.container_path+")");
+            if(plan.worker_secrets_required)line("Worker-generated secrets must be included separately for exact recovery; not visible in Kopia.");
+          }catch(e){if(status?.admin&&card.isConnected)backupInfo.textContent=e.message;}
+          finally{backupButton.disabled=false;}
+        });
+        backup.append(backupTitle,backupButton,backupInfo);card.append(backup);
         const versions=document.createElement("details");
         const summary=document.createElement("summary");summary.textContent="Image versions and update history";
         const info=document.createElement("div"),check=document.createElement("button");check.type="button";check.textContent="Read local versions";
@@ -144,6 +163,21 @@ async function renderModules(){
       $("catalog").append(card);
     }
 }
+$("backup-core-check").addEventListener("click",async()=>{
+  const button=$("backup-core-check"),root=$("backup-core-result");
+  button.disabled=true;root.textContent="Reading core backup requirements…";
+  try{
+    const plan=await api("/api/admin/backups/core");
+    if(!status?.admin)return;
+    root.replaceChildren();
+    function line(value){const p=document.createElement("p");p.textContent=value;root.append(p);}
+    line("Source plan only — no verified snapshot.");
+    for(const source of plan.sources)line(source.path+" — "+source.guidance);
+    for(const gap of plan.missing)line("Not covered: "+gap);
+    line(plan.repository_guidance);
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
 function renderPreparednessApps(modules){
   const groups={knowledge:["kiwix"],navigation:["maps","routing"],communications:["meshmonitor","tak"],resources:["homebox","grocy"],learning:["kolibri","media","notes"]};
   for(const [group,ids] of Object.entries(groups)){

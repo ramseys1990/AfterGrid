@@ -55,6 +55,9 @@ assert not api("/api/status")["selection_pending"]
 assert api("/api/admin/first-run",{"modules":["homebox","kiwix"]})==batch
 wait_job(batch["ids"][0],"kiwix initial install")
 assert module()["status"]=="running"
+plan=api("/api/admin/modules/kiwix/backup-plan")
+assert not plan["snapshot_verified"] and any(s["kopia_path"]=="/source/content/kiwix" for s in plan["sources"]),plan
+assert not api("/api/admin/backups/core")["snapshot_verified"]
 versions=api("/api/admin/modules/kiwix/versions")
 assert versions["registry_checked"] is False and versions["services"][0]["comparison"]=="matches local target",versions
 assert versions["services"][0]["installed_image_ids"]

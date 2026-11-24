@@ -133,7 +133,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.1-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.2-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -415,7 +415,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.8.1-dev"}
+                "version": "0.8.2-dev"}
 
     @api.get("/api/preparedness")
     def preparedness():
@@ -766,6 +766,28 @@ def create_app(data_dir=None):
             raise HTTPException(503, "Module manager unavailable")
         if code != 200:
             raise HTTPException(code if code == 404 else 502, result.get("detail", "Module manager request failed"))
+        return result
+
+    @api.get("/api/admin/backups/core")
+    def core_backup_plan(request: Request):
+        require_admin(request)
+        return {"coverage":"planned only","snapshot_verified":False,
+                "sources":[{"path":"/source/data/core","guidance":"Core database and state: stop core or use a validated SQLite export; finish background downloads first."},
+                           {"path":"/source/modules","guidance":"Reviewed module definitions, not the complete core release."}],
+                "missing":["Worker state volume (jobs, sharing settings and generated secrets)","Core release and host .env configuration","Exact Docker images and recovery metadata"],
+                "repository_guidance":"Configure Kopia natively. Keep the repository password and an independent repository copy off the server."}
+
+    @api.get("/api/admin/modules/{ident}/backup-plan")
+    def module_backup_plan(ident: str,request: Request):
+        require_admin(request)
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}",ident):
+            raise HTTPException(400,"Unsupported module")
+        try:
+            code,result=call("/backup-plan/"+ident)
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=200:
+            raise HTTPException(code if code in (404,503) else 502,"Reviewed backup sources unavailable")
         return result
 
     @api.get("/api/admin/modules/{ident}/versions")

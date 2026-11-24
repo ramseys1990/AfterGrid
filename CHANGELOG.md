@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2-dev
+- Add administrator-only backup source plans for core and reviewed application mounts, using native Kopia paths and application consistency guidance.
+- Exclude Kopia self-backup and regenerable media cache; identify missing worker secrets/state, host configuration and images.
+- No new backup engine, host mounts, automatic snapshots or claims of verified recovery. Add unit/API and Compose smoke coverage; CI pending.
+
 ## 0.8.1-dev
 - Add explicit administrator-only online registry metadata checks through native Docker Buildx, using reviewed image references and platform-aware config digest comparison.
 - No layer downloads, automatic checks, new tag selection or claims of latest upstream release. Unknown registry/platform states are explicit.

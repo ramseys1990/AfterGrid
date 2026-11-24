@@ -209,3 +209,38 @@ def test_registry_comparison_read_only_and_failure(monkeypatch,tmp_path):
     result=worker.registry_report("kiwix")
     assert result["comparison"]=="unavailable" and result["registry_config_digest"] is None
     assert worker.jobs()==[]
+
+
+def test_backup_sources_classify_mounts_without_host_reads():
+    config={"services":{"app":{"volumes":[
+        {"type":"bind","source":"/opt/aftergrid/data/media/config","target":"/config"},
+        {"type":"bind","source":"/opt/aftergrid/data/media/cache","target":"/cache"},
+        {"type":"bind","source":"/opt/aftergrid/content/media","target":"/media","read_only":True},
+        {"type":"bind","source":"/opt/aftergrid/modules/media/config","target":"/settings"},
+        {"type":"bind","source":"/opt/aftergrid-other/data/private","target":"/other"},
+        {"type":"bind","source":"/opt/aftergrid/data/../../etc","target":"/escape"},
+        {"type":"volume","source":"secret-volume","target":"/volume"},
+        {"type":"bind","source":"/opt/aftergrid/data/kopia/config","target":"/kopia"}
+    ]}}}
+    rows=worker.backup_sources(config,"/opt/aftergrid")
+    assert [r["kopia_path"] for r in rows]==["/source/data/media/config",None,"/source/content/media","/source/modules/media/config",None,None,None,None]
+    assert rows[1]["role"]=="regenerable cache" and rows[2]["read_only"]
+    assert "secret-volume" not in str(rows) and "aftergrid-other" not in str(rows)
+
+def test_backup_plan_never_claims_snapshot_or_exposes_secrets(tmp_path,monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    def read(argv,**kwargs):
+        assert argv[-3:]==["config","--format","json"]
+        return SimpleNamespace(stdout=json.dumps({"services":{"app":{"environment":{"SECRET":"private-value"},"volumes":[{"type":"bind","source":worker.ROOT+"/data/homebox","target":"/data"}]}}}))
+    monkeypatch.setattr(worker.subprocess,"run",read)
+    result=worker.backup_plan("homebox")
+    assert result["worker_secrets_required"] and not result["snapshot_verified"]
+    assert result["sources"][0]["kopia_path"]=="/source/data/homebox"
+    assert "private-value" not in str(result)
+    assert all(s["kopia_path"] is None for s in worker.backup_plan("kopia")["sources"])
+    assert worker.jobs()==[]
