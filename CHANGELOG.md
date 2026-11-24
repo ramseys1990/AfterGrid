@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.4-dev
+- Add shared LAN preparedness overview with local content indicators, native application shortcuts and explicit unknown states; no readiness score or new services.
+- Add administrator topic presets for the existing Kiwix catalog search; no automatic downloads or claimed curated archive verification.
+- Add guest access, privacy, failure isolation and disconnected-browser coverage; CI pending.
+- Prior DokuWiki and consolidated inventory CI passed. Physical and native authenticated inventory acceptance remain pending.
+
 ## 0.7.3-dev
 - Add administrator-only consolidated live inventory across mapped Homebox/Grocy locations, with ownership/storage filters and shared/unassigned selection.
 - Bounded eight-location pages, reused native metadata, explicit partial failures, preserved units and no inventory database duplication.

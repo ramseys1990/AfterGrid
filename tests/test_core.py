@@ -157,3 +157,30 @@ def test_meshmonitor_credentials_admin_only(tmp_path,monkeypatch):
         assert client.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=origin).status_code==201
         assert client.post("/api/admin/meshmonitor/credentials",json={}).status_code==403
         assert client.post("/api/admin/meshmonitor/credentials",json={},headers=origin).json()["initial_password"]=="initial-secret"
+
+
+def test_preparedness_shared_counts_no_private_fields(tmp_path,monkeypatch):
+    from core import app as core_app
+    root=tmp_path/"kiwix";root.mkdir()
+    monkeypatch.setenv("AFTERGRID_KIWIX_CONTENT",str(root))
+    monkeypatch.setattr(core_app,"local_inventory",lambda directory:{"files":[{"name":"private-name.zim","indexed":True},{"name":"not-indexed.zim","indexed":False}]})
+    monkeypatch.setattr(core_app.MapDownloads,"status",lambda self:{"files":[{"name":"private-map"}],"output":"private-log"})
+    monkeypatch.setattr(core_app.RoutingDownloads,"status",lambda self:{"graph_ready":True,"detail":"private-detail"})
+    monkeypatch.setattr(core_app.Communications,"directory",lambda self:{"plans":[{"name":"private-plan"}],"devices":[{"checked":12},{"checked":None}]})
+    (tmp_path/"setup-token").write_text("token")
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.get("/api/preparedness").status_code==403
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        assert c.post("/api/admin/households",json={"name":"private-household"},headers=ORIGIN).status_code==200
+        c.cookies.clear()
+        response=c.get("/api/preparedness")
+        assert response.status_code==200 and "private-" not in response.text
+        r=response.json()
+        assert r["knowledge"]=={"indexed":1,"unindexed":1}
+        assert r["navigation"]=={"map_archives":1,"routing_graph_prepared":True,"waypoints":0,"saved_routes":0}
+        assert r["communications"]=={"pace_plans":1,"device_records":2,"devices_ever_checked":1}
+        assert r["resources"]=={"households":1,"mapped_locations":0}
+        def unavailable(directory):raise OSError("private-path")
+        monkeypatch.setattr(core_app,"local_inventory",unavailable)
+        r=c.get("/api/preparedness").json()
+        assert r["knowledge"] is None and r["resources"]["households"]==1

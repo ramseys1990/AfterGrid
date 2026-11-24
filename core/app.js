@@ -23,6 +23,7 @@ async function refresh(){
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
     await renderModules();
+    await refreshPreparedness();
     await refreshHouseholds();
   }
 }
@@ -30,8 +31,9 @@ async function renderModules(){
     const modules=await api("/api/modules");
     if(status.admin && status.selection_pending)renderWizard(modules);
     $("catalog").replaceChildren();
+    renderPreparednessApps(modules);
     for(const mod of modules){
-      const card=document.createElement("article");
+      const card=document.createElement("article");card.id="app-"+mod.id;
       for(const [tag,value] of [["small",mod.category],["h3",mod.name],["p",mod.description],["small",mod.status]]){
         const node=document.createElement(tag);node.textContent=value;card.append(node);
       }
@@ -100,6 +102,56 @@ async function renderModules(){
       $("catalog").append(card);
     }
 }
+function renderPreparednessApps(modules){
+  const groups={knowledge:["kiwix"],navigation:["maps","routing"],communications:["meshmonitor","tak"],resources:["homebox","grocy"],learning:["kolibri","media","notes"]};
+  for(const [group,ids] of Object.entries(groups)){
+    const root=$("prep-"+group+"-apps");root.replaceChildren();
+    for(const id of ids){
+      const mod=modules.find(m=>m.id===id);
+      const line=document.createElement("p");
+      const label=mod?.name||id;
+      const state=!mod?.installable?"status unavailable":mod.status;
+      const local=["127.0.0.1","localhost"].includes(location.hostname);
+      const accessible=mod?.installable&&state==="running"&&(!mod.admin_only||status?.admin)&&(!mod.loopback_only||(mod.shared&&mod.lan_url)||local);
+      const link=document.createElement("a");
+      link.textContent=label+" — "+state+(state==="running"&&!accessible?" (not available from this browser)":"");
+      link.href="#app-"+id;
+      if(accessible&&id!=="tak"){
+        if(id==="maps"||id==="routing"){link.href="/maps";}
+        else{
+          const url=new URL(mod.shared&&mod.lan_url?mod.lan_url:location.href);
+          if(mod.loopback_only)url.protocol="http:";
+          url.port=mod.port;url.pathname="/";url.search="";url.hash="";
+          link.href=url.href;link.target="_blank";link.rel="noopener noreferrer";
+        }
+      }else if(accessible&&id==="tak"){link.href="/communications";}
+      if(mod)line.append(link);else line.textContent=label+" — "+state;
+      root.append(line);
+    }
+  }
+}
+async function refreshPreparedness(){
+  const button=$("preparedness-refresh");button.disabled=true;
+  $("preparedness-message").textContent="Reading local resource indicators…";
+  try{
+    const data=await api("/api/preparedness");
+    const k=data.knowledge,n=data.navigation,c=data.communications,r=data.resources;
+    $("prep-knowledge").textContent=k?k.indexed+" indexed archive(s) · "+k.unindexed+" unindexed. Indexing does not prove content quality or readability.":"Local library status unavailable.";
+    $("prep-navigation").textContent=n?n.map_archives+" map archive(s) · "+(n.routing_graph_prepared?"Routing graph marker present":"No prepared routing graph")+" · "+n.waypoints+" waypoint(s) · "+n.saved_routes+" saved route(s).":"Navigation resource status unavailable.";
+    $("prep-communications").textContent=c?c.pace_plans+" PACE plan(s) · "+c.device_records+" device record(s) · "+c.devices_ever_checked+" ever manually checked. Not live device status.":"Communications records unavailable.";
+    $("prep-resources").textContent=r?r.households+" household(s) · "+r.mapped_locations+" mapped location(s). Counts are not available stock.":"Resource directory unavailable.";
+    $("preparedness-message").textContent="Local indicators read. Refresh after changing content or plans.";
+  }catch(e){
+    for(const id of ["knowledge","navigation","communications","resources"])$("prep-"+id).textContent="Not checked.";
+    $("preparedness-message").textContent=e.message;
+  }finally{button.disabled=false;}
+}
+$("preparedness-refresh").addEventListener("click",async()=>{
+  $("preparedness-refresh").disabled=true;
+  try{await renderModules();await refreshPreparedness();}
+  catch(e){$("preparedness-message").textContent=e.message;}
+  finally{$("preparedness-refresh").disabled=false;}
+});
 function renderWizard(modules){
   const root=$("wizard-options");
   const checked=new Set([...root.querySelectorAll("input:checked")].map(i=>i.value));
@@ -207,6 +259,9 @@ async function searchContent(offset){
   }catch(e){$("content-message").textContent=e.message;}
   finally{contentBusy=false;}
 }
+$("content-pack").addEventListener("change",event=>{
+  if(event.target.value)$("content-search").elements.q.value=event.target.value;
+});
 $("content-search").addEventListener("submit",event=>{
   event.preventDefault();if(contentBusy)return;contentQuery=Object.fromEntries(new FormData(event.currentTarget));searchContent(0);
 });

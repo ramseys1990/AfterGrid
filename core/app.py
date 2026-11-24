@@ -132,7 +132,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.7.3-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.7.4-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -414,7 +414,38 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.7.3-dev"}
+                "version": "0.7.4-dev"}
+
+    @api.get("/api/preparedness")
+    def preparedness():
+        require_setup()
+        # Share only counts and presence indicators, not credentials, paths,
+        # logs, private stock quantities, or assertions of emergency readiness.
+        def read(operation):
+            try:
+                return operation()
+            except (OSError, ValueError, sqlite3.Error):
+                return None
+        def knowledge():
+            directory=Path(os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
+            if not directory.is_dir():
+                return None
+            files=local_inventory(directory)["files"]
+            return {"indexed":sum(1 for item in files if item["indexed"]),"unindexed":sum(1 for item in files if not item["indexed"])}
+        def navigation():
+            info=maps.status()
+            saved=plans.directory()
+            return {"map_archives":len(info["files"]),"routing_graph_prepared":routing_data.status()["graph_ready"],
+                    "waypoints":len(saved["waypoints"]),"saved_routes":len(saved["routes"])}
+        def communications():
+            info=comms.directory()
+            return {"pace_plans":len(info["plans"]),"device_records":len(info["devices"]),
+                    "devices_ever_checked":sum(1 for device in info["devices"] if device["checked"] is not None)}
+        def resources():
+            info=households.view()
+            return {"households":len(info["households"]),"mapped_locations":len(info["locations"])}
+        return {"knowledge":read(knowledge),"navigation":read(navigation),
+                "communications":read(communications),"resources":read(resources)}
 
     @api.get("/api/modules")
     def modules():
