@@ -404,3 +404,30 @@ def test_homebox_restore_schema_and_reviewed_sources(tmp_path):
     worker.check_restored_homebox(path.read_bytes())
     with sqlite3.connect(path) as db:db.execute("DROP TABLE attachments")
     with pytest.raises(RuntimeError):worker.check_restored_homebox(path.read_bytes())
+
+
+def test_core_snapshot_scoped_and_cleans_after_failure(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    with pytest.raises(ValueError):worker.enqueue("grocy","core-snapshot")
+    monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected"})
+    monkeypatch.setattr(worker,"core_container",lambda:"a"*64)
+    calls=[]
+    monkeypatch.setattr(worker.subprocess,"run",lambda argv,**kwargs:calls.append(argv))
+    def failure(source):
+        assert source=="/source/data/core/recovery-export"
+        raise RuntimeError("fixture failure")
+    monkeypatch.setattr(worker,"native_snapshot_source",failure)
+    worker.enqueue("kopia","core-snapshot")
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed"
+    assert [argv[-2] for argv in calls]==["create","clear"]
+    calls.clear()
+    monkeypatch.setattr(worker,"native_snapshot_source",lambda source:"b"*32)
+    worker.enqueue("kopia","core-snapshot")
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="succeeded"
+    assert [argv[-2] for argv in calls]==["create","clear"]
+    assert "b"*32 in worker.jobs()[0]["log"]

@@ -134,6 +134,13 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         action("restart","kopia")
         assert api("/api/admin/kopia/status")["connection"]=="connected"
         print("Native Kopia creation and persistent reconnection passed.",flush=True)
+        core_snapshot=api("/api/admin/backups/core/snapshot",{"confirmed":True})["id"]
+        wait_job(core_snapshot,"private core database snapshot")
+        core_record=next(j for j in api("/api/admin/jobs") if j["id"]==core_snapshot)
+        assert "Core database export snapshot:" in core_record["log"]
+        assert subprocess.run(["sudo","test","!","-e","data/core/recovery-export"]).returncode==0
+        assert api("/api/admin/status")
+        print("Consistent core database export, snapshot and staging cleanup passed.",flush=True)
         action("install","grocy")
         snapshot_job=api("/api/admin/modules/grocy/snapshot",{"confirmed":True})["id"]
         wait_job(snapshot_job,"quiesced Grocy snapshot")

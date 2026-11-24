@@ -308,3 +308,41 @@ def test_restore_verification_requires_admin_and_confirmation(tmp_path,monkeypat
         for ident in ("homebox","notes"):
             assert c.post("/api/admin/modules/"+ident+"/verify-snapshot",json={"confirmed":True},headers=ORIGIN).status_code==202
         assert calls==[("/jobs",{"module":ident,"action":"verify-snapshot"}) for ident in ("grocy","homebox","notes")]
+
+
+def test_private_core_export_and_cleanup(tmp_path):
+    import sqlite3
+    from core.backup_export import export_database,clear_export
+    (tmp_path/"setup-token").write_text("token")
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password","server_name":"Recovery fixture"},headers=ORIGIN).status_code==201
+        target=export_database(tmp_path,7)
+        assert target.stat().st_mode&0o777==0o700
+        assert (target/"core.sqlite3").stat().st_mode&0o777==0o600
+        with sqlite3.connect(target/"core.sqlite3") as db:
+            assert db.execute("PRAGMA integrity_check").fetchone()==("ok",)
+            assert db.execute("SELECT server_name FROM admin").fetchone()==("Recovery fixture",)
+            assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()==(0,)
+        assert c.get("/api/admin/status").status_code==200
+        import pytest
+        with pytest.raises(FileExistsError):export_database(tmp_path,8)
+        with pytest.raises(RuntimeError):clear_export(tmp_path,8)
+        clear_export(tmp_path,7)
+        assert not target.exists()
+
+def test_core_snapshot_admin_confirmation(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake(path,payload=None):
+        calls.append((path,payload))
+        return 202,{"id":7}
+    monkeypatch.setattr(core_app,"call",fake)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/backups/core/snapshot"
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==401
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        assert c.post(path,json={"confirmed":True}).status_code==403
+        assert c.post(path,json={"confirmed":False},headers=ORIGIN).status_code==409
+        assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
+        assert calls==[("/jobs",{"module":"kopia","action":"core-snapshot"})]

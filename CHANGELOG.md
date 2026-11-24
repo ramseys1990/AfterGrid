@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.7-dev
+- Add administrator-confirmed private online core SQLite export with integrity and schema checks, session removal from copy only, and native Kopia snapshot.
+- Bound export size/time and clean owned staging after normal execution or ordinary snapshot failure. Do not overwrite interrupted staging.
+- Add unit/API and disposable snapshot tests. CI pending; core restore verification and worker secrets remain outstanding.
+
 ## 0.8.6-dev
 - Expand the validated Grocy maintenance-stop snapshot pattern to Homebox and DokuWiki.
 - Verify isolated Homebox SQLite integrity/schema and DokuWiki configuration, ACL/account files and page presence; compare restored private wiki fixture in disposable CI.

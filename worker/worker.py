@@ -22,7 +22,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -170,7 +170,7 @@ def enqueue(ident, action, backup_confirmed=False):
         raise ValueError("Unsupported module or action")
     if action in ("snapshot","verify-snapshot") and ident not in SNAPSHOT_SOURCES:
         raise ValueError("Application snapshot not yet supported")
-    if action == "initialize-repository" and ident!="kopia":
+    if action in ("initialize-repository","core-snapshot") and ident!="kopia":
         raise ValueError("Kopia-only action")
     if action == "update" and (backup_confirmed is not True or ident == "routing"):
         raise ValueError("Update requires backup confirmation and a supported module")
@@ -385,7 +385,9 @@ def snapshot_statistics(value,source):
     return stats
 
 def native_snapshot(ident):
-    source=SNAPSHOT_SOURCES[ident]
+    return native_snapshot_source(SNAPSHOT_SOURCES[ident])
+
+def native_snapshot_source(source):
     try:
         subprocess.run(command("kopia","exec","-T","kopia","/bin/sh","-c",
             'test -d "$1" && test ! -L "$1"',"check-source",source),
@@ -436,6 +438,38 @@ def snapshot_application(job,ident):
             except Exception:
                 raise RuntimeError("Application restart not confirmed; inspect and start manually") from None
     change(job,completed=4,state="succeeded",stage="Snapshot reported complete; restore not verified")
+
+def core_container():
+    try:
+        raw=subprocess.run(["docker","ps","--no-trunc","--filter","label=com.docker.compose.project=aftergrid-core",
+                            "--filter","label=com.docker.compose.service=core","--format","{{.ID}}"],
+                           capture_output=True,text=True,timeout=8,check=True).stdout.split()
+        if len(raw)!=1 or not re.fullmatch(r"[a-f0-9]{64}",raw[0]):
+            raise ValueError("Core container missing or ambiguous")
+        return raw[0]
+    except (OSError,ValueError,subprocess.SubprocessError):
+        raise RuntimeError("Running AfterGrid core container unavailable") from None
+
+def core_snapshot(job):
+    change(job,state="running",total=3,completed=0,stage="Check repository and core")
+    if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
+    cid=core_container()
+    def export(action):
+        try:
+            subprocess.run(["docker","exec","--user","10001:10001",cid,"python","/app/backup_export.py",action,str(job)],
+                           capture_output=True,timeout=45,check=True)
+        except (OSError,subprocess.SubprocessError):
+            raise RuntimeError("Private core export "+action+" failed; inspect staging before retrying") from None
+    change(job,completed=1,stage="Create consistent private core database export")
+    export("create")
+    try:
+        change(job,completed=2,stage="Snapshot core database export using Kopia")
+        snapshot_id=native_snapshot_source("/source/data/core/recovery-export")
+        log(job,"\nCore database export snapshot: "+snapshot_id+"; restore not verified.\n")
+    finally:
+        change(job,stage="Remove private core export")
+        export("clear")
+    change(job,completed=3,state="succeeded",stage="Core database snapshot complete; restore not verified")
 
 def latest_managed_snapshot(ident):
     with db() as conn:
@@ -772,6 +806,10 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="core-snapshot":
+            if ident!="kopia":raise ValueError("Kopia-only action")
+            core_snapshot(job)
+            return
         if action=="snapshot":
             snapshot_application(job,ident)
             return

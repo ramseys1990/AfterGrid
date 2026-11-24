@@ -133,7 +133,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.6-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.7-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -796,13 +796,27 @@ def create_app(data_dir=None):
             raise HTTPException(code if code in (400,409) else 502,result.get("detail","Repository initialization unavailable"))
         return result
 
+    @api.post("/api/admin/backups/core/snapshot",status_code=202)
+    def core_snapshot(payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:
+            raise HTTPException(409,"Confirm connected repository and private core export")
+        try:
+            code,result=call("/jobs",{"module":"kopia","action":"core-snapshot"})
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=202:
+            raise HTTPException(code if code in (400,409) else 502,result.get("detail","Core snapshot unavailable"))
+        return result
+
     @api.get("/api/admin/backups/core")
     def core_backup_plan(request: Request):
         require_admin(request)
         return {"coverage":"planned only","snapshot_verified":False,
-                "sources":[{"path":"/source/data/core","guidance":"Core database and state: stop core or use a validated SQLite export; finish background downloads first."},
+                "sources":[{"path":"/source/data/core/recovery-export","guidance":"Managed online SQLite export of core.sqlite3; sessions removed from copy. Other core state is not included."},
                            {"path":"/source/modules","guidance":"Reviewed module definitions, not the complete core release."}],
-                "missing":["Worker state volume (jobs, sharing settings and generated secrets)","Core release and host .env configuration","Exact Docker images and recovery metadata"],
+                "missing":["Download bookkeeping, regional job records and rebuildable place indexes","Worker state volume (jobs, sharing settings and generated secrets)","Core release and host .env configuration","Exact Docker images and recovery metadata"],
                 "repository_guidance":"Configure Kopia natively. Keep the repository password and an independent repository copy off the server."}
 
     @api.post("/api/admin/modules/{ident}/snapshot",status_code=202)
