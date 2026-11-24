@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1-dev
+- Optional Jellyfin 12.4 media library with native local setup, accounts and LAN sharing; original videos/audio mounted read-only, persistent configuration/cache.
+- Native setup, library, authentication, mount and lifecycle smoke tests added. Playback and disconnected media acceptance pending.
+- Prior corrective communications and Kolibri CI completed successfully, including native enrollment and provisioning.
+
+
 ## 0.7.0-dev
 - Fix communications startup regression caused by referencing a request model before declaration (preceding corrective commit).
 - Add official Kolibri 0.19.5 optional education module with native facility setup, persistent data, dual-port LAN sharing and native content management; lifecycle smoke tests added.

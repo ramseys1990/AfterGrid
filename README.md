@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.7.0-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.7.1-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -80,3 +80,5 @@ Optional [MicroTAK](modules/tak/README.md) provides a lightweight native TLS TAK
 The core communications page lists native service status, shared PACE plans and manually recorded device readiness. Administrators edit; LAN guests view. No credential storage, radio commands or claims of live device connectivity. Planning remains available with both optional communications services stopped.
 
 Optional [Kolibri](modules/kolibri/README.md) uses the official image for native offline education. Complete facility setup, select content channels and share both native ports on trusted LAN. No automatic content download or separate identity system. [Mesh/TAK interoperability review](docs/COMMUNICATIONS-INTEROP.md) documents native options and security boundaries without enabling an unauthenticated feed.
+
+Optional [Jellyfin media library](modules/media/README.md) uses the official native image, local accounts and read-only original media under content/media. Complete native setup and explicitly enable LAN sharing. No automatic media downloads or GPU passthrough. Existing development installations need module directories prepared. Actual playback and offline acceptance remain unverified.

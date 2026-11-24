@@ -352,3 +352,53 @@ assert module("kolibri")["status"]=="running" and kolibri_identity()==identity
 action("uninstall","kolibri")
 assert module("kolibri")["status"]=="not installed" and kolibri_identity()==identity
 print("Kolibri native setup, dual-port sharing, lifecycle and persistent identity passed.")
+
+# Native media server: local setup, read-only content, authentication and retained state.
+import wave
+fixture=Path("content/media/fixture.wav")
+with tempfile.TemporaryDirectory() as tmp:
+    wav=Path(tmp)/"fixture.wav"
+    with wave.open(str(wav),"wb") as audio:
+        audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(8000);audio.writeframes(b"\0\0"*8000)
+    subprocess.run(["sudo","cp",str(wav),str(fixture)],check=True)
+action("install","media")
+assert module("media")["status"]=="running"
+media_base="http://127.0.0.1:8096"
+media_auth='MediaBrowser Client="AfterGrid CI", Device="CI", DeviceId="aftergrid-disposable-ci", Version="1.0"'
+def media_request(path,body=None,token=None):
+    headers={"Authorization":media_auth+((', Token="'+token+'"') if token else ""),"Content-Type":"application/json"}
+    req=urllib.request.Request(media_base+path,data=None if body is None else json.dumps(body).encode(),headers=headers)
+    with urllib.request.urlopen(req,timeout=30) as response:
+        raw=response.read()
+        return json.loads(raw) if raw else None
+assert media_request("/System/Info/Public")["StartupWizardCompleted"] is False
+media_request("/Startup/User")
+media_request("/Startup/Configuration",{"ServerName":"AfterGrid CI","UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"})
+media_request("/Startup/User",{"Name":"ciadmin","Password":"disposable-media-test-password"})
+media_request("/Startup/RemoteAccess",{"EnableRemoteAccess":False})
+media_request("/Startup/Complete",{})
+def media_login():
+    return media_request("/Users/AuthenticateByName",{"Username":"ciadmin","Pw":"disposable-media-test-password"})
+session=media_login()
+assert session["AccessToken"]
+media_request("/Library/VirtualFolders?name=Local%20Audio&collectionType=music&paths=%2Fmedia&refreshLibrary=false",{"LibraryOptions":{"EnableInternetProviders":False,"SaveLocalMetadata":False,"EnableRealtimeMonitor":False,"MetadataFetchers":[],"ImageFetchers":[]}},session["AccessToken"])
+assert any(x["Name"]=="Local Audio" for x in media_request("/Library/VirtualFolders",token=session["AccessToken"]))
+container_id="aftergrid-media-media-1"
+inspection=json.loads(subprocess.check_output(["docker","inspect",container_id],text=True))[0]
+assert any(m["Destination"]=="/media" and not m["RW"] for m in inspection["Mounts"])
+subprocess.run(["docker","exec",container_id,"test","-r","/media/fixture.wav"],check=True)
+action("share","media")
+assert module("media")["shared"]
+inspection=json.loads(subprocess.check_output(["docker","inspect",container_id],text=True))[0]
+assert any(p["HostIp"]=="192.168.254.253" for p in inspection["NetworkSettings"]["Ports"]["8096/tcp"])
+action("unshare","media")
+action("stop","media")
+assert module("media")["status"]=="stopped"
+action("start","media")
+assert module("media")["status"]=="running"
+assert media_login()["AccessToken"]
+action("uninstall","media")
+assert module("media")["status"]=="not installed"
+assert fixture.is_file()
+assert subprocess.run(["sudo","test","-f","data/media/config/config/system.xml"]).returncode==0 or subprocess.run(["sudo","test","-f","data/media/config/system.xml"]).returncode==0
+print("Jellyfin native setup, library, authentication, read-only media, sharing and lifecycle passed.")

@@ -34,7 +34,7 @@ jobs:
           export AFTERGRID_ROOT="$PWD"
           export AFTERGRID_BIND=127.0.0.1 AFTERGRID_PORT=8080 AFTERGRID_ORIGIN=http://127.0.0.1:8080
           export SMOKE_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(24))')"
-          mkdir -p data/core data/tak/data data/tak/backup content/kiwix content/maps content/routing
+          mkdir -p data/core data/tak/data data/tak/backup data/media/config data/media/cache content/kiwix content/maps content/routing content/media
           cp modules/kiwix/library.xml content/kiwix/library.xml
           # Small, pinned OpenZIM upstream fixture; no live catalog dependency.
           curl --fail --silent --show-error --location --max-time 60 https://raw.githubusercontent.com/openzim/zim-testing-suite/2edf72096208e60c82b6ebbe313baa552cc6af52/data/withns/wikibooks_be_all_nopic_2017-02.zim -o content/kiwix/fixture.zim
@@ -46,14 +46,15 @@ jobs:
           curl --fail --silent --show-error --location --max-time 60 https://raw.githubusercontent.com/valhalla/valhalla/3.9.3/test/data/liechtenstein-latest.osm.pbf -o content/routing/region.osm.pbf
           test "$(git hash-object content/routing/region.osm.pbf)" = 2c5877699db20b0b5bdab999586528c3ddb0ae63
           printf '%s\n' "$SMOKE_TOKEN" > data/core/setup-token
-          sudo chown -R 10001:10001 data/core data/tak content/kiwix content/maps content/routing
+          sudo chown -R 10001:10001 data/core data/tak data/media content/kiwix content/maps content/routing content/media
+          sudo chmod 700 data/media/config data/media/cache
           sudo chmod 700 data/tak/data data/tak/backup
           sudo chmod 700 data/core
           sudo chmod 600 data/core/setup-token
           cleanup() {
             export HBOX_AUTH_API_KEY_PEPPER=cleanup-placeholder KOPIA_UI_PASSWORD=cleanup-placeholder KOPIA_PASSWORD=cleanup-placeholder
             export MESHMONITOR_ADMIN_PASSWORD=cleanup-placeholder MESHMONITOR_SESSION_SECRET=cleanup-placeholder
-            for module in kiwix homebox grocy kopia maps routing meshmonitor tak kolibri; do
+            for module in kiwix homebox grocy kopia maps routing meshmonitor tak kolibri media; do
               docker compose -p "aftergrid-$module" -f "modules/$module/compose.yaml" down || true
             done
             docker compose logs --tail 50 || true

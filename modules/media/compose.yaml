@@ -1,0 +1,36 @@
+services:
+  media:
+    image: jellyfin/jellyfin:12.4
+    user: "10001:10001"
+    init: true
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+    ports:
+      - "${AFTERGRID_MODULE_BIND:-127.0.0.1}:8096:8096"
+    volumes:
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/data/media/config
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/data/media/cache
+        target: /cache
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/content/media
+        target: /media
+        read_only: true
+        bind:
+          create_host_path: false
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      apps:
+        aliases: [aftergrid-media]
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps
