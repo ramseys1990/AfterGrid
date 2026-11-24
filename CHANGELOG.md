@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2-dev
+- Explicit LAN sharing and local-only reconfiguration for Homebox and Grocy; Kopia stays loopback-only.
+- Stable home.arpa application URLs, persistent sharing preferences and Homebox registration closure.
+- Document local DNS, native account setup and unencrypted HTTP limitations. Unit tests added; actual LAN and QR scan validation pending.
+
+
 ## 0.3.1-dev
 - First-run browser application selection with no default selection, explicit skip, and optional essentials preset.
 - Atomically queue selected modules; replay the same selection without duplicating jobs. Worker runs one job at a time.

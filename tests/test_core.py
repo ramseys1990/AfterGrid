@@ -93,3 +93,15 @@ def test_first_run_skip_without_worker(tmp_path):
         assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
         assert client.post("/api/admin/first-run",json={"modules":[]},headers=ORIGIN).json()=={"ids":[]}
         assert not client.get("/api/status").json()["selection_pending"]
+
+
+def test_sharing_requires_admin(tmp_path, monkeypatch):
+    from core import app as core_app
+    monkeypatch.setattr(core_app,"call",lambda path,payload=None: (202,{"id":7}))
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.post("/api/admin/modules/homebox/share",json={},headers=ORIGIN).status_code==401
+        setup={"username":"admin","password":"long test password","token":"test-token"}
+        assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
+        assert client.post("/api/admin/modules/homebox/share",json={}).status_code==403
+        assert client.post("/api/admin/modules/homebox/share",json={},headers=ORIGIN).json()=={"id":7}

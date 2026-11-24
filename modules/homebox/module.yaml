@@ -11,5 +11,6 @@
   "generated_secrets": [
     "HBOX_AUTH_API_KEY_PEPPER"
   ],
-  "setup_note": "Create your native Homebox account over a local browser or SSH tunnel. Close registration before sharing. Stable LAN QR links are a later milestone."
+  "setup_note": "Create the native account locally, then explicitly share on LAN to close registration and establish the QR base URL.",
+  "lan_shareable": true
 }

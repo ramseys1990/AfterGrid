@@ -1,5 +1,6 @@
 """Small, privileged Compose worker. Only reviewed manifests and fixed actions."""
 import http.server
+import ipaddress
 import json
 import os
 import re
@@ -17,9 +18,11 @@ from pathlib import Path
 MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall"}
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare"}
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
+LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
+LAN_DOMAIN = os.environ.get("AFTERGRID_LAN_DOMAIN", "aftergrid.home.arpa")
 MAX_LOG = 24000
 SECRET_LOCK = threading.Lock()
 
@@ -34,6 +37,12 @@ def catalog():
             raise ValueError("Invalid reviewed module manifest")
         result[ident] = item
     return result
+
+def public_module(ident, manifest):
+    shared, closed = share_settings(ident) if manifest.get("lan_shareable") else (False,False)
+    available = bool(manifest.get("lan_shareable") and lan_available())
+    return {**manifest, "status": state(ident), "share_available": available, "shared": shared,
+            "lan_url": lan_url(ident,manifest) if available else "", "registration_closed": closed}
 
 def command(ident, *args):
     if ident not in catalog():
@@ -71,8 +80,46 @@ def module_secrets(ident, create=False):
         os.replace(tmp, path)
         return values
 
+def lan_available():
+    try:
+        addr = ipaddress.IPv4Address(LAN_BIND)
+    except ValueError:
+        return False
+    private = any(addr in ipaddress.IPv4Network(n) for n in ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"))
+    labels = LAN_DOMAIN.split(".")
+    valid = len(labels) >= 3 and labels[-2:] == ["home","arpa"] and len(LAN_DOMAIN) <= 200
+    valid = valid and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels)
+    return private and valid
+
+def share_settings(ident):
+    with db() as conn:
+        row = conn.execute("SELECT shared,registration_closed FROM sharing WHERE module=?", (ident,)).fetchone()
+    return (bool(row["shared"]),bool(row["registration_closed"])) if row else (False,False)
+
+def set_sharing(ident, enabled):
+    with db() as conn:
+        conn.execute("""INSERT INTO sharing(module,shared,registration_closed) VALUES (?,?,?)
+            ON CONFLICT(module) DO UPDATE SET shared=excluded.shared,
+            registration_closed=max(sharing.registration_closed,excluded.registration_closed)""",
+            (ident,int(enabled),int(enabled and ident=="homebox")))
+
+def lan_url(ident, manifest):
+    return f"http://{ident}.{LAN_DOMAIN}:{manifest['port']}"
+
+def sharing_env(ident):
+    manifest = catalog()[ident]
+    if not manifest.get("lan_shareable"):
+        return {}
+    shared, closed = share_settings(ident)
+    enabled = shared and lan_available()
+    return {
+        "AFTERGRID_MODULE_BIND": LAN_BIND if enabled else "127.0.0.1",
+        "AFTERGRID_HOMEBOX_REGISTRATION": "false" if closed or enabled else "true",
+        "AFTERGRID_MODULE_URL": lan_url(ident,manifest) if enabled else "",
+    }
+
 def compose_env(ident, create=False):
-    return {**module_secrets(ident, create),"PATH": os.environ["PATH"], "HOME": "/root",
+    return {**module_secrets(ident, create),**sharing_env(ident),"PATH": os.environ["PATH"], "HOME": "/root",
             "DOCKER_HOST": "unix:///var/run/docker.sock",
             "AFTERGRID_ROOT": ROOT, "AFTERGRID_BIND": BIND,
             "COMPOSE_PROGRESS": "plain", "NO_COLOR": "1"}
@@ -96,6 +143,8 @@ def init():
             action TEXT NOT NULL, state TEXT NOT NULL, stage TEXT NOT NULL,
             completed INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0,
             log TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL);
+          CREATE TABLE IF NOT EXISTS sharing (
+            module TEXT PRIMARY KEY, shared INTEGER NOT NULL, registration_closed INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS batches (
             token TEXT PRIMARY KEY, selection TEXT NOT NULL, job_ids TEXT NOT NULL);
           CREATE UNIQUE INDEX IF NOT EXISTS one_pending_per_module
@@ -104,8 +153,13 @@ def init():
         conn.execute("UPDATE jobs SET state='interrupted',stage='Worker restarted; inspect service and retry' WHERE state='running'")
 
 def enqueue(ident, action):
-    if ident not in catalog() or action not in ACTIONS:
+    manifest = catalog().get(ident)
+    if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
+    if action in {"share","unshare"} and not manifest.get("lan_shareable"):
+        raise ValueError("Module does not support LAN sharing")
+    if action == "share" and not lan_available():
+        raise ValueError("Configure a private LAN bind and home.arpa domain first")
     with db() as conn:
         cursor = conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES (?,?,'queued','Queued',?)",
                               (ident, action, int(time.time())))
@@ -222,10 +276,12 @@ def stages(action):
     return {
         "install": [validate, pull, up, probe],
         "update": [validate, pull, up, probe],
-        "start": [validate, ("Start containers", ("start",)), probe],
+        "start": [validate, up, probe],
         "restart": [validate, ("Restart containers", ("restart",)), probe],
         "stop": [validate, ("Stop containers", ("stop",))],
         "uninstall": [validate, ("Remove containers (retain data)", ("down",))],
+        "share": [validate, up, probe],
+        "unshare": [validate, up, probe],
     }[action]
 
 def execute(row):
@@ -235,6 +291,14 @@ def execute(row):
             raise ValueError("Unsupported job")
         steps = stages(action)
         change(job, state="running", total=len(steps), completed=0)
+        if action in {"share","unshare"}:
+            if not catalog()[ident].get("lan_shareable"):
+                raise ValueError("Module does not support LAN sharing")
+            if action == "share" and (not lan_available() or state(ident) != "running"):
+                raise RuntimeError("Start the module and complete native account setup before sharing")
+            if action == "unshare" and state(ident) in {"not installed","unavailable"}:
+                raise RuntimeError("Module is not installed or Docker state unavailable")
+            set_sharing(ident, action=="share")
         for index, (title, argv) in enumerate(steps):
             change(job, stage=title)
             log(job, "\n--- " + title + " ---\n")
@@ -245,6 +309,13 @@ def execute(row):
             change(job, completed=index+1)
         change(job, state="succeeded", stage="Complete")
     except Exception as exc:
+        if action in {"share","unshare"}:
+            set_sharing(ident,False)
+            try:
+                run(job,ident,"stop")
+                log(job,"\nLAN change failed; containers stopped. Start locally to retry.\n")
+            except Exception:
+                log(job,"\nCould not confirm containers stopped; inspect Docker immediately.\n")
         log(job, "\n" + str(exc) + "\n")
         change(job, state="failed", stage="Failed; see output")
 
@@ -273,7 +344,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/health":
             return self.send_json(200, {"ok": True})
         if self.path == "/modules":
-            return self.send_json(200, [{**m, "status": state(i)} for i,m in catalog().items()])
+            return self.send_json(200, [public_module(i,m) for i,m in catalog().items()])
         if self.path == "/jobs":
             return self.send_json(200, jobs())
         if self.path == "/credentials/kopia" and "kopia" in catalog():

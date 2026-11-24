@@ -67,3 +67,32 @@ def test_batch_atomic_and_idempotent(tmp_path, monkeypatch):
     assert len(worker.jobs())==2
     with pytest.raises(sqlite3.IntegrityError):
         worker.enqueue_batch(token,["grocy"])
+
+
+def test_lan_sharing_configuration(tmp_path, monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"LAN_BIND","192.168.10.4")
+    monkeypatch.setattr(worker,"LAN_DOMAIN","aftergrid.home.arpa")
+    worker.init()
+    assert worker.lan_available()
+    assert worker.sharing_env("homebox")["AFTERGRID_MODULE_BIND"]=="127.0.0.1"
+    assert worker.sharing_env("homebox")["AFTERGRID_HOMEBOX_REGISTRATION"]=="true"
+    with pytest.raises(ValueError):
+        worker.enqueue("kopia","share")
+    worker.set_sharing("homebox",True)
+    env=worker.sharing_env("homebox")
+    assert env["AFTERGRID_MODULE_BIND"]=="192.168.10.4"
+    assert env["AFTERGRID_MODULE_URL"]=="http://homebox.aftergrid.home.arpa:8082"
+    assert env["AFTERGRID_HOMEBOX_REGISTRATION"]=="false"
+    worker.set_sharing("homebox",False)
+    assert worker.sharing_env("homebox")["AFTERGRID_MODULE_BIND"]=="127.0.0.1"
+    assert worker.sharing_env("homebox")["AFTERGRID_HOMEBOX_REGISTRATION"]=="false"
+    monkeypatch.setattr(worker,"LAN_BIND","8.8.8.8")
+    assert not worker.lan_available()
+    with pytest.raises(ValueError):
+        worker.enqueue("homebox","share")
+    monkeypatch.setattr(worker,"LAN_BIND","192.168.10.4")
+    monkeypatch.setattr(worker,"LAN_DOMAIN","example.com")
+    assert not worker.lan_available()

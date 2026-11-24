@@ -8,5 +8,6 @@
   "readiness_url": "http://aftergrid-grocy:80/",
   "upstream": "https://grocy.info/",
   "loopback_only": true,
-  "setup_note": "Use the native login. Change the initial admin/admin credentials immediately. Set up household storage locations in Grocy."
+  "setup_note": "Change the native admin/admin password locally before explicitly sharing on LAN.",
+  "lan_shareable": true
 }

@@ -35,6 +35,8 @@ services:
     restart: unless-stopped
     environment:
       AFTERGRID_ROOT: "${AFTERGRID_ROOT:-/opt/aftergrid}"
+      AFTERGRID_LAN_BIND: "${AFTERGRID_LAN_BIND:-}"
+      AFTERGRID_LAN_DOMAIN: "${AFTERGRID_LAN_DOMAIN:-aftergrid.home.arpa}"
       AFTERGRID_BIND: "${AFTERGRID_BIND:-127.0.0.1}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

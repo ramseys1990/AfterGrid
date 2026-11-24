@@ -89,7 +89,7 @@ def create_app(data_dir=None):
             con.execute("INSERT OR IGNORE INTO first_run(id,token) VALUES (1,?)", (secrets.token_hex(24),))
         yield
 
-    api = FastAPI(title="AfterGrid", version="0.3.1-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.3.2-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -159,7 +159,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.3.1-dev"}
+                "version": "0.3.2-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -172,7 +172,7 @@ def create_app(data_dir=None):
                 for m in installed:
                     item = {key: m[key] for key in ("id", "name", "description", "category", "status", "port")}
                     item["installable"] = True
-                    item.update(loopback_only=m.get("loopback_only", False), admin_only=m.get("admin_only", False), setup_note=m.get("setup_note", ""))
+                    item.update(loopback_only=m.get("loopback_only", False), admin_only=m.get("admin_only", False), setup_note=m.get("setup_note", ""), share_available=m.get("share_available", False), shared=m.get("shared", False), lan_url=m.get("lan_url", ""), registration_closed=m.get("registration_closed", False))
                     by_id[m["id"]] = item
                 result = list(by_id.values())
         except WorkerUnavailable:
@@ -238,7 +238,7 @@ def create_app(data_dir=None):
     def module_action(ident: str, action: str, request: Request):
         require_admin(request)
         same_origin(request)
-        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", ident) or action not in {"install","start","stop","restart","update","uninstall"}:
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", ident) or action not in {"install","start","stop","restart","update","uninstall","share","unshare"}:
             raise HTTPException(400, "Unsupported module or action")
         try:
             code, result = call("/jobs", {"module": ident, "action": action})

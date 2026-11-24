@@ -34,14 +34,14 @@ async function renderModules(){
       for(const [tag,value] of [["small",mod.category],["h3",mod.name],["p",mod.description],["small",mod.status]]){
         const node=document.createElement(tag);node.textContent=value;card.append(node);
       }
-      if(mod.installable && mod.status==="running" && (!mod.admin_only||status.admin) && (!mod.loopback_only||["127.0.0.1","localhost"].includes(location.hostname))){
+      if(mod.installable && mod.status==="running" && (!mod.admin_only||status.admin) && (!mod.loopback_only||(mod.shared&&mod.lan_url)||["127.0.0.1","localhost"].includes(location.hostname))){
         const link=document.createElement("a");
-        const url=new URL(location.href);if(mod.loopback_only)url.protocol="http:";url.port=mod.port;url.pathname="/";url.search="";url.hash="";
+        const url=new URL(mod.shared&&mod.lan_url?mod.lan_url:location.href);if(mod.loopback_only)url.protocol="http:";url.port=mod.port;url.pathname="/";url.search="";url.hash="";
         link.href=url.href;link.textContent="Open application";link.target="_blank";link.rel="noopener noreferrer";card.append(link);
       }
       if(status.admin && mod.installable){
         if(mod.setup_note){const note=document.createElement("p");note.textContent=mod.setup_note;card.append(note);}
-        if(mod.loopback_only && !["127.0.0.1","localhost"].includes(location.hostname)){
+        if(mod.loopback_only && !mod.shared && !["127.0.0.1","localhost"].includes(location.hostname)){
           const note=document.createElement("small");note.textContent="Local setup only. SSH forward port "+mod.port+" and open http://127.0.0.1:"+mod.port;card.append(note);
         }
         if(mod.id==="kopia" && mod.status==="running"){
@@ -54,9 +54,20 @@ async function renderModules(){
           });card.append(reveal,credentials);
         }
         const actions=mod.status==="not installed"?["install"]:mod.status==="running"?["stop","restart","update","uninstall"]:["start","install","stop","uninstall"];
+        if(mod.shared && mod.lan_url){
+          const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+" — local DNS must point to the server. HTTP is unencrypted.";card.append(note);
+        }else if(mod.share_available){
+          const note=document.createElement("p");note.textContent="To share, add a local DNS record for "+new URL(mod.lan_url).hostname+" and complete native account setup first.";card.append(note);
+        }else if(["homebox","grocy"].includes(mod.id)){
+          const note=document.createElement("small");note.textContent="LAN sharing needs a private LAN bind configured on the server; see the LAN setup guide.";card.append(note);
+        }
+        if(mod.shared && mod.status!=="not installed")actions.push("unshare");
+        else if(mod.share_available&&mod.status==="running")actions.push("share");
         const controls=document.createElement("div");controls.className="controls";
         for(const action of actions){
-          const b=document.createElement("button");b.textContent=action;b.addEventListener("click",async()=>{
+          const b=document.createElement("button");b.textContent=action==="share"?"Share on LAN":action==="unshare"?"Return to local-only":action;b.addEventListener("click",async()=>{
+            if(action==="share"&&!confirm(mod.id==="homebox"?"Confirm you created your Homebox account and configured local DNS. Sharing closes public registration and uses unencrypted LAN HTTP. Continue?":"Confirm you changed Grocy's default admin password and configured local DNS. Sharing uses unencrypted LAN HTTP. Continue?"))return;
+            if(action==="unshare"&&!confirm("Return to loopback-only access? This recreates and starts the application while keeping its data."))return;
             if(action==="uninstall"&&!confirm("Remove this application's containers? Its data will be retained."))return;
             if(action==="update"&&!confirm("Pull the configured image and recreate if needed? Back up application data first."))return;
             b.disabled=true;error("");
