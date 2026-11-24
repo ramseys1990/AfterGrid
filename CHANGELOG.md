@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.6-dev
+- Administrator-only GPX/KML import of local waypoints, routes and tracks, with separate track segments preserved.
+- UTF-8, 1 MB limit, bounded records/coordinates, no XML entities or external KML links. Atomic SQLite insert; imported geometry is static and shared on LAN.
+- Add parser, API and atomic rejection tests; browser and native graph integration validation pending.
+
+
 ## 0.5.5-dev
 - Shared local waypoints and saved route snapshots with admin-only writes, persistent SQLite and LAN viewing.
 - Use waypoint as start/destination, display map markers and saved geometry, export waypoint collections or individual routes to GPX/KML.

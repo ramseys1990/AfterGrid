@@ -21,6 +21,70 @@ def point(p):
         raise ValueError("Invalid geographic point")
     return p
 
+def parse_import(fmt,raw):
+    if len(raw.encode("utf-8"))>1_000_000 or "<!DOCTYPE" in raw.upper() or "<!ENTITY" in raw.upper():
+        raise ValueError("Unsafe or oversized XML (1 MB maximum)")
+    try:
+        root=ET.fromstring(raw)
+    except (ET.ParseError,UnicodeError):
+        raise ValueError("Invalid XML") from None
+    waypoints=[];routes=[]
+    def name(node,fallback):
+        return clean((node.findtext("name") or fallback).strip(),100)
+    def coordinates(node):
+        return point([float(node.attrib["lon"]),float(node.attrib["lat"])])
+    def add_route(title,coords):
+        if not 2<=len(coords)<=20000:raise ValueError("Route must contain 2–20,000 points")
+        if len(routes)>=50:raise ValueError("Too many imported routes")
+        routes.append((clean(title,100),coords))
+    def add_waypoint(title,kind,coords):
+        if len(waypoints)>=500:raise ValueError("Too many imported waypoints")
+        waypoints.append((title,kind,coords))
+    # Strip only the recognized format namespace. Never resolve external data.
+    ns={"gpx":{"http://www.topografix.com/GPX/1/1","http://www.topografix.com/GPX/1/0"},
+        "kml":{"http://www.opengis.net/kml/2.2","http://earth.google.com/kml/2.2"}}.get(fmt)
+    if not ns:raise ValueError("Unsupported import format")
+    for node in root.iter():
+        if node.tag.startswith("{"):
+            namespace,tag=node.tag[1:].split("}",1)
+            if namespace in ns:node.tag=tag
+    if root.tag!=fmt:raise ValueError("File does not match selected import format")
+    try:
+        if fmt=="gpx":
+            for node in root.findall("wpt"):
+                kind=node.findtext("type") or "other"
+                add_waypoint(name(node,"Imported waypoint"),kind if kind in KINDS else "other",coordinates(node))
+            for node in root.findall("rte"):
+                add_route(name(node,"Imported route"),[coordinates(p) for p in node.findall("rtept")])
+            for node in root.findall("trk"):
+                title=name(node,"Imported track");segments=node.findall("trkseg")
+                for i,seg in enumerate(segments,1):
+                    add_route(title if len(segments)==1 else title[:85]+f" (segment {i})",[coordinates(p) for p in seg.findall("trkpt")])
+        else:
+            if any(n.tag.split("}")[-1] in ("NetworkLink","NetworkLinkControl","Link","Url") for n in root.iter()):
+                raise ValueError("External KML links are not supported")
+            def kcoords(node):
+                coords=[]
+                for token in (node.findtext("coordinates") or "").split():
+                    parts=token.split(",")
+                    if len(parts) not in (2,3):raise ValueError("Invalid KML coordinate")
+                    coords.append(point([float(parts[0]),float(parts[1])]))
+                return coords
+            for placemark in root.iter("Placemark"):
+                title=name(placemark,"Imported placemark")
+                if any(n.tag.split("}")[-1] not in ("Placemark","name","description","Style","styleUrl","visibility","open","Point","LineString","MultiGeometry","coordinates","altitudeMode","extrude","tessellate","ExtendedData","Data","value","displayName") for n in placemark.iter()):
+                    raise ValueError("Unsupported KML placemark geometry or extension")
+                for node in placemark.iter("Point"):
+                    coords=kcoords(node)
+                    if len(coords)!=1:raise ValueError("Invalid KML point")
+                    add_waypoint(title,"other",coords[0])
+                for node in placemark.iter("LineString"):
+                    add_route(title,kcoords(node))
+        if not waypoints and not routes:raise ValueError("No supported points or tracks found")
+    except (KeyError,TypeError,OverflowError):
+        raise ValueError("Invalid geographic XML data") from None
+    return waypoints,routes
+
 class MapPlans:
     def __init__(self,data):self.path=Path(data)/"core.sqlite3"
 
@@ -80,6 +144,20 @@ class MapPlans:
         if not table:raise ValueError("Invalid record type")
         with self.db() as con:
             if not con.execute("DELETE FROM "+table+" WHERE id=?",(ident,)).rowcount:raise ValueError("Record not found")
+
+    def import_file(self,fmt,raw):
+        waypoints,routes=parse_import(fmt,raw)
+        with self.db() as con:
+            con.execute("BEGIN IMMEDIATE")
+            if con.execute("SELECT count(*) FROM map_waypoints").fetchone()[0]+len(waypoints)>500:
+                raise ValueError("Waypoint limit reached")
+            if con.execute("SELECT count(*) FROM map_routes").fetchone()[0]+len(routes)>50:
+                raise ValueError("Saved route limit reached")
+            con.executemany("INSERT INTO map_waypoints(name,kind,lon,lat) VALUES (?,?,?,?)",
+                [(n,k,p[0],p[1]) for n,k,p in waypoints])
+            con.executemany("INSERT INTO map_routes(name,mode,geometry,created) VALUES (?,'imported',?,?)",
+                [(n,json.dumps(p,separators=(",",":")),int(time.time())) for n,p in routes])
+        return {"waypoints":len(waypoints),"routes":len(routes)}
 
     def export(self,fmt,ident=None):
         directory=self.directory()

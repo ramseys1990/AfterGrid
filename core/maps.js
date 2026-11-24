@@ -100,5 +100,16 @@
     event.preventDefault();const f=event.currentTarget;
     try{if(!lastRoute||!routeMode)throw Error("Calculate or display a route first");await planApi("/api/admin/maps/routes",{name:f.elements.name.value,mode:routeMode,coordinates:lastRoute.coordinates});f.reset();await refreshPlans();planMessage.textContent="Route snapshot saved.";}catch(e){planMessage.textContent=e.message;}
   });
+  document.getElementById("import-plan").addEventListener("submit",async event=>{
+    event.preventDefault();const f=event.currentTarget, file=f.elements.file.files[0];
+    try{
+      if(!file||file.size>1000000)throw Error("Choose a GPX or KML file no larger than 1 MB");
+      const fmt=file.name.split(".").pop().toLowerCase();if(!["gpx","kml"].includes(fmt))throw Error("Choose GPX or KML");
+      if(!confirm("Import the supported points and tracks into the shared LAN directory? All LAN users will be able to see them."))return;
+      const response=await fetch("/api/admin/maps/import/"+fmt,{method:"POST",headers:{"Content-Type":"application/xml"},body:file});
+      const data=await response.json();if(!response.ok)throw Error(typeof data.detail==="string"?data.detail:"Import failed");
+      await refreshPlans();f.reset();planMessage.textContent="Imported "+data.waypoints+" waypoints and "+data.routes+" route snapshots.";
+    }catch(e){planMessage.textContent=e.message;}
+  });
   refreshPlans().catch(e=>{planMessage.textContent=e.message;});
 })();

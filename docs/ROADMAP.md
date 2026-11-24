@@ -27,3 +27,5 @@ Local import/index, recoverable removal, restore and purge implemented; CI fixtu
 Valhalla graph preparation and local route planner implemented; native smoke tests pending. Next: regional PBF acquisition and updates, saved waypoints/routes and GPX/KML.
 
 Shared waypoints, saved geometry and GPX/KML exports implemented; CI pending. Next: regional PBF acquisition, GPX/KML import, address search and browser validation.
+
+Bounded GPX/KML import implemented; address search, regional routing data acquisition and full disconnected browser acceptance remain pending.
