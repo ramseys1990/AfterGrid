@@ -127,6 +127,20 @@ def main(fixture):
             package=tmp/"package"
             packed=recover.pack(original,inventory,package,["kiwix"],password)
             assert recover.verify_package(package)==packed and packed["omitted_captured"]==[]
+            # A modified inventory must be rejected before any replacement actions.
+            packaged_inventory=package/"inventory.json"
+            saved_inventory=packaged_inventory.read_bytes()
+            try:
+                packaged_inventory.write_bytes(saved_inventory+b"\n")
+                try:
+                    recover.verify_package(package)
+                except ValueError as exc:
+                    assert "checksum mismatch" in str(exc)
+                else:
+                    raise AssertionError("Tampered package accepted")
+            finally:
+                packaged_inventory.write_bytes(saved_inventory)
+            assert recover.verify_package(package)==packed
             assert repository_digest(repository)==before
             bundle=package/"assets"
             inventory=package/"inventory.json"
