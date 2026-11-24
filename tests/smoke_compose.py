@@ -141,6 +141,16 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         assert subprocess.run(["sudo","test","!","-e","data/core/recovery-export"]).returncode==0
         assert api("/api/admin/status")
         print("Consistent core database export, snapshot and staging cleanup passed.",flush=True)
+        core_verify=api("/api/admin/backups/core/verify-snapshot",{"confirmed":True})["id"]
+        wait_job(core_verify,"isolated core restore verification")
+        core_restored=next(j for j in api("/api/admin/jobs") if j["id"]==core_verify)
+        assert "administrator present and sessions absent" in core_restored["log"]
+        assert api("/api/admin/status")
+        import re
+        core_target=re.search(r"Isolated restore directory: (/restore/aftergrid-core-[0-9]+-[a-f0-9]{16})",core_restored["log"]).group(1)
+        restored_db=Path("restore")/core_target.removeprefix("/restore/")/"data/core.sqlite3"
+        subprocess.run(["sudo","python3","-c","import sqlite3,sys,pathlib; c=sqlite3.connect(pathlib.Path(sys.argv[1]).resolve().as_uri()+\"?mode=ro&immutable=1\",uri=True); assert c.execute(\"SELECT username,server_name FROM admin\").fetchone()==(\"admin\",\"CI\"); assert c.execute(\"SELECT COUNT(*) FROM sessions\").fetchone()==(0,)",str(restored_db)],check=True)
+        print("Isolated core database restore, expected administrator and absent sessions passed.",flush=True)
         action("install","grocy")
         snapshot_job=api("/api/admin/modules/grocy/snapshot",{"confirmed":True})["id"]
         wait_job(snapshot_job,"quiesced Grocy snapshot")

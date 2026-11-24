@@ -431,3 +431,39 @@ def test_core_snapshot_scoped_and_cleans_after_failure(tmp_path,monkeypatch):
     assert worker.jobs()[0]["state"]=="succeeded"
     assert [argv[-2] for argv in calls]==["create","clear"]
     assert "b"*32 in worker.jobs()[0]["log"]
+
+
+def test_core_restored_database_schema_admin_and_sessions(tmp_path):
+    import sqlite3
+    path=tmp_path/"core.sqlite3"
+    with sqlite3.connect(path) as db:
+        for table in worker.CORE_TABLES-{"admin","sessions"}:
+            db.execute("CREATE TABLE "+table+"(id INTEGER PRIMARY KEY)")
+        db.execute("CREATE TABLE admin(id INTEGER PRIMARY KEY,username TEXT,salt TEXT,password_hash TEXT,server_name TEXT)")
+        db.execute("CREATE TABLE sessions(token_hash TEXT)")
+        db.execute("INSERT INTO admin VALUES(1,'admin','salt',?,'fixture')",("a"*128,))
+    worker.check_restored_core(path.read_bytes())
+    with sqlite3.connect(path) as db:db.execute("INSERT INTO sessions VALUES('fixture')")
+    with pytest.raises(RuntimeError,match="session records"):worker.check_restored_core(path.read_bytes())
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM sessions")
+        db.execute("DELETE FROM admin")
+    with pytest.raises(RuntimeError,match="administrator"):worker.check_restored_core(path.read_bytes())
+
+def test_core_restore_selects_only_successful_core_snapshot(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    with pytest.raises(ValueError):worker.enqueue("grocy","core-verify-snapshot")
+    j=worker.enqueue("kopia","core-snapshot")
+    worker.log(j,"Core database export snapshot: "+"a"*32+"; restore not verified.")
+    worker.change(j,state="succeeded")
+    newer=worker.enqueue("kopia","core-snapshot")
+    worker.change(newer,state="failed")
+    assert worker.managed_snapshot_record("core")== (j,"a"*32)
+    verify=worker.enqueue("kopia","core-verify-snapshot")
+    observed=[]
+    monkeypatch.setattr(worker,"verify_snapshot",lambda job,ident:observed.append((job,ident)))
+    worker.execute(worker.jobs()[0])
+    assert observed==[(verify,"core")]

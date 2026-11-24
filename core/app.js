@@ -215,6 +215,16 @@ $("backup-core-snapshot").addEventListener("click",async()=>{
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{button.disabled=false;}
 });
+$("backup-core-verify").addEventListener("click",async()=>{
+  if(!confirm("Restore the latest successful managed core database snapshot to a NEW private directory. Verify its integrity, administrator record and absence of login sessions. The restored copy contains sensitive credentials; retain it securely or remove it manually after review. Live data will not be replaced. Continue?"))return;
+  const button=$("backup-core-verify"),root=$("backup-core-result");
+  button.disabled=true;
+  try{
+    await api("/api/admin/backups/core/verify-snapshot",{confirmed:true});
+    if(status?.admin){root.textContent="Core restore verification queued. See installation activity.";await renderJobs();}
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
 $("backup-core-check").addEventListener("click",async()=>{
   const button=$("backup-core-check"),root=$("backup-core-result");
   button.disabled=true;root.textContent="Reading core backup requirements…";

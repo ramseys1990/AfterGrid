@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.8.7-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.8.8-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -104,3 +104,5 @@ Grocy restore verification uses a fresh isolated destination and SQLite integrit
 Managed backup coverage expands to Homebox and DokuWiki with application-specific isolated restore checks; worker-generated secrets still require separate recovery.
 
 Core database backups use SQLite online export and native Kopia snapshots, excluding active login sessions from the copy. Full core and worker recovery are not yet complete.
+
+Core database isolated restore verification checks exact export job, SQLite integrity, administrator presence and absence of active sessions. Full clean-machine recovery remains outstanding.

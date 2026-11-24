@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.8-dev
+- Add isolated restoration and verification of the latest successful core database snapshot, including exact export job marker, integrity, schema, administrator and absent session records.
+- Confirm prior Homebox/DokuWiki backup and core export CI passed. Add native disposable core restoration test; new CI pending.
+
 ## 0.8.7-dev
 - Add administrator-confirmed private online core SQLite export with integrity and schema checks, session removal from copy only, and native Kopia snapshot.
 - Bound export size/time and clean owned staging after normal execution or ordinary snapshot failure. Do not overwrite interrupted staging.

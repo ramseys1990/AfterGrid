@@ -22,7 +22,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -170,7 +170,7 @@ def enqueue(ident, action, backup_confirmed=False):
         raise ValueError("Unsupported module or action")
     if action in ("snapshot","verify-snapshot") and ident not in SNAPSHOT_SOURCES:
         raise ValueError("Application snapshot not yet supported")
-    if action in ("initialize-repository","core-snapshot") and ident!="kopia":
+    if action in ("initialize-repository","core-snapshot","core-verify-snapshot") and ident!="kopia":
         raise ValueError("Kopia-only action")
     if action == "update" and (backup_confirmed is not True or ident == "routing"):
         raise ValueError("Update requires backup confirmation and a supported module")
@@ -471,16 +471,29 @@ def core_snapshot(job):
         export("clear")
     change(job,completed=3,state="succeeded",stage="Core database snapshot complete; restore not verified")
 
-def latest_managed_snapshot(ident):
+CORE_SNAPSHOT_SOURCE="/source/data/core/recovery-export"
+CORE_TABLES={"admin","sessions","first_run","households","inventory_locations",
+             "inventory_connections","map_waypoints","map_routes","comm_devices","comm_plans"}
+
+def managed_snapshot_record(ident):
+    if ident=="core":
+        module,action,pattern="kopia","core-snapshot",r"Core database export snapshot: ([a-f0-9]{32,64});"
+    elif ident in SNAPSHOT_SOURCES:
+        module,action,pattern=ident,"snapshot",r"Native snapshot reported complete: ([a-f0-9]{32,64});"
+    else:
+        raise RuntimeError("Unsupported managed snapshot source")
     with db() as conn:
-        row=conn.execute("SELECT id,log FROM jobs WHERE module=? AND action='snapshot' AND state='succeeded' ORDER BY id DESC LIMIT 1",(ident,)).fetchone()
+        row=conn.execute("SELECT id,log FROM jobs WHERE module=? AND action=? AND state='succeeded' ORDER BY id DESC LIMIT 1",(module,action)).fetchone()
     if not row:raise RuntimeError("No successful managed snapshot recorded")
-    match=re.search(r"Native snapshot reported complete: ([a-f0-9]{32,64});",row["log"])
+    match=re.search(pattern,row["log"])
     if not match:raise RuntimeError("Managed snapshot ID unavailable")
-    return match.group(1)
+    return row["id"],match.group(1)
+
+def latest_managed_snapshot(ident):
+    return managed_snapshot_record(ident)[1]
 
 def restore_manifest(ident,snapshot_id):
-    source=SNAPSHOT_SOURCES[ident]
+    source=CORE_SNAPSHOT_SOURCE if ident=="core" else SNAPSHOT_SOURCES[ident]
     try:
         raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","30s","/bin/kopia",
             "snapshot","list","--json","--json-verbose","--manifest-id","--max-results=50",source),
@@ -499,12 +512,12 @@ def restore_manifest(ident,snapshot_id):
     except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
         raise RuntimeError("Managed snapshot missing, invalid or exceeds isolated restore limit") from None
 
-def check_restored_database(data,required_tables):
+def check_restored_database(data,required_tables,core=False):
     if not isinstance(data,bytes) or not 0<len(data)<=64*1024*1024 or not data.startswith(b"SQLite format 3\x00"):
         raise RuntimeError("Restored database missing, invalid or exceeds verification limit")
     try:
         with tempfile.TemporaryDirectory(prefix="aftergrid-db-check-") as tmp:
-            path=Path(tmp)/"grocy.db"
+            path=Path(tmp)/"database.sqlite3"
             path.write_bytes(data)
             deadline=time.monotonic()+15
             conn=sqlite3.connect(path.as_uri()+"?mode=ro&immutable=1",uri=True)
@@ -516,6 +529,11 @@ def check_restored_database(data,required_tables):
                 tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if not required_tables<=tables:
                     raise RuntimeError("Expected application schema missing")
+                if core:
+                    if conn.execute("SELECT COUNT(*) FROM admin").fetchone()!=(1,) or conn.execute("SELECT COUNT(*) FROM admin WHERE id=1 AND length(username)>0 AND length(password_hash)=128 AND length(salt)>0 AND length(server_name)>0").fetchone()!=(1,):
+                        raise RuntimeError("Restored core administrator record invalid")
+                    if conn.execute("SELECT COUNT(*) FROM sessions").fetchone()!=(0,):
+                        raise RuntimeError("Restored core export contains active session records")
             finally:conn.close()
     except (OSError,sqlite3.Error):
         raise RuntimeError("Restored database integrity check unavailable") from None
@@ -526,11 +544,14 @@ def check_restored_grocy(data):
 def check_restored_homebox(data):
     check_restored_database(data,{"groups","users","attachments"})
 
+def check_restored_core(data):
+    check_restored_database(data,CORE_TABLES,core=True)
+
 def verify_snapshot(job,ident):
-    if ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported restore verification")
+    if ident!="core" and ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported restore verification")
     change(job,state="running",total=4,completed=0,stage="Locate latest managed snapshot")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
-    snapshot_id=latest_managed_snapshot(ident)
+    source_job,snapshot_id=managed_snapshot_record(ident)
     root=restore_manifest(ident,snapshot_id)
     # Each verification gets a new private directory, never a live data mount.
     target="/restore/aftergrid-"+ident+"-"+str(job)+"-"+secrets.token_hex(8)
@@ -556,13 +577,21 @@ def verify_snapshot(job,ident):
         else:
             # Fixed database paths; refuse symlinks, active journals and oversize files.
             folder="data/data" if ident=="grocy" else "data"
-            filename="grocy.db" if ident=="grocy" else "homebox.db"
+            filename={"grocy":"grocy.db","homebox":"homebox.db","core":"core.sqlite3"}[ident]
             data=execute("/bin/sh","-c",
                 'p="$1/$2"; f="$p/$3"; test -d "$1" && test ! -L "$1" && test -d "$1/data" && test ! -L "$1/data" && test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && test ! -e "$f-wal" && test ! -L "$f-wal" && test ! -e "$f-journal" && test ! -L "$f-journal" && size=$(stat -c %s "$f") && test "$size" -le 67108864 && cat "$f"',
                 "check-database",target,folder,filename,timeout=30)
             if ident=="grocy":check_restored_grocy(data)
-            else:check_restored_homebox(data)
+            elif ident=="homebox":check_restored_homebox(data)
+            else:
+                marker=execute("/bin/sh","-c",
+                    'f="$1/data/job-id"; test -f "$f" && test ! -L "$f" && test "$(stat -c %s "$f")" -le 19 && cat "$f"',
+                    "check-export-marker",target)
+                if marker!=str(source_job).encode("ascii"):
+                    raise RuntimeError("Restored core export job marker mismatch")
+                check_restored_core(data)
             result="SQLite integrity and expected schema passed"
+            if ident=="core":result+="; administrator present and sessions absent"
     except (OSError,subprocess.SubprocessError,ValueError):
         raise RuntimeError("Isolated restore or application data check failed; inspect private restore directory") from None
     log(job,"\nSnapshot "+snapshot_id+" restored; "+result+". Native application startup not tested.\n")
@@ -806,6 +835,10 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="core-verify-snapshot":
+            if ident!="kopia":raise ValueError("Kopia-only action")
+            verify_snapshot(job,"core")
+            return
         if action=="core-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
             core_snapshot(job)

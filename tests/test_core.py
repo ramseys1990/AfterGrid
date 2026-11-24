@@ -346,3 +346,21 @@ def test_core_snapshot_admin_confirmation(tmp_path,monkeypatch):
         assert c.post(path,json={"confirmed":False},headers=ORIGIN).status_code==409
         assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
         assert calls==[("/jobs",{"module":"kopia","action":"core-snapshot"})]
+
+
+def test_core_restore_verification_admin_confirmation(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake(path,payload=None):
+        calls.append((path,payload))
+        return 202,{"id":8}
+    monkeypatch.setattr(core_app,"call",fake)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/backups/core/verify-snapshot"
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==401
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        assert c.post(path,json={"confirmed":True}).status_code==403
+        assert c.post(path,json={"confirmed":False},headers=ORIGIN).status_code==409
+        assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
+        assert calls==[("/jobs",{"module":"kopia","action":"core-verify-snapshot"})]
