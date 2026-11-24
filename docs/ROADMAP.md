@@ -31,3 +31,5 @@ Shared waypoints, saved geometry and GPX/KML exports implemented; CI pending. Ne
 Bounded GPX/KML import implemented; address search, regional routing data acquisition and full disconnected browser acceptance remain pending.
 
 Regional PBF acquisition implemented with initial region presets and safe replacement staging. Next: graph preparation/activation/rollback for staged data, place search, alternatives and disconnected browser acceptance.
+
+Replacement graph preparation, activation and rollback implemented with two retained slots; CI pending. Repeated update slot retirement, offline address/place search, alternative routes and disconnected browser validation remain outstanding.

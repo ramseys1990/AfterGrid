@@ -18,7 +18,8 @@ from pathlib import Path
 MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare"}
+ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph"}
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -159,6 +160,8 @@ def enqueue(ident, action):
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
+    if action in ROUTING_ACTIONS and ident != "routing":
+        raise ValueError("Routing-only action")
     if action in {"share","unshare"} and not manifest.get("lan_shareable"):
         raise ValueError("Module does not support LAN sharing")
     if action == "share" and not lan_available():
@@ -287,12 +290,28 @@ def stages(action):
         "unshare": [validate, up, probe],
     }[action]
 
+def routing_command(script,*args):
+    return ("run","--rm","--no-deps","-T","--pull","never","--entrypoint","/bin/sh","routing","/aftergrid/"+script,*args)
+
+def routing_steps(action):
+    validate=("Validate Compose",("config","-q"))
+    if action=="prepare-graph":
+        return [validate,("Build separate replacement graph",routing_command("build.sh","candidate"))]
+    target="tiles-next" if action=="activate-graph" else "tiles"
+    return [validate,("Check both graph slots",routing_command("switch.sh","check",target)),
+            ("Stop routing",("stop",)),("Select prepared graph",routing_command("switch.sh","select",target)),
+            ("Start selected graph",("up","-d","--wait","--wait-timeout","90","--pull","never")),
+            ("Check routing readiness",None)]
+
 def execute(row):
     job, ident, action = row["id"], row["module"], row["action"]
+    switch_attempted=False
     try:
-        if ident not in catalog() or action not in ACTIONS:
+        if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
-        steps = stages(action)
+        if action in {"activate-graph","rollback-graph"} and state(ident)!="running":
+            raise ValueError("Start the currently selected routing graph before switching")
+        steps = routing_steps(action) if action in ROUTING_ACTIONS else stages(action)
         if ident == "routing" and action in {"install","update"}:
             steps.insert(2, ("Prepare regional routing graph", ("run", "--rm", "--no-deps", "-T", "--entrypoint", "/bin/sh", "routing", "/aftergrid/build.sh")))
         change(job, state="running", total=len(steps), completed=0)
@@ -307,6 +326,8 @@ def execute(row):
         for index, (title, argv) in enumerate(steps):
             change(job, stage=title)
             log(job, "\n--- " + title + " ---\n")
+            if title=="Stop routing" and action in {"activate-graph","rollback-graph"}:
+                switch_attempted=True
             if argv is None:
                 wait_ready(ident)
             else:
@@ -314,6 +335,17 @@ def execute(row):
             change(job, completed=index+1)
         change(job, state="succeeded", stage="Complete")
     except Exception as exc:
+        if switch_attempted and action in {"activate-graph","rollback-graph"}:
+            previous="tiles" if action=="activate-graph" else "tiles-next"
+            try:
+                log(job,"\nGraph switch failed; restoring previous selection.\n")
+                run(job,ident,"stop")
+                run(job,ident,*routing_command("switch.sh","select",previous))
+                run(job,ident,"up","-d","--wait","--wait-timeout","90","--pull","never")
+                wait_ready(ident)
+                log(job,"Previous graph ready again. Both graphs retained.\n")
+            except Exception as recovery:
+                log(job,"Automatic restoration failed; both graph slots retained. Inspect selector and restart manually: "+str(recovery)+"\n")
         if action in {"share","unshare"}:
             set_sharing(ident,False)
             try:

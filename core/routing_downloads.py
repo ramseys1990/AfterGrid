@@ -97,7 +97,21 @@ class RoutingDownloads:
                 for name in ("region.osm.pbf","incoming.osm.pbf"):
                     p=self.content/name
                     if p.is_file() and not p.is_symlink():files.append({"name":name,"size_bytes":p.stat().st_size})
-            return {**job,"files":files,"free_bytes":free,"graph_ready":(self.content/"tiles/.aftergrid-ready").is_file(),
+            def ready(name):
+                path=self.content/name
+                marker=path/".aftergrid-ready"
+                return path.is_dir() and not path.is_symlink() and marker.is_file() and not marker.is_symlink()
+            selector=self.content/"active-slot"
+            try:
+                selected="invalid" if selector.is_symlink() else selector.read_text().strip() if selector.exists() else "tiles"
+            except OSError:
+                selected="invalid"
+            if selected not in ("tiles","tiles-next"):selected="invalid"
+            original=ready("tiles")
+            candidate=ready("tiles-next")
+            return {**job,"files":files,"free_bytes":free,"graph_ready":(original if selected=="tiles" else candidate if selected=="tiles-next" else False),
+                    "selected_slot":selected,"original_ready":original,"candidate_ready":candidate,
+                    "candidate_occupied":(self.content/"tiles-next").exists() or (self.content/"tiles-next").is_symlink(),
                     "regions":[{"id":i,"name":v[0]} for i,v in REGIONS.items()]}
 
     def launch(self,job,phase):

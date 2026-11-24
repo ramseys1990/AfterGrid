@@ -12,7 +12,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r core/requirements-dev.txt
       - run: python -m pytest -q
-      - run: bash -n install.sh
+      - run: bash -n install.sh && for file in modules/routing/*.sh; do sh -n "$file"; done
       - run: node --check core/app.js && node --check core/maps.js && node --check core/region.js
       - run: docker compose config -q
       - run: docker compose build core worker

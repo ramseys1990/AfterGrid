@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.5.7-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.5.8-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -65,4 +65,4 @@ Optional [offline routing](modules/routing/README.md) uses native Valhalla graph
 
 The map planner also supports shared emergency waypoints, using saved points as route endpoints, static saved route geometry and GPX/KML export. The administrator edits; all LAN users can view and export. Keep sensitive locations out of the shared directory. Saved geometry is not a live route or evidence of current access. Bounded local GPX/KML import is implemented; geocoding remains planned; regional PBF download is now available.
 
-Regional routing downloads: choose an initial supported Geofabrik region, estimate the published PBF size and explicitly confirm. curl transfers the file, matching publisher MD5 checks integrity, and AfterGrid stages it without overwriting an existing source or graph. 2 GiB PBF development cap; graph construction requires additional resources. Existing installations need content/routing owned by UID 10001. Graph update activation and rollback UI remain planned; live Geofabrik transfer not yet tested.
+Regional routing downloads: choose an initial supported Geofabrik region, estimate the published PBF size and explicitly confirm. curl transfers the file, matching publisher MD5 checks integrity, and AfterGrid stages it without overwriting an existing source or graph. 2 GiB PBF development cap; graph construction requires additional resources. Existing installations need content/routing owned by UID 10001. Replacement graph preparation, activation and rollback UI implemented; live Geofabrik transfer and replacement acceptance not yet tested.

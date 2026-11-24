@@ -101,3 +101,25 @@ def test_lan_sharing_configuration(tmp_path, monkeypatch):
     assert worker.lan_url("homebox",worker.catalog()["homebox"])=="http://192.168.10.4:8082"
     monkeypatch.setattr(worker,"LAN_DOMAIN","example.com")
     assert not worker.lan_available()
+
+
+def test_routing_switch_failure_restores_previous_selection(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    with pytest.raises(ValueError):worker.enqueue("kiwix","activate-graph")
+    worker.enqueue("routing","activate-graph")
+    commands=[]
+    monkeypatch.setattr(worker,"state",lambda ident:"running")
+    monkeypatch.setattr(worker,"run",lambda job,ident,*args:commands.append(args))
+    checks=[]
+    def probe(ident):
+        checks.append(ident)
+        if len(checks)==1:raise RuntimeError("test readiness failure")
+    monkeypatch.setattr(worker,"wait_ready",probe)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed"
+    assert ("run","--rm","--no-deps","-T","--pull","never","--entrypoint","/bin/sh","routing","/aftergrid/switch.sh","select","tiles-next") in commands
+    assert commands[-2][-2:]==("select","tiles")
+    assert "Previous graph ready again" in worker.jobs()[0]["log"]

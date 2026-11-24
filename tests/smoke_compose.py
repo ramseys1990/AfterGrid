@@ -179,6 +179,19 @@ for mode in ("auto","pedestrian","bicycle"):
     result=api("/api/maps/route",{"start":[9.5209,47.1394],"end":[9.5238,47.1417],"mode":mode})
     assert result["distance_km"]>0 and result["duration_seconds"]>0 and len(result["coordinates"])>=2
     assert result["instructions"]
+# Prepare a second graph without changing the selected first graph.
+subprocess.run(["sudo","cp","content/routing/region.osm.pbf","content/routing/incoming.osm.pbf"],check=True)
+action("prepare-graph","routing")
+r=api("/api/admin/routing-data")
+assert r["original_ready"] and r["candidate_ready"] and r["selected_slot"]=="tiles"
+assert api("/api/maps/route",{"start":[9.5209,47.1394],"end":[9.5238,47.1417],"mode":"auto"})["distance_km"]>0
+action("activate-graph","routing")
+assert api("/api/admin/routing-data")["selected_slot"]=="tiles-next"
+assert api("/api/maps/route",{"start":[9.5209,47.1394],"end":[9.5238,47.1417],"mode":"auto"})["distance_km"]>0
+action("rollback-graph","routing")
+assert api("/api/admin/routing-data")["selected_slot"]=="tiles"
+assert api("/api/maps/route",{"start":[9.5209,47.1394],"end":[9.5238,47.1417],"mode":"auto"})["distance_km"]>0
+assert api("/api/admin/routing-data")["candidate_ready"]
 action("stop","routing")
 assert module("routing")["status"]=="stopped"
 action("start","routing")

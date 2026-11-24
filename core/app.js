@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -419,7 +419,20 @@ async function refreshRoutingData(){
   if(r.size_bytes!==undefined)line("PBF size: "+bytes(r.size_bytes)+" (graph requires additional space)");
   for(const file of r.files)line(file.name+" — "+bytes(file.size_bytes));
   if(r.state==="downloading"&&r.size_bytes){const p=document.createElement("progress");p.max=r.size_bytes;p.value=r.bytes||0;root.append(p);line(bytes(r.bytes||0)+" downloaded");}
-  line(r.graph_ready?"Existing graph retained":"No prepared routing graph");
+  line("Selected on disk: "+r.selected_slot+" · "+(r.graph_ready?"prepared":"not prepared")+" (see application status for actual availability)");
+  line("Original graph: "+(r.original_ready?"ready":"not prepared")+" · Replacement graph: "+(r.candidate_ready?"ready":"not prepared"));
+  const controls=$("routing-graph-controls");controls.replaceChildren();
+  const busy=pending.has("routing")||["estimating","downloading","verifying"].includes(r.state);
+  function graphButton(label,action,question){
+    const b=document.createElement("button");b.type="button";b.textContent=label;b.disabled=busy;
+    b.addEventListener("click",async()=>{if(!confirm(question))return;b.disabled=true;try{await api("/api/admin/modules/routing/"+action,{});await renderJobs();await renderModules();await refreshRoutingData();}catch(e){error(e.message);b.disabled=false;}});controls.append(b);
+  }
+  if(r.original_ready&&r.selected_slot==="tiles"&&!r.candidate_occupied&&r.files.some(f=>f.name==="incoming.osm.pbf"))
+    graphButton("Prepare replacement graph","prepare-graph","Build a separate graph? This uses substantial CPU, RAM and disk. Existing routing remains selected.");
+  if(r.original_ready&&r.candidate_ready&&r.selected_slot==="tiles")
+    graphButton("Activate replacement","activate-graph","Switch to the replacement graph? Routing will briefly stop. The original will be retained.");
+  if(r.original_ready&&r.candidate_ready&&r.selected_slot==="tiles-next")
+    graphButton("Roll back to original","rollback-graph","Restore the original graph? Routing will briefly stop. Both graphs will be retained.");
   $("routing-download").hidden=r.state!=="estimated";
 }
 $("routing-estimate").addEventListener("submit",async event=>{

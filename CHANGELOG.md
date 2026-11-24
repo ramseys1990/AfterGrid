@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.8-dev
+- Prepare a second Valhalla graph from incoming.osm.pbf without changing the original graph; check minimum disk headroom and bound native build time.
+- Administrator graph activation and rollback through fixed Compose jobs and an atomic selected-slot marker; readiness failure triggers an attempted restoration of the previous slot.
+- Retain both graph/source slots; status distinguishes selected-on-disk from actual app availability. No automatic slot retirement or deletion.
+- Extend native lifecycle smoke test for preparation, activation, rollback and routes, plus worker failure-recovery unit test. CI pending.
+
+
 ## 0.5.7-dev
 - Regional Geofabrik PBF acquisition with metadata estimate, explicit confirmation, actual byte progress, storage checks and publisher MD5 verification.
 - New source published atomically; existing region and graph retained; replacement staged separately as incoming.osm.pbf. No automatic rebuild or activation.

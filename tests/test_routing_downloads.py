@@ -36,3 +36,17 @@ def test_routing_data_api(tmp_path):
         assert c.post("/api/admin/routing-data/estimate",json={"region":"sc"}).status_code==403
         assert c.post("/api/admin/routing-data/estimate",json={"region":"invalid"},headers=origin).status_code==400
         assert c.post("/api/admin/routing-data/download",json={},headers=origin).status_code==409
+
+
+def test_selected_graph_status(tmp_path):
+    content=tmp_path/"routing";content.mkdir()
+    manager=m.RoutingDownloads(tmp_path,content)
+    for name in ("tiles","tiles-next"):
+        (content/name).mkdir();(content/name/".aftergrid-ready").touch()
+    assert manager.status()["selected_slot"]=="tiles"
+    (content/"active-slot").write_text("tiles-next\n")
+    r=manager.status()
+    assert r["graph_ready"] and r["original_ready"] and r["candidate_ready"]
+    assert r["selected_slot"]=="tiles-next"
+    (content/"active-slot").write_text("../bad")
+    assert not manager.status()["graph_ready"]
