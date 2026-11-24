@@ -129,3 +129,34 @@ def test_archive_is_routing_only():
     with pytest.raises(ValueError):worker.enqueue("kiwix","archive-original")
     assert worker.routing_steps("archive-original")[1][1][-2:]==("/aftergrid/archive.sh","tiles")
     assert worker.routing_steps("archive-replacement")[1][1][-2:]==("/aftergrid/archive.sh","tiles-next")
+
+
+def test_local_version_report_and_update_gate(tmp_path,monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    with pytest.raises(ValueError):worker.enqueue("kiwix","update")
+    with pytest.raises(ValueError):worker.enqueue("routing","update",True)
+    job=worker.enqueue("kiwix","update",True)
+    installed="sha256:"+"a"*64
+    target="sha256:"+"b"*64
+    def docker(argv,**kwargs):
+        if "config" in argv:out={"services":{"kiwix":{"image":"example/image:1.2","environment":{"SECRET":"private-value"}}}}
+        elif "ps" in argv:out=[{"Service":"kiwix","ID":"a"*64}]
+        elif argv[:3]==["docker","container","inspect"]:out=installed
+        elif argv[:3]==["docker","image","inspect"]:out=target
+        else:raise AssertionError(argv)
+        return SimpleNamespace(stdout=json.dumps(out))
+    monkeypatch.setattr(worker.subprocess,"run",docker)
+    r=worker.version_report("kiwix")
+    assert r["registry_checked"] is False and r["history"][0]["id"]==job
+    assert r["services"][0]["comparison"]=="differs from local target"
+    assert r["services"][0]["installed_image_ids"]==[installed]
+    assert "private-value" not in json.dumps(r)
+    monkeypatch.setattr(worker,"state",lambda ident:"stopped")
+    monkeypatch.setattr(worker,"run",lambda *args:pytest.fail("Stopped module must not be updated"))
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed"

@@ -190,3 +190,24 @@ def test_preparedness_shared_counts_no_private_fields(tmp_path,monkeypatch):
         response=c.get("/api/preparedness")
         assert response.status_code==200 and response.json()["knowledge"] is None
         assert "private-library" not in response.text
+
+
+def test_version_access_and_manual_update_confirmation(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake(path,payload=None):
+        calls.append((path,payload))
+        return (200,{"registry_checked":False}) if path.startswith("/versions/") else (202,{"id":1})
+    monkeypatch.setattr(core_app,"call",fake)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/modules/kiwix/"
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.get(path+"versions").status_code==401
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        assert c.get(path+"versions").json()=={"registry_checked":False}
+        assert c.post(path+"update",json={},headers=ORIGIN).status_code==409
+        assert c.post(path+"update",json={"backup_confirmed":"true"},headers=ORIGIN).status_code==422
+        assert c.post(path+"update",json={"backup_confirmed":True}).status_code==403
+        assert c.post("/api/admin/modules/routing/update",json={"backup_confirmed":True},headers=ORIGIN).status_code==409
+        assert c.post(path+"update",json={"backup_confirmed":True},headers=ORIGIN).status_code==202
+        assert calls==[("/versions/kiwix",None),("/jobs",{"module":"kiwix","action":"update","backup_confirmed":True})]

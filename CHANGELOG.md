@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0-dev
+- Add administrator-only reviewed image reference, installed image IDs, local target comparison and recent update history via fixed Docker reads.
+- Require explicit backup acknowledgment for manual updates at API and worker boundaries; running supported modules only, routing upgrade deferred.
+- No registry freshness claim or automatic updates. Add unit/API tests and a local Docker smoke assertion; CI pending.
+
 ## 0.7.4-dev
 - Add shared LAN preparedness overview with local content indicators, native application shortcuts and explicit unknown states; no readiness score or new services.
 - Add administrator topic presets for the existing Kiwix catalog search; no automatic downloads or claimed curated archive verification.

@@ -72,7 +72,30 @@ async function renderModules(){
             catch(e){error(e.message);}
           });card.append(reveal,credentials);
         }
-        const actions=mod.status==="not installed"?["install"]:mod.status==="running"?["stop","restart","update","uninstall"]:["start","install","stop","uninstall"];
+        const actions=mod.status==="not installed"?["install"]:mod.status==="running"?["stop","restart",...(mod.id==="routing"?[]:["update"]),"uninstall"]:["start","install","stop","uninstall"];
+        const versions=document.createElement("details");
+        const summary=document.createElement("summary");summary.textContent="Image versions and update history";
+        const info=document.createElement("div"),check=document.createElement("button");check.type="button";check.textContent="Read local versions";
+        check.addEventListener("click",async()=>{
+          check.disabled=true;info.textContent="Reading local Docker image information…";
+          try{
+            const result=await api("/api/admin/modules/"+mod.id+"/versions");
+            if(!status?.admin||!card.isConnected)return;
+            info.replaceChildren();
+            for(const service of result.services){
+              const section=document.createElement("div");
+              for(const value of [service.service+" — "+service.comparison,"Reviewed target: "+service.configured_image,"Installed image IDs: "+(service.installed_image_ids.join(", ")||"none"),"Local target ID: "+(service.local_target_image_id||"not present or unknown")]){
+                const p=document.createElement("p");p.textContent=value;section.append(p);
+              }
+              info.append(section);
+            }
+            const note=document.createElement("p");note.textContent="Local comparison only. No registry check. A matching image does not prove the latest upstream version.";info.append(note);
+            if(!result.manual_update_supported){const n=document.createElement("p");n.textContent="Routing image updates are deferred until graph compatibility and recovery are validated.";info.append(n);}
+            for(const entry of result.history){const p=document.createElement("p");p.textContent="Update #"+entry.id+" · "+new Date(entry.created*1000).toLocaleString()+" · "+entry.state+" · "+entry.stage;info.append(p);}
+          }catch(e){if(status?.admin&&card.isConnected)info.textContent=e.message;}
+          finally{check.disabled=false;}
+        });
+        versions.append(summary,check,info);card.append(versions);
         if(mod.shared && mod.lan_url){
           const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+(mod.id==="tak"?" TLS; enroll with the trusted CA.":" HTTP is unencrypted.");card.append(note);
         }else if(mod.share_available){
@@ -91,9 +114,9 @@ async function renderModules(){
             }
             if(action==="unshare"&&!confirm("Return to loopback-only access? This recreates and starts the application while keeping its data."))return;
             if(action==="uninstall"&&!confirm("Remove this application's containers? Its data will be retained."))return;
-            if(action==="update"&&!confirm("Pull the configured image and recreate if needed? Back up application data first."))return;
+            if(action==="update"&&!confirm("Confirm you have a current application-consistent backup and can restore it. This pulls only the reviewed configured image, may interrupt service, and cannot automatically roll back data migrations. Continue?"))return;
             b.disabled=true;error("");
-            try{await api("/api/admin/modules/"+mod.id+"/"+action,{});await renderJobs();await renderModules();}
+            try{await api("/api/admin/modules/"+mod.id+"/"+action,action==="update"?{backup_confirmed:true}:{});await renderJobs();await renderModules();}
             catch(e){error(e.message);}finally{b.disabled=false;}
           });b.disabled=pending.has(mod.id);controls.append(b);
         }

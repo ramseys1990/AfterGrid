@@ -55,6 +55,9 @@ assert not api("/api/status")["selection_pending"]
 assert api("/api/admin/first-run",{"modules":["homebox","kiwix"]})==batch
 wait_job(batch["ids"][0],"kiwix initial install")
 assert module()["status"]=="running"
+versions=api("/api/admin/modules/kiwix/versions")
+assert versions["registry_checked"] is False and versions["services"][0]["comparison"]=="matches local target",versions
+assert versions["services"][0]["installed_image_ids"]
 with urllib.request.urlopen("http://127.0.0.1:8081/",timeout=10) as response:
     assert response.status==200
 # Exercise native indexing and real reader catalog reload with a local fixture.

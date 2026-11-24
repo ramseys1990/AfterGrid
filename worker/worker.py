@@ -160,10 +160,12 @@ def init():
         """)
         conn.execute("UPDATE jobs SET state='interrupted',stage='Worker restarted; inspect service and retry' WHERE state='running'")
 
-def enqueue(ident, action):
+def enqueue(ident, action, backup_confirmed=False):
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
+    if action == "update" and (backup_confirmed is not True or ident == "routing"):
+        raise ValueError("Update requires backup confirmation and a supported module")
     if action in ROUTING_ACTIONS and ident != "routing":
         raise ValueError("Routing-only action")
     if action in {"share","unshare"} and not manifest.get("lan_shareable"):
@@ -258,6 +260,49 @@ def state(ident):
     except (OSError, subprocess.SubprocessError, ValueError, TypeError):
         return "unavailable"
 
+def version_report(ident):
+    """Local Docker evidence only: no registry lookup, secrets or environment returned."""
+    if ident not in catalog():
+        raise ValueError("Unknown module")
+    env=compose_env(ident)
+    def read(argv):
+        return subprocess.run(argv,env=env,capture_output=True,text=True,timeout=4,check=True).stdout.strip()
+    try:
+        config=json.loads(read(command(ident,"config","--format","json")))
+        services=config["services"]
+        output=read(command(ident,"ps","--all","--format","json"))
+        rows=json.loads(output) if output.startswith("[") else [json.loads(line) for line in output.splitlines() if line]
+        result=[]
+        for service,definition in sorted(services.items()):
+            target=definition.get("image")
+            if not isinstance(target,str) or not target:
+                raise ValueError("Expected reviewed image reference")
+            # Container IDs originate from this module's Compose project, not the request.
+            selected=[r for r in rows if r.get("Service")==service and str(r.get("OneOff",False)).lower()!="true"]
+            ids=[r["ID"] for r in selected]
+            if any(not re.fullmatch(r"[a-f0-9]{12,64}",i) for i in ids):
+                raise ValueError("Invalid container ID")
+            installed=[]
+            if ids:
+                lines=read(["docker","container","inspect","--format","{{json .Image}}",*ids]).splitlines()
+                installed=sorted(set(json.loads(line) for line in lines))
+                if not installed or any(not re.fullmatch(r"sha256:[a-f0-9]{64}",i) for i in installed):
+                    raise ValueError("Unexpected installed image ID")
+            try:
+                local=json.loads(read(["docker","image","inspect","--format","{{json .Id}}",target]))
+                if not re.fullmatch(r"sha256:[a-f0-9]{64}",local):raise ValueError("Unexpected local image ID")
+            except subprocess.CalledProcessError:
+                local=None
+            status=("not installed" if not installed else "target not present locally" if local is None
+                    else "matches local target" if installed==[local] else "differs from local target")
+            result.append({"service":service,"configured_image":target,"installed_image_ids":installed,
+                           "local_target_image_id":local,"comparison":status})
+    except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
+        raise RuntimeError("Local Docker image information unavailable") from None
+    with db() as conn:
+        history=[dict(r) for r in conn.execute("SELECT id,state,stage,created FROM jobs WHERE module=? AND action='update' ORDER BY id DESC LIMIT 10",(ident,))]
+    return {"module":ident,"services":result,"registry_checked":False,"manual_update_supported":ident!="routing","history":history}
+
 def ready(ident):
     url = catalog()[ident].get("readiness_url")
     if not url:
@@ -316,6 +361,8 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="update" and (ident=="routing" or state(ident)!="running"):
+            raise ValueError("Manual update requires a running supported module; routing upgrades need a separate graph migration")
         if action in {"activate-graph","rollback-graph","archive-original","archive-replacement"} and state(ident)!="running":
             raise ValueError("Start the currently selected routing graph before switching")
         steps = routing_steps(action) if action in ROUTING_ACTIONS else stages(action)
@@ -391,6 +438,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json(200, [public_module(i,m) for i,m in catalog().items()])
         if self.path == "/jobs":
             return self.send_json(200, jobs())
+        if self.path.startswith("/versions/"):
+            ident=self.path.removeprefix("/versions/")
+            if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})
+            try:return self.send_json(200,version_report(ident))
+            except RuntimeError:return self.send_json(503,{"detail":"Local Docker image information unavailable"})
         if self.path == "/credentials/meshmonitor" and "meshmonitor" in catalog():
             if not (STATE / "secrets" / "meshmonitor.json").is_file():
                 return self.send_json(404, {"detail":"Install MeshMonitor first"})
@@ -415,9 +467,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not isinstance(body,dict) or set(body) != {"token","modules"}:
                     raise ValueError("Invalid batch")
                 return self.send_json(202, {"ids": enqueue_batch(body["token"],body["modules"])})
-            if not isinstance(body, dict) or set(body) != {"module", "action"} or not all(isinstance(v,str) for v in body.values()):
+            if not isinstance(body,dict) or not isinstance(body.get("module"),str) or not isinstance(body.get("action"),str):
                 raise ValueError("Invalid request")
-            job = enqueue(body["module"], body["action"])
+            if body["action"]=="update":
+                if set(body)!={"module","action","backup_confirmed"} or body["backup_confirmed"] is not True:
+                    raise ValueError("Explicit backup confirmation required")
+            elif set(body)!={"module","action"}:
+                raise ValueError("Invalid request")
+            job = enqueue(body["module"],body["action"],body.get("backup_confirmed",False))
             self.send_json(202, {"id": job})
         except sqlite3.IntegrityError:
             self.send_json(409, {"detail": "A job is already pending for this module"})
