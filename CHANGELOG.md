@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0-dev
+- Add Homebox, Grocy and Kopia as independent optional Compose modules.
+- Generate persistent module secrets and expose only Kopia's setup credentials to an authenticated local administrator.
+- Loopback-only native setup for inventory and backup services; stable LAN access and QR verification pending.
+- Extend disposable CI lifecycle coverage; do not claim live data backup or recovery validation.
+
 ## 0.2.0-dev
 - Catalog entries are derived from module manifests; additional reviewed modules need no core allowlist edits.
 - Refresh module state when a job changes; keep expanded output visible.

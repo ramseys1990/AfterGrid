@@ -32,3 +32,19 @@ def test_interrupted(tmp_path, monkeypatch):
     worker.change(job,state="running")
     worker.init()
     assert worker.jobs()[0]["state"]=="interrupted"
+
+
+def test_generated_secrets(tmp_path, monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    assert worker.module_secrets("homebox")["HBOX_AUTH_API_KEY_PEPPER"]=="not-configured-read-only-placeholder"
+    assert not (tmp_path/"secrets").exists()
+    a=worker.module_secrets("homebox",create=True)
+    assert len(a["HBOX_AUTH_API_KEY_PEPPER"])==64
+    assert worker.module_secrets("homebox",create=True)==a
+    assert (tmp_path/"secrets"/"homebox.json").stat().st_mode & 0o777 == 0o600
+    b=worker.module_secrets("kopia",create=True)
+    assert b["KOPIA_PASSWORD"]!=b["KOPIA_UI_PASSWORD"]
+    assert worker.compose_env("kopia")["KOPIA_PASSWORD"]==b["KOPIA_PASSWORD"]

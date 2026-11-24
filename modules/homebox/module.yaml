@@ -1,0 +1,15 @@
+{
+  "id": "homebox",
+  "name": "Homebox",
+  "category": "Inventory",
+  "description": "Equipment, locations, QR inventory labels and maintenance.",
+  "port": 8082,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-homebox:7745/",
+  "upstream": "https://homebox.software/",
+  "loopback_only": true,
+  "generated_secrets": [
+    "HBOX_AUTH_API_KEY_PEPPER"
+  ],
+  "setup_note": "Create your native Homebox account over a local browser or SSH tunnel. Close registration before sharing. Stable LAN QR links are a later milestone."
+}

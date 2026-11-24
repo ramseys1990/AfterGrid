@@ -81,7 +81,7 @@ def create_app(data_dir=None):
             """)
         yield
 
-    api = FastAPI(title="AfterGrid", version="0.2.0-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.3.0-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -148,7 +148,7 @@ def create_app(data_dir=None):
             row = con.execute("SELECT server_name FROM admin WHERE id=1").fetchone()
         return {"setup_required": row is None, "admin": admin_session(request),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.2.0-dev"}
+                "version": "0.3.0-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -161,6 +161,7 @@ def create_app(data_dir=None):
                 for m in installed:
                     item = {key: m[key] for key in ("id", "name", "description", "category", "status", "port")}
                     item["installable"] = True
+                    item.update(loopback_only=m.get("loopback_only", False), admin_only=m.get("admin_only", False), setup_note=m.get("setup_note", ""))
                     by_id[m["id"]] = item
                 result = list(by_id.values())
         except WorkerUnavailable:
@@ -180,6 +181,19 @@ def create_app(data_dir=None):
             raise HTTPException(503, "Module manager unavailable")
         if code != 200:
             raise HTTPException(502, "Module manager request failed")
+        return result
+
+    @api.get("/api/admin/kopia/credentials")
+    def kopia_credentials(request: Request):
+        require_admin(request)
+        if not (secure_cookie and configured_origin.startswith("https://")) and not (configured_origin.startswith("http://127.0.0.1:") or configured_origin.startswith("http://localhost:")):
+            raise HTTPException(403, "Use the local SSH tunnel or a configured HTTPS portal to reveal credentials")
+        try:
+            code, result = call("/credentials/kopia")
+        except WorkerUnavailable:
+            raise HTTPException(503, "Module manager unavailable")
+        if code != 200:
+            raise HTTPException(code if code == 404 else 502, result.get("detail", "Module manager request failed"))
         return result
 
     @api.post("/api/admin/modules/{ident}/{action}", status_code=202)

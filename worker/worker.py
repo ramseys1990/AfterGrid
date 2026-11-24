@@ -3,12 +3,14 @@ import http.server
 import json
 import os
 import re
+import secrets
 import socketserver
 import sqlite3
 import subprocess
 import threading
 import time
 import urllib.request
+import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -19,6 +21,7 @@ ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall"}
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 MAX_LOG = 24000
+SECRET_LOCK = threading.Lock()
 
 def catalog():
     result = {}
@@ -39,8 +42,37 @@ def command(ident, *args):
     return ["docker", "compose", "--project-name", "aftergrid-" + ident,
             "--project-directory", str(directory), "--file", str(directory / "compose.yaml"), *args]
 
-def compose_env():
-    return {"PATH": os.environ["PATH"], "HOME": "/root",
+def module_secrets(ident, create=False):
+    manifest = catalog()[ident]
+    names = manifest.get("generated_secrets", [])
+    if not names:
+        return {}
+    if not all(re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", name) for name in names):
+        raise ValueError("Invalid reviewed secret name")
+    directory = STATE / "secrets"
+    path = directory / (ident + ".json")
+    with SECRET_LOCK:
+        if path.exists():
+            values = json.loads(path.read_text())
+            if set(values) != set(names) or not all(isinstance(v,str) and len(v)>=32 for v in values.values()):
+                raise ValueError("Invalid persistent module secrets; repair from backup")
+            return values
+        if not create:
+            # Compose needs nonempty interpolation values even for read-only ps.
+            return dict.fromkeys(names, "not-configured-read-only-placeholder")
+        directory.mkdir(mode=0o700, exist_ok=True)
+        values = {name: secrets.token_hex(32) for name in names}
+        tmp = directory / (ident + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(values, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+        return values
+
+def compose_env(ident, create=False):
+    return {**module_secrets(ident, create),"PATH": os.environ["PATH"], "HOME": "/root",
             "DOCKER_HOST": "unix:///var/run/docker.sock",
             "AFTERGRID_ROOT": ROOT, "AFTERGRID_BIND": BIND,
             "COMPOSE_PROGRESS": "plain", "NO_COLOR": "1"}
@@ -96,13 +128,16 @@ def log(job, line):
 
 def run(job, ident, *args):
     # Fixed argv, no shell, no arbitrary parameters from the browser.
-    proc = subprocess.Popen(command(ident, *args), env=compose_env(),
+    proc = subprocess.Popen(command(ident, *args), env=compose_env(ident, create=True),
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, errors="replace", bufsize=1)
+    private_values = module_secrets(ident)
     timer = threading.Timer(1800, proc.kill)
     timer.start()
     try:
         for line in proc.stdout:
+            for value in private_values.values():
+                line = line.replace(value, '[redacted]')
             log(job, line)
         code = proc.wait()
         if code:
@@ -117,7 +152,7 @@ def run(job, ident, *args):
 def state(ident):
     try:
         output = subprocess.run(command(ident, "ps", "--all", "--format", "json"),
-                                env=compose_env(), capture_output=True, text=True, timeout=8, check=True).stdout.strip()
+                                env=compose_env(ident), capture_output=True, text=True, timeout=8, check=True).stdout.strip()
         rows = json.loads(output) if output.startswith("[") else [json.loads(s) for s in output.splitlines() if s]
         if not rows:
             return "not installed"
@@ -137,6 +172,8 @@ def ready(ident):
     try:
         with urllib.request.urlopen(url, timeout=3) as response:
             return 200 <= response.status < 400
+    except urllib.error.HTTPError as exc:
+        return exc.code in catalog()[ident].get('readiness_statuses', [])
     except (OSError, ValueError):
         return False
 
@@ -210,6 +247,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json(200, [{**m, "status": state(i)} for i,m in catalog().items()])
         if self.path == "/jobs":
             return self.send_json(200, jobs())
+        if self.path == "/credentials/kopia" and "kopia" in catalog():
+            if not (STATE / "secrets" / "kopia.json").is_file():
+                return self.send_json(404, {"detail": "Install Kopia first"})
+            values = module_secrets("kopia")
+            return self.send_json(200, {"username": "aftergrid", "ui_password": values["KOPIA_UI_PASSWORD"], "repository_password": values["KOPIA_PASSWORD"]})
         self.send_json(404, {"detail": "Unknown endpoint"})
 
     def do_POST(self):

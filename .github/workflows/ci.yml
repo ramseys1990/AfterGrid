@@ -15,9 +15,13 @@ jobs:
       - run: bash -n install.sh
       - run: docker compose config -q
       - run: docker compose build core worker
-      - run: docker compose -f modules/kiwix/compose.yaml config -q
+      - name: Validate module Compose definitions
+        run: |
+          export HBOX_AUTH_API_KEY_PEPPER=disposable-ci-placeholder-secret-1234567890
+          export KOPIA_UI_PASSWORD=disposable-ci-ui-password KOPIA_PASSWORD=disposable-ci-repo-password
+          for file in modules/*/compose.yaml; do docker compose -f "$file" config -q; done
       - name: Disposable Compose lifecycle smoke test
-        timeout-minutes: 12
+        timeout-minutes: 20
         shell: bash
         run: |
           set -euo pipefail
@@ -31,7 +35,10 @@ jobs:
           sudo chmod 700 data/core
           sudo chmod 600 data/core/setup-token
           cleanup() {
-            docker compose -p aftergrid-kiwix -f modules/kiwix/compose.yaml down || true
+            export HBOX_AUTH_API_KEY_PEPPER=cleanup-placeholder KOPIA_UI_PASSWORD=cleanup-placeholder KOPIA_PASSWORD=cleanup-placeholder
+            for module in kiwix homebox grocy kopia; do
+              docker compose -p "aftergrid-$module" -f "modules/$module/compose.yaml" down || true
+            done
             docker compose logs --tail 50 || true
             docker compose down -v || true
           }

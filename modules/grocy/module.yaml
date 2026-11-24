@@ -1,0 +1,12 @@
+{
+  "id": "grocy",
+  "name": "Grocy",
+  "category": "Inventory",
+  "description": "Food, water, consumables, expiration dates and recipes.",
+  "port": 8083,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-grocy:80/",
+  "upstream": "https://grocy.info/",
+  "loopback_only": true,
+  "setup_note": "Use the native login. Change the initial admin/admin credentials immediately. Set up household storage locations in Grocy."
+}

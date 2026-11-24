@@ -50,3 +50,15 @@ def test_manifest_catalog_is_generic(tmp_path, monkeypatch):
         setup={"username":"admin","password":"long test password","token":"test-token","server_name":"Test"}
         assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
         assert client.post("/api/admin/modules/new-app/install",json={},headers=ORIGIN).status_code==202
+
+
+def test_kopia_credentials_are_admin_only(tmp_path, monkeypatch):
+    from core import app as core_app
+    monkeypatch.setenv("AFTERGRID_ORIGIN","http://127.0.0.1:8080")
+    monkeypatch.setattr(core_app,"call",lambda path: (200,{"username":"aftergrid","ui_password":"secret","repository_password":"secret2"}))
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.get("/api/admin/kopia/credentials").status_code==401
+        setup={"username":"admin","password":"long test password","token":"test-token","server_name":"Test"}
+        assert client.post("/api/setup",json=setup,headers={"Origin":"http://127.0.0.1:8080"}).status_code==201
+        assert client.get("/api/admin/kopia/credentials").json()["username"]=="aftergrid"

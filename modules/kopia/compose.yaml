@@ -1,0 +1,35 @@
+services:
+  kopia:
+    image: kopia/kopia:0.23.1
+    hostname: aftergrid-kopia
+    restart: unless-stopped
+    command:
+      - server
+      - start
+      - --insecure
+      - --address=0.0.0.0:51515
+      - --server-username=aftergrid
+      - "--server-password=${KOPIA_UI_PASSWORD:?required}"
+      - --no-check-for-updates
+    environment:
+      KOPIA_PASSWORD: "${KOPIA_PASSWORD:?required}"
+      USER: aftergrid
+      TZ: UTC
+    ports:
+      - "127.0.0.1:51515:51515"
+    volumes:
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/data/kopia/config:/app/config"
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/data/kopia/cache:/app/cache"
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/data/kopia/logs:/app/logs"
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/data:/source/data:ro"
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/content:/source/content:ro"
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/modules:/source/modules:ro"
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/backups:/repository"
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/restore:/restore"
+    networks:
+      apps:
+        aliases: [aftergrid-kopia]
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps

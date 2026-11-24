@@ -1,0 +1,19 @@
+services:
+  grocy:
+    image: lscr.io/linuxserver/grocy:v4.7.1-ls352
+    restart: unless-stopped
+    environment:
+      PUID: "10001"
+      PGID: "10001"
+      TZ: UTC
+    ports:
+      - "127.0.0.1:8083:80"
+    volumes:
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/data/grocy:/config"
+    networks:
+      apps:
+        aliases: [aftergrid-grocy]
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps

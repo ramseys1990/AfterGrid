@@ -1,0 +1,20 @@
+{
+  "id": "kopia",
+  "name": "Kopia",
+  "category": "System",
+  "description": "Encrypted backup snapshots, scheduling, retention and restores.",
+  "port": 51515,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-kopia:51515/",
+  "readiness_statuses": [
+    401
+  ],
+  "upstream": "https://kopia.io/",
+  "loopback_only": true,
+  "admin_only": true,
+  "generated_secrets": [
+    "KOPIA_UI_PASSWORD",
+    "KOPIA_PASSWORD"
+  ],
+  "setup_note": "Open Kopia with its generated credentials. Configure a repository and policies in its own UI. No backups are scheduled automatically."
+}

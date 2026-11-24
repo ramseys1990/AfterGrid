@@ -32,12 +32,25 @@ async function renderModules(){
       for(const [tag,value] of [["small",mod.category],["h3",mod.name],["p",mod.description],["small",mod.status]]){
         const node=document.createElement(tag);node.textContent=value;card.append(node);
       }
-      if(mod.installable && mod.status==="running"){
+      if(mod.installable && mod.status==="running" && (!mod.admin_only||status.admin) && (!mod.loopback_only||["127.0.0.1","localhost"].includes(location.hostname))){
         const link=document.createElement("a");
-        const url=new URL(location.href);url.port=mod.port;url.pathname="/";url.search="";url.hash="";
+        const url=new URL(location.href);if(mod.loopback_only)url.protocol="http:";url.port=mod.port;url.pathname="/";url.search="";url.hash="";
         link.href=url.href;link.textContent="Open application";link.target="_blank";link.rel="noopener noreferrer";card.append(link);
       }
       if(status.admin && mod.installable){
+        if(mod.setup_note){const note=document.createElement("p");note.textContent=mod.setup_note;card.append(note);}
+        if(mod.loopback_only && !["127.0.0.1","localhost"].includes(location.hostname)){
+          const note=document.createElement("small");note.textContent="Local setup only. SSH forward port "+mod.port+" and open http://127.0.0.1:"+mod.port;card.append(note);
+        }
+        if(mod.id==="kopia" && mod.status==="running"){
+          const reveal=document.createElement("button");reveal.textContent="Show backup credentials";
+          const credentials=document.createElement("pre");credentials.hidden=true;
+          reveal.addEventListener("click",async()=>{
+            if(!credentials.hidden){credentials.textContent="";credentials.hidden=true;reveal.textContent="Show backup credentials";return;}
+            try{const c=await api("/api/admin/kopia/credentials");credentials.textContent="Username: "+c.username+"\nUI password: "+c.ui_password+"\nRepository password: "+c.repository_password;credentials.hidden=false;reveal.textContent="Hide credentials";}
+            catch(e){error(e.message);}
+          });card.append(reveal,credentials);
+        }
         const actions=mod.status==="not installed"?["install"]:mod.status==="running"?["stop","restart","update","uninstall"]:["start","install","stop","uninstall"];
         const controls=document.createElement("div");controls.className="controls";
         for(const action of actions){

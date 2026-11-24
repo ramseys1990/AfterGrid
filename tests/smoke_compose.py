@@ -15,11 +15,11 @@ def api(path, payload=None):
     with client.open(req, timeout=30) as res:
         return json.load(res)
 
-def module():
-    return next(m for m in api("/api/modules") if m["id"]=="kiwix")
+def module(ident="kiwix"):
+    return next(m for m in api("/api/modules") if m["id"]==ident)
 
-def action(name):
-    job_id=api("/api/admin/modules/kiwix/"+name,{})["id"]
+def action(name, ident="kiwix"):
+    job_id=api("/api/admin/modules/"+ident+"/"+name,{})["id"]
     deadline=time.monotonic()+240
     while time.monotonic()<deadline:
         job=next(j for j in api("/api/admin/jobs") if j["id"]==job_id)
@@ -48,3 +48,27 @@ action("uninstall")
 assert module()["status"]=="not installed"
 assert Path("content/kiwix/library.xml").is_file()
 print("Kiwix Compose lifecycle passed; content preserved.")
+
+# Exercise the same lifecycle for the new inventory and backup services.
+for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
+    assert module(ident)["status"]=="not installed"
+    action("install",ident)
+    assert module(ident)["status"]=="running"
+    if ident=="kopia":
+        import base64
+        credentials=api("/api/admin/kopia/credentials")
+        auth=base64.b64encode((credentials["username"]+":"+credentials["ui_password"]).encode()).decode()
+        req=urllib.request.Request("http://127.0.0.1:51515/",headers={"Authorization":"Basic "+auth})
+        with urllib.request.urlopen(req,timeout=10) as response:
+            assert response.status==200
+    else:
+        with urllib.request.urlopen("http://127.0.0.1:"+str(port)+"/",timeout=10) as response:
+            assert response.status==200
+    action("stop",ident)
+    assert module(ident)["status"]=="stopped"
+    action("start",ident)
+    assert module(ident)["status"]=="running"
+    action("uninstall",ident)
+    assert module(ident)["status"]=="not installed"
+    assert Path("data",ident).is_dir()
+    print(ident+" lifecycle passed; data directory retained.")

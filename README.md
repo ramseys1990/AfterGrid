@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.2.0-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The first Compose worker and Kiwix lifecycle are implemented; real deployment validation is pending. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.3.0-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their runtime validation is pending. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -31,3 +31,7 @@ See [development rules](AGENTS.md), [architecture](docs/ARCHITECTURE.md) and [ro
 ## First module
 
 Sign in as administrator, choose Kiwix, and inspect installation activity. The worker runs fixed Compose commands and persists jobs. The reader starts with an empty content library; see [Kiwix setup](modules/kiwix/README.md). Refresh applications to see current Docker state. Update currently re-pulls the reviewed image digest; automatic version selection and backups are later milestones.
+
+## Essential optional modules
+
+Homebox (8082), Grocy (8083) and Kopia (51515) use native authentication and initially bind loopback only. Use SSH forwarding for remote setup; stable LAN access is a later milestone. See their module READMEs. Kopia uses its native repository and snapshot UI; no backup is scheduled merely by installing it. Image tags for these three services are version-pinned, not digest-pinned.
