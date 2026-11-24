@@ -36,10 +36,10 @@ if ! command -v docker >/dev/null; then
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 fi
 docker compose version >/dev/null || die "Docker Compose v2 is required; install its plugin."
-docker info >/dev/null || die "Docker is not running or guest does not support it."
-# Explicitly avoid remote Docker contexts.
+# Explicitly avoid remote Docker contexts before talking to the daemon.
 [[ -z ${DOCKER_HOST:-} && -z ${DOCKER_CONTEXT:-} ]] || die "Unset DOCKER_HOST and DOCKER_CONTEXT; use local Docker."
 [[ $(docker context show) == default ]] || die "Switch to the local default Docker context."
+docker info >/dev/null || die "Docker is not running or guest does not support it."
 if docker compose ls --all --format json | grep -q '"aftergrid-core"'; then die "Existing AfterGrid Compose project detected."; fi
 echo "[2/4] Downloading core source"
 tmp=$(mktemp -d)
@@ -56,11 +56,17 @@ token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 printf '%s\n' "$token" > "$ROOT/data/core/setup-token"
 chown 10001:10001 "$ROOT/data/core/setup-token"
 chmod 0600 "$ROOT/data/core/setup-token"
-printf 'AFTERGRID_BIND=%s\nAFTERGRID_PORT=%s\n' "$BIND" "$PORT" > "$ROOT/.env"
+printf 'AFTERGRID_BIND=%s\nAFTERGRID_PORT=%s\nAFTERGRID_ORIGIN=http://%s:%s\nAFTERGRID_SECURE_COOKIE=false\n' "$BIND" "$PORT" "$BIND" "$PORT" > "$ROOT/.env"
 cd "$ROOT"
 echo "[3/4] Building and starting core only"
-docker compose config -q
-docker compose up -d --build --wait --wait-timeout 120
+export AFTERGRID_BIND="$BIND" AFTERGRID_PORT="$PORT" AFTERGRID_ORIGIN="http://$BIND:$PORT" AFTERGRID_SECURE_COOKIE=false
+compose=(docker compose --project-name aftergrid-core --file "$ROOT/compose.yaml" --env-file "$ROOT/.env")
+"${compose[@]}" config -q
+if ! "${compose[@]}" up -d --build --wait --wait-timeout 120; then
+  echo "Core start failed. Inspect: sudo docker compose --project-name aftergrid-core --file $ROOT/compose.yaml --env-file $ROOT/.env logs" >&2
+  echo "Setup token remains in $ROOT/data/core/setup-token (root-readable)." >&2
+  exit 1
+fi
 echo "[4/4] Core is healthy"
 echo "Open http://$BIND:$PORT"
 if [[ $BIND == 127.0.0.1 ]]; then
