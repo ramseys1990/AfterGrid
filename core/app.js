@@ -95,7 +95,26 @@ async function renderModules(){
           }catch(e){if(status?.admin&&card.isConnected)info.textContent=e.message;}
           finally{check.disabled=false;}
         });
-        versions.append(summary,check,info);card.append(versions);
+        const registry=document.createElement("button");registry.type="button";registry.textContent="Check configured registry image (internet)";
+        const registryInfo=document.createElement("div");
+        registry.addEventListener("click",async()=>{
+          if(!confirm("Contact the image registry for this reviewed reference? No image layers will be downloaded or containers changed."))return;
+          registry.disabled=true;registryInfo.textContent="Reading registry metadata…";
+          try{
+            const result=await api("/api/admin/modules/"+mod.id+"/registry-check",{});
+            if(!status?.admin||!card.isConnected)return;
+            registryInfo.replaceChildren();
+            for(const value of [result.comparison,"Configured reference: "+result.configured_image,
+              "Docker platform: "+(result.platform||"unknown"),"Remote image config digest: "+(result.registry_config_digest||"unknown"),
+              "Checked: "+new Date(result.checked_at*1000).toLocaleString(),
+              result.digest_pinned?"Digest-pinned reference: a newer release requires a reviewed configuration change.":"Checks the configured tag only, not newer upstream release tags.",
+              result.detail||"Different digests do not prove a newer or compatible release."]){
+              const p=document.createElement("p");p.textContent=value;registryInfo.append(p);
+            }
+          }catch(e){if(status?.admin&&card.isConnected)registryInfo.textContent=e.message;}
+          finally{registry.disabled=false;}
+        });
+        versions.append(summary,check,info,registry,registryInfo);card.append(versions);
         if(mod.shared && mod.lan_url){
           const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+(mod.id==="tak"?" TLS; enroll with the trusted CA.":" HTTP is unencrypted.");card.append(note);
         }else if(mod.share_available){

@@ -26,6 +26,7 @@ LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
 LAN_DOMAIN = os.environ.get("AFTERGRID_LAN_DOMAIN", "")
 MAX_LOG = 24000
 SECRET_LOCK = threading.Lock()
+REGISTRY_LOCK = threading.Lock()
 
 def catalog():
     result = {}
@@ -303,6 +304,76 @@ def version_report(ident):
         history=[dict(r) for r in conn.execute("SELECT id,state,stage,created FROM jobs WHERE module=? AND action='update' ORDER BY id DESC LIMIT 10",(ident,))]
     return {"module":ident,"services":result,"registry_checked":False,"manual_update_supported":ident!="routing","history":history}
 
+def registry_config_digest(target, platform, read):
+    """Resolve a reviewed reference to one image config, never a layer pull."""
+    digest_pattern=r"sha256:[a-f0-9]{64}"
+    def manifest(ref):
+        raw=read(["docker","buildx","imagetools","inspect","--raw",ref])
+        if len(raw)>2_000_000:
+            raise ValueError("Oversized registry manifest")
+        value=json.loads(raw)
+        if not isinstance(value,dict) or value.get("schemaVersion")!=2:
+            raise ValueError("Unsupported registry manifest")
+        return value
+    value=manifest(target)
+    selected=None
+    if "manifests" in value:
+        if not isinstance(value["manifests"],list) or len(value["manifests"])>1000:
+            raise ValueError("Unsupported registry index")
+        os_name,arch=platform.split("/")
+        candidates={entry["digest"] for entry in value["manifests"]
+                    if isinstance(entry,dict) and isinstance(entry.get("platform"),dict)
+                    and entry["platform"].get("os")==os_name
+                    and entry["platform"].get("architecture")==arch
+                    and isinstance(entry.get("digest"),str) and re.fullmatch(digest_pattern,entry["digest"])}
+        if len(candidates)!=1:
+            raise ValueError("Registry platform is missing or ambiguous")
+        selected=candidates.pop()
+        # Remove the tag/digest, retaining any registry hostname and port.
+        repository=target.split("@",1)[0]
+        if ":" in repository.rsplit("/",1)[-1]:
+            repository=repository.rsplit(":",1)[0]
+        value=manifest(repository+"@"+selected)
+    config=value.get("config")
+    if not isinstance(config,dict) or not isinstance(config.get("digest"),str) or not re.fullmatch(digest_pattern,config["digest"]):
+        raise ValueError("Registry image config digest unavailable")
+    if config.get("mediaType") not in ("application/vnd.oci.image.config.v1+json","application/vnd.docker.container.image.v1+json"):
+        raise ValueError("Registry manifest is not a runnable image")
+    return config["digest"],selected
+
+def registry_report(ident):
+    if not REGISTRY_LOCK.acquire(blocking=False):
+        raise RuntimeError("Another registry check is running; try again later")
+    try:
+        local=version_report(ident)
+        if len(local["services"])!=1:
+            raise RuntimeError("Registry check currently supports single-service modules")
+        service=local["services"][0]
+        target=service["configured_image"]
+        result={"module":ident,"configured_image":target,"digest_pinned":"@" in target,
+                "checked_at":int(time.time()),"registry_config_digest":None,
+                "platform_manifest_digest":None,"platform":None,
+                "installed_image_ids":service["installed_image_ids"],"comparison":"unavailable"}
+        env=compose_env(ident)
+        def read(argv):
+            return subprocess.run(argv,env=env,capture_output=True,text=True,timeout=6,check=True).stdout.strip()
+        try:
+            platform=read(["docker","version","--format","{{.Server.Os}}/{{.Server.Arch}}"])
+            if not re.fullmatch(r"[a-z0-9]+/[a-z0-9_]+",platform):
+                raise ValueError("Unsupported Docker platform")
+            result["platform"]=platform
+            digest,selected=registry_config_digest(target,platform,read)
+            result["registry_config_digest"]=digest
+            result["platform_manifest_digest"]=selected
+            installed=result["installed_image_ids"]
+            result["comparison"]=("not installed" if not installed else "matches configured registry image" if installed==[digest]
+                                  else "differs from configured registry image")
+        except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
+            result["detail"]="Registry metadata unavailable, unsupported or ambiguous; no update conclusion"
+        return result
+    finally:
+        REGISTRY_LOCK.release()
+
 def ready(ident):
     url = catalog()[ident].get("readiness_url")
     if not url:
@@ -456,13 +527,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_json(404, {"detail": "Unknown endpoint"})
 
     def do_POST(self):
-        if self.path not in {"/jobs", "/jobs/batch"}:
+        if self.path not in {"/jobs", "/jobs/batch", "/registry-check"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
+            if self.path == "/registry-check":
+                if not isinstance(body,dict) or set(body)!={"module"} or not isinstance(body["module"],str) or body["module"] not in catalog():
+                    raise ValueError("Unsupported module")
+                try:return self.send_json(200,registry_report(body["module"]))
+                except RuntimeError as exc:return self.send_json(503,{"detail":str(exc)})
             if self.path == "/jobs/batch":
                 if not isinstance(body,dict) or set(body) != {"token","modules"}:
                     raise ValueError("Invalid batch")

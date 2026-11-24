@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1-dev
+- Add explicit administrator-only online registry metadata checks through native Docker Buildx, using reviewed image references and platform-aware config digest comparison.
+- No layer downloads, automatic checks, new tag selection or claims of latest upstream release. Unknown registry/platform states are explicit.
+- Add registry parsing, authorization, offline failure and disposable live metadata smoke tests; CI pending.
+
 ## 0.8.0-dev
 - Add administrator-only reviewed image reference, installed image IDs, local target comparison and recent update history via fixed Docker reads.
 - Require explicit backup acknowledgment for manual updates at API and worker boundaries; running supported modules only, routing upgrade deferred.

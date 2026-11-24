@@ -13,8 +13,8 @@ class UnixConnection(http.client.HTTPConnection):
         self.sock.settimeout(self.timeout)
         self.sock.connect(os.environ.get("AFTERGRID_WORKER_SOCKET", "/run/aftergrid/worker.sock"))
 
-def call(path, payload=None):
-    conn = UnixConnection("localhost", timeout=20)
+def call(path, payload=None, timeout=20):
+    conn = UnixConnection("localhost", timeout=timeout)
     try:
         conn.request("GET" if payload is None else "POST", path,
                      body=None if payload is None else json.dumps(payload),

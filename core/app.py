@@ -133,7 +133,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.0-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.1-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -415,7 +415,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.8.0-dev"}
+                "version": "0.8.1-dev"}
 
     @api.get("/api/preparedness")
     def preparedness():
@@ -779,6 +779,20 @@ def create_app(data_dir=None):
             raise HTTPException(503,"Module manager unavailable")
         if code!=200:
             raise HTTPException(code if code in (404,503) else 502,"Local module version information unavailable")
+        return result
+
+    @api.post("/api/admin/modules/{ident}/registry-check")
+    def module_registry_check(ident: str,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}",ident):
+            raise HTTPException(400,"Unsupported module")
+        try:
+            code,result=call("/registry-check",{"module":ident},timeout=45)
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=200:
+            raise HTTPException(code if code in (400,503) else 502,result.get("detail","Registry check unavailable"))
         return result
 
     class ModuleActionOptions(BaseModel):

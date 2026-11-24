@@ -160,3 +160,52 @@ def test_local_version_report_and_update_gate(tmp_path,monkeypatch):
     monkeypatch.setattr(worker,"run",lambda *args:pytest.fail("Stopped module must not be updated"))
     worker.execute(worker.jobs()[0])
     assert worker.jobs()[0]["state"]=="failed"
+
+
+def test_registry_manifest_platform_and_digest_selection():
+    import json
+    import pytest
+    manifest="sha256:"+"a"*64
+    config="sha256:"+"b"*64
+    other="sha256:"+"c"*64
+    target="registry.example:5000/team/app:1.2"
+    child={"schemaVersion":2,"config":{"digest":config,"mediaType":"application/vnd.oci.image.config.v1+json"}}
+    index={"schemaVersion":2,"manifests":[{"digest":manifest,"platform":{"os":"linux","architecture":"amd64"}},
+          {"digest":other,"platform":{"os":"linux","architecture":"arm64"}},
+          {"digest":other,"platform":{"os":"unknown","architecture":"unknown"}}]}
+    calls=[]
+    def read(argv):
+        assert argv[:5]==["docker","buildx","imagetools","inspect","--raw"]
+        calls.append(argv[-1])
+        return json.dumps(index if argv[-1]==target else child)
+    assert worker.registry_config_digest(target,"linux/amd64",read)==(config,manifest)
+    assert calls==[target,"registry.example:5000/team/app@"+manifest]
+    with pytest.raises(ValueError):worker.registry_config_digest(target,"linux/386",read)
+    index["manifests"].append({"digest":other,"platform":{"os":"linux","architecture":"amd64"}})
+    with pytest.raises(ValueError):worker.registry_config_digest(target,"linux/amd64",read)
+    assert worker.registry_config_digest(target,"linux/amd64",lambda argv:json.dumps(child))==(config,None)
+
+def test_registry_comparison_read_only_and_failure(monkeypatch,tmp_path):
+    import json
+    import subprocess
+    from pathlib import Path
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    digest="sha256:"+"a"*64
+    pinned="example/app:1.0@sha256:"+"b"*64
+    monkeypatch.setattr(worker,"version_report",lambda ident:{"services":[{"configured_image":pinned,"installed_image_ids":[digest]}]})
+    def run(argv,**kwargs):
+        if argv[1]=="version":return SimpleNamespace(stdout="linux/amd64")
+        assert argv[:5]==["docker","buildx","imagetools","inspect","--raw"]
+        return SimpleNamespace(stdout=json.dumps({"schemaVersion":2,"config":{"digest":digest,"mediaType":"application/vnd.docker.container.image.v1+json"}}))
+    monkeypatch.setattr(worker.subprocess,"run",run)
+    result=worker.registry_report("kiwix")
+    assert result["digest_pinned"] and result["comparison"]=="matches configured registry image"
+    assert worker.jobs()==[]
+    def offline(argv,**kwargs):raise subprocess.TimeoutExpired(argv,6)
+    monkeypatch.setattr(worker.subprocess,"run",offline)
+    result=worker.registry_report("kiwix")
+    assert result["comparison"]=="unavailable" and result["registry_config_digest"] is None
+    assert worker.jobs()==[]

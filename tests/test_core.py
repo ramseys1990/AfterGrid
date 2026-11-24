@@ -211,3 +211,20 @@ def test_version_access_and_manual_update_confirmation(tmp_path,monkeypatch):
         assert c.post("/api/admin/modules/routing/update",json={"backup_confirmed":True},headers=ORIGIN).status_code==409
         assert c.post(path+"update",json={"backup_confirmed":True},headers=ORIGIN).status_code==202
         assert calls==[("/versions/kiwix",None),("/jobs",{"module":"kiwix","action":"update","backup_confirmed":True})]
+
+
+def test_registry_check_requires_admin_and_same_origin(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake(path,payload=None,timeout=20):
+        calls.append((path,payload,timeout))
+        return 200,{"comparison":"unavailable"}
+    monkeypatch.setattr(core_app,"call",fake)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/modules/kiwix/registry-check"
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.post(path,json={},headers=ORIGIN).status_code==401
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        assert c.post(path,json={}).status_code==403
+        assert c.post(path,json={},headers=ORIGIN).json()=={"comparison":"unavailable"}
+        assert calls==[("/registry-check",{"module":"kiwix"},45)]

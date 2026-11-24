@@ -13,7 +13,7 @@ client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.coo
 def api(path, payload=None):
     data = None if payload is None else json.dumps(payload).encode()
     req = urllib.request.Request(BASE + path, data=data, headers={"Origin": BASE, "Content-Type": "application/json"})
-    with client.open(req, timeout=30) as res:
+    with client.open(req, timeout=60 if path.endswith("/registry-check") else 30) as res:
         return json.load(res)
 
 def module(ident="kiwix"):
@@ -58,6 +58,14 @@ assert module()["status"]=="running"
 versions=api("/api/admin/modules/kiwix/versions")
 assert versions["registry_checked"] is False and versions["services"][0]["comparison"]=="matches local target",versions
 assert versions["services"][0]["installed_image_ids"]
+registry=api("/api/admin/modules/kiwix/registry-check",{})
+assert registry["digest_pinned"] and registry["installed_image_ids"]==versions["services"][0]["installed_image_ids"],registry
+assert registry["comparison"] in ("matches configured registry image","unavailable"),registry
+if registry["comparison"]=="unavailable":
+    print("Live registry metadata check unavailable; no match claimed.",registry,flush=True)
+else:
+    print("Live configured registry digest matched installed Kiwix.",flush=True)
+assert api("/api/admin/modules/kiwix/versions")["services"][0]["installed_image_ids"]==registry["installed_image_ids"]
 with urllib.request.urlopen("http://127.0.0.1:8081/",timeout=10) as response:
     assert response.status==200
 # Exercise native indexing and real reader catalog reload with a local fixture.
