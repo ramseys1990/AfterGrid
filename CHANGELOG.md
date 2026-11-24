@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.11-dev
+- Add standalone offline recovery preparation tool for restored core and worker exports; reconstruct private databases and generated secret files into a new directory without touching Docker or live data.
+- Add refusal and recovery fixture tests and explicit clean-machine recovery prerequisites. CI pending.
+
 ## 0.8.10-dev
 - Verify isolated worker-state restores against an exact captured envelope digest, job markers, SQLite integrity and reviewed secret sets; reject queued/running jobs in the copy.
 - Add admin-only control and disposable original-secret comparison without exposing values. CI pending; no live recovery application.
