@@ -583,3 +583,44 @@ def test_content_snapshot_and_native_verification(tmp_path,monkeypatch):
     assert worker.jobs()[0]["state"]=="succeeded"
     assert "No files restored" in worker.jobs()[0]["log"]
     with pytest.raises(ValueError):worker.enqueue("grocy","content-snapshot")
+
+
+def test_recovery_inventory_exact_snapshot_evidence(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    old=worker.enqueue("grocy","snapshot")
+    worker.log(old,"Native snapshot reported complete: "+"a"*32+"; restore not verified.")
+    worker.change(old,state="succeeded")
+    v=worker.enqueue("grocy","verify-snapshot")
+    worker.log(v,"Snapshot "+"a"*32+" restored; SQLite integrity passed.")
+    worker.change(v,state="succeeded")
+    newer=worker.enqueue("grocy","snapshot")
+    worker.log(newer,"Native snapshot reported complete: "+"b"*32+"; restore not verified.")
+    worker.change(newer,state="succeeded")
+    c=worker.enqueue("kopia","worker-snapshot")
+    worker.log(c,"Worker state export snapshot: "+"c"*32+"; 2 secret sets; restore not verified.")
+    worker.log(c,"Worker recovery envelope SHA-256: "+"d"*64)
+    worker.change(c,state="succeeded")
+    record={x["key"]:x for x in worker.recovery_manifest_records()}
+    assert record["application/grocy"]["snapshot_id"]=="b"*32
+    assert record["application/grocy"]["verification"]=="not recorded"
+    assert record["worker"]["envelope_sha256"]=="d"*64
+    assert record["content/maps"]["snapshot_id"] is None
+    with pytest.raises(RuntimeError):worker.load_recovery_manifest()
+    monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected"})
+    def native(source,sid):
+        if sid=="b"*32:return "root",{"totalSize":123,"fileCount":2}
+        raise RuntimeError("fixture missing")
+    monkeypatch.setattr(worker,"read_snapshot_manifest",native)
+    job=worker.enqueue("kopia","recovery-manifest")
+    worker.execute(worker.jobs()[0])
+    value=worker.load_recovery_manifest()
+    assert value["manifest_job"]==job and value["atomic"] is False and value["complete_system_recovery"] is False
+    record={x["key"]:x for x in value["records"]}
+    assert record["application/grocy"]["repository_status"]=="present"
+    assert record["worker"]["repository_status"]=="unavailable"
+    assert record["content/maps"]["repository_status"]=="no managed snapshot"
+    assert (tmp_path/"recovery-manifest.json").stat().st_mode&0o777==0o600
+    with pytest.raises(ValueError):worker.enqueue("grocy","recovery-manifest")

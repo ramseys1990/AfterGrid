@@ -257,6 +257,29 @@ $("backup-worker-verify").addEventListener("click",async()=>{
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{button.disabled=false;}
 });
+$("backup-manifest-generate").addEventListener("click",async()=>{
+  if(!confirm("Check the exact latest successful managed snapshots in connected Kopia. No backups are created or pinned. Independent capture points do not constitute an atomic recovery set. Continue?"))return;
+  const button=$("backup-manifest-generate"),root=$("backup-core-result");
+  button.disabled=true;
+  try{
+    await api("/api/admin/backups/recovery-manifest",{confirmed:true});
+    if(status?.admin){root.textContent="Recovery inventory queued. See installation activity; download after success.";await renderJobs();}
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
+$("backup-manifest-download").addEventListener("click",async()=>{
+  const button=$("backup-manifest-download"),root=$("backup-core-result");
+  button.disabled=true;
+  try{
+    const result=await api("/api/admin/backups/recovery-manifest");
+    if(!status?.admin)return;
+    const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:"application/json"}));
+    const link=document.createElement("a");link.href=url;link.download="aftergrid-recovery-inventory-"+result.manifest_job+".json";link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    root.textContent="Inventory from job "+result.manifest_job+": "+result.records.filter(x=>x.repository_status==="present").length+" of "+result.records.length+" reviewed sources present at generation. Keep it off-server; not a complete recovery package.";
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
 $("backup-core-check").addEventListener("click",async()=>{
   const button=$("backup-core-check"),root=$("backup-core-result");
   button.disabled=true;root.textContent="Reading core backup requirements…";

@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.8.13-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.8.14-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -114,3 +114,5 @@ See [recovery preparation](docs/RECOVERY.md) for the standalone offline tool tha
 Additional managed backup sources: MeshMonitor, MicroTAK, Kolibri and Jellyfin configuration. Native data-specific isolated verification is under CI validation; large content and media are separate recovery work.
 
 Offline content snapshots use native Kopia deduplication and full-file read verification without creating a second on-disk content collection. Full recovery remains pending.
+
+Download an administrator recovery inventory listing exact snapshot IDs, recorded verification and repository presence; this is not a complete recovery package.

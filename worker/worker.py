@@ -25,7 +25,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot", "worker-verify-snapshot", "content-snapshot", "content-verify"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot", "worker-verify-snapshot", "content-snapshot", "content-verify", "recovery-manifest"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -175,7 +175,7 @@ def enqueue(ident, action, backup_confirmed=False):
         raise ValueError("Unsupported content snapshot source")
     if action in ("snapshot","verify-snapshot") and ident not in SNAPSHOT_SOURCES:
         raise ValueError("Application snapshot not yet supported")
-    if action in ("initialize-repository","core-snapshot","core-verify-snapshot","worker-snapshot","worker-verify-snapshot") and ident!="kopia":
+    if action in ("initialize-repository","core-snapshot","core-verify-snapshot","worker-snapshot","worker-verify-snapshot","recovery-manifest") and ident!="kopia":
         raise ValueError("Kopia-only action")
     if action == "update" and (backup_confirmed is not True or ident == "routing"):
         raise ValueError("Update requires backup confirmation and a supported module")
@@ -497,6 +497,85 @@ def verify_content(job,ident):
         raise RuntimeError("Native content verification failed or incomplete; inspect Kopia") from None
     log(job,"\nContent snapshot "+snapshot_id+" verified: "+str(result["readFileCount"])+" files read; zero reported errors. No files restored.\n")
     change(job,completed=2,state="succeeded",stage="Native content read verification passed; restore not tested")
+
+def recovery_sources():
+    sources=[
+        ("core","kopia","core-snapshot","core-verify-snapshot",CORE_SNAPSHOT_SOURCE,r"Core database export snapshot: ([a-f0-9]{32,64});","isolated"),
+        ("worker","kopia","worker-snapshot","worker-verify-snapshot",WORKER_EXPORT_SOURCE,r"Worker state export snapshot: ([a-f0-9]{32,64});","isolated"),
+    ]
+    sources.extend(("application/"+ident,ident,"snapshot","verify-snapshot",source,r"Native snapshot reported complete: ([a-f0-9]{32,64});","isolated") for ident,source in sorted(SNAPSHOT_SOURCES.items()))
+    sources.extend(("content/"+ident,ident,"content-snapshot","content-verify",source,r"Native content snapshot: ([a-f0-9]{32,64});","read-only") for ident,source in sorted(CONTENT_SOURCES.items()))
+    return sources
+
+def recovery_manifest_records():
+    records=[]
+    with db() as conn:
+        for key,module,action,verify,source,pattern,kind in recovery_sources():
+            record={"key":key,"module":module,"source":source,"snapshot_id":None,"snapshot_job":None,
+                    "captured_at":None,"verification":"not recorded","verification_job":None,
+                    "repository_status":"not checked","bytes":None,"file_count":None}
+            row=conn.execute("SELECT id,log,created FROM jobs WHERE module=? AND action=? AND state='succeeded' ORDER BY id DESC LIMIT 1",(module,action)).fetchone()
+            if row:
+                match=re.search(pattern,row["log"])
+                if match:
+                    sid=match.group(1)
+                    record.update(snapshot_id=sid,snapshot_job=row["id"],captured_at=row["created"])
+                    if key=="worker":
+                        digest=re.search(r"Worker recovery envelope SHA-256: ([a-f0-9]{64})",row["log"])
+                        record["envelope_sha256"]=digest.group(1) if digest else None
+                    # Require successful verification of this exact snapshot, never a newer failed job.
+                    phrase=("Content snapshot "+sid+" verified:" if kind=="read-only" else "Snapshot "+sid+" restored;")
+                    v=conn.execute("SELECT id,log FROM jobs WHERE module=? AND action=? AND state='succeeded' AND id>? AND instr(log,?)>0 ORDER BY id DESC LIMIT 1",(module,verify,row["id"],phrase)).fetchone()
+                    if v:record.update(verification=kind,verification_job=v["id"])
+            records.append(record)
+    return records
+
+def recovery_manifest(job):
+    change(job,state="running",total=3,completed=0,stage="Collect recorded recovery snapshots")
+    if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
+    records=recovery_manifest_records()
+    change(job,completed=1,stage="Check exact native snapshot manifests")
+    for item in records:
+        if item["snapshot_id"]:
+            try:
+                _,stats=read_snapshot_manifest(item["source"],item["snapshot_id"])
+                item.update(repository_status="present",bytes=stats["totalSize"],file_count=stats["fileCount"])
+            except RuntimeError:
+                item["repository_status"]="unavailable"
+        else:item["repository_status"]="no managed snapshot"
+    # Presence is not a new read verification. No secret values, arbitrary paths or logs are exported.
+    result={"format":1,"manifest_job":job,"created":int(time.time()),"atomic":False,
+            "complete_system_recovery":False,"records":records,
+            "missing_artifacts":["download bookkeeping and regional job metadata","host environment and exact release",
+                                 "Docker image archive","replacement installation and disconnected acceptance"],
+            "guidance":"Independent capture points; retain exact snapshot IDs, worker envelope digest, repository and password separately. Missing snapshots can represent uninstalled apps. No automatic retention pinning."}
+    change(job,completed=2,stage="Save private recovery inventory")
+    target=STATE/"recovery-manifest.json"
+    fd,tmp=tempfile.mkstemp(prefix=".recovery-manifest-",dir=STATE)
+    try:
+        with os.fdopen(fd,"w") as stream:
+            json.dump(result,stream,indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp,target)
+    finally:Path(tmp).unlink(missing_ok=True)
+    log(job,"\nRecovery inventory saved: "+str(sum(x["repository_status"]=="present" for x in records))+" of "+str(len(records))+" reviewed sources present. Not an atomic backup or recovery package.\n")
+    change(job,completed=3,state="succeeded",stage="Recovery inventory generated")
+
+def load_recovery_manifest():
+    try:
+        path=STATE/"recovery-manifest.json"
+        if not stat.S_ISREG(path.lstat().st_mode) or path.stat().st_size>65536:
+            raise ValueError("Invalid recovery inventory")
+        value=json.loads(path.read_text())
+        if value.get("format")!=1 or type(value.get("manifest_job")) is not int:
+            raise ValueError("Invalid recovery inventory")
+        with db() as conn:
+            row=conn.execute("SELECT 1 FROM jobs WHERE id=? AND module='kopia' AND action='recovery-manifest' AND state='succeeded'",(value["manifest_job"],)).fetchone()
+        if not row:raise ValueError("Inventory generation not confirmed")
+        return value
+    except (OSError,ValueError,TypeError,sqlite3.Error):
+        raise RuntimeError("No confirmed recovery inventory; generate one first") from None
 
 def core_container():
     try:
@@ -1053,6 +1132,10 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="recovery-manifest":
+            if ident!="kopia":raise ValueError("Kopia-only action")
+            recovery_manifest(job)
+            return
         if action=="content-snapshot":
             content_snapshot(job,ident)
             return
@@ -1162,6 +1245,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json(200, [public_module(i,m) for i,m in catalog().items()])
         if self.path == "/jobs":
             return self.send_json(200, jobs())
+        if self.path=="/recovery-manifest":
+            try:return self.send_json(200,load_recovery_manifest())
+            except RuntimeError:return self.send_json(404,{"detail":"No confirmed recovery inventory; generate one first"})
         if self.path=="/kopia/status":
             return self.send_json(200,kopia_status())
         if self.path.startswith("/backup-plan/"):

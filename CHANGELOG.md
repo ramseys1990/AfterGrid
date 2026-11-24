@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.14-dev
+- Add native recovery inventory generation and administrator-only JSON download, with exact snapshot IDs, original job evidence, native manifest presence, file counts and sizes, and worker envelope digest.
+- Explicitly distinguish independent capture points, missing sources and read verification from a complete recovery package. CI pending.
+
 ## 0.8.13-dev
 - Add managed native snapshots and full-file read verification for Kiwix, maps, routing and Jellyfin media without a second content copy.
 - Guard portal content admission during snapshots; refuse queued/active download operations and require external writers to be stopped.

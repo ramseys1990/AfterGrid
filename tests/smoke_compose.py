@@ -582,6 +582,15 @@ target=re.search(r"Isolated restore directory: (/restore/aftergrid-notes-[0-9]+-
 fixture=Path("restore")/target.removeprefix("/restore/")/"data/data/pages/emergency/fixture.txt"
 assert b"Local emergency checklist." in subprocess.check_output(["sudo","cat",str(fixture)])
 assert module("notes")["status"]=="running"
+manifest_job=api("/api/admin/backups/recovery-manifest",{"confirmed":True})["id"]
+wait_job(manifest_job,"recovery inventory")
+manifest=api("/api/admin/backups/recovery-manifest")
+assert manifest["manifest_job"]==manifest_job and not manifest["atomic"] and not manifest["complete_system_recovery"]
+records={x["key"]:x for x in manifest["records"]}
+assert len(records)==13 and all(x["repository_status"]=="present" for x in records.values())
+assert records["worker"]["envelope_sha256"] and records["worker"]["verification"]=="isolated"
+assert records["application/notes"]["verification"]=="isolated" and records["content/maps"]["verification"]=="read-only"
+print("Native recovery inventory and exact snapshot verification evidence passed.",flush=True)
 action("uninstall","kopia")
 assert module("kopia")["status"]=="not installed" and Path("data/kopia").is_dir()
 print("DokuWiki managed snapshot, isolated restore and private fixture comparison passed.",flush=True)

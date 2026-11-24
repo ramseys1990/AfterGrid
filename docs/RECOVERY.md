@@ -35,3 +35,7 @@ All prepared data and native restores contain sensitive plaintext. Keep access r
 - Perform complete recovery while disconnected, including Docker image import and installer acceptance.
 
 Do not use this tool as evidence that the entire server can be rebuilt. It validates and reconstructs only the primary core and worker exports into an isolated staging directory.
+
+## Recovery inventory
+
+Generate and download the administrator recovery inventory after all intended snapshots and verification jobs finish. It lists the exact snapshot IDs, source jobs and worker envelope digest for the preparation command above, plus explicit missing sources. Preserve it off-server together with the repository password and independent repository copy. Do not infer that an uninstalled or missing source is safe to omit without reviewing the original application selection. The report does not pin snapshots or establish a coordinated system capture.

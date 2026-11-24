@@ -135,7 +135,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.13-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.14-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -858,6 +858,31 @@ def create_app(data_dir=None):
             raise HTTPException(503,"Module manager unavailable")
         if code!=202:
             raise HTTPException(code if code in (400,409) else 502,result.get("detail","Worker restore verification unavailable"))
+        return result
+
+    @api.post("/api/admin/backups/recovery-manifest",status_code=202)
+    def generate_recovery_manifest(payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:
+            raise HTTPException(409,"Confirm native repository inventory check")
+        try:
+            code,result=call("/jobs",{"module":"kopia","action":"recovery-manifest"})
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=202:
+            raise HTTPException(code if code in (400,409) else 502,result.get("detail","Recovery inventory unavailable"))
+        return result
+
+    @api.get("/api/admin/backups/recovery-manifest")
+    def get_recovery_manifest(request: Request):
+        require_admin(request)
+        try:
+            code,result=call("/recovery-manifest")
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=200:
+            raise HTTPException(code if code==404 else 502,"No confirmed recovery inventory; generate one first")
         return result
 
     @api.get("/api/admin/backups/core")
