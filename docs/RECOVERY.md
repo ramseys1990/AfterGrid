@@ -286,5 +286,12 @@ fixture read-only, imports the real archive, restores core/worker/Kiwix,
 checks original login and reader data, opts into a writable Kopia working
 copy, verifies a new snapshot, and checks the package again. The fixture
 contains disposable credentials and is deleted on the runner, never uploaded.
-This new disconnected gate is pending execution. It covers a representative
-module set, not every optional application or physical LAN/Proxmox behavior.
+The disconnected gate **passed** on commit `d5d2572` in [Core checks run 45513492158](https://github.com/ramseys1990/AfterGrid/actions/runs/45513492158), as did the guided native recovery, recovered-core startup, Docker archive fixture and regression steps. The overall workflow's final lifecycle smoke was still running when this evidence was recorded. This is representative core/worker/Kopia/Kiwix acceptance, not every optional application or physical LAN/Proxmox behavior.
+
+### Recovery acceptance disposition
+
+- Automated representative recovery acceptance: passed. Native source capture, seal, package, original container restart, actual image archive import on an empty network-isolated replacement daemon, original login and household, Kiwix bytes and reader, native read-only repository reconnect, restricted offline activation, writable working-copy backup and unchanged package all passed in run 45513492158.
+- Earlier full maintenance workflow: passed in [run 45509589268](https://github.com/ramseys1990/AfterGrid/actions/runs/45509589268). The intermediate failing test run 45512499540 was a missing Docker inventory fixture mock, corrected in 9c83dd1; later regression steps passed.
+- Remaining acceptance: final full lifecycle result on the tested commit, broader application-specific native restore drills, and a physical clean installation/replacement on the intended Proxmox or bare Linux host with LAN clients and offline prerequisites.
+- Explicitly excluded: MicroTAK data recovery. No claim of all-application or simultaneous atomic recovery, no release of maintenance without native readiness inspection, and no claim of production deployment.
+- Next engineering milestone after recovery closeout: native Kopia scheduling and retention, preserving reviewed consistency boundaries and the original portable recovery package.
