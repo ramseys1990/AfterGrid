@@ -617,6 +617,8 @@ def recovery_manifest_records():
                     phrase=("Content snapshot "+sid+" verified:" if kind=="read-only" else "Snapshot "+sid+" restored;")
                     v=conn.execute("SELECT id,log FROM jobs WHERE module=? AND action=? AND state='succeeded' AND id>? AND instr(log,?)>0 ORDER BY id DESC LIMIT 1",(module,verify,row["id"],phrase)).fetchone()
                     if v:record.update(verification=kind,verification_job=v["id"])
+            if key=="application/tak":
+                record["recovery_blocked_reason"]="MicroTAK 0.18.1 application-consistent capture and native restore not accepted"
             records.append(record)
     return records
 
@@ -1072,7 +1074,7 @@ BACKUP_GUIDANCE={
     "maps":"Finish regional downloads and file changes before snapshotting map content.",
     "routing":"Finish downloads, graph builds, switches and archives; stop routing before snapshotting the complete routing directory.",
     "meshmonitor":"Stop MeshMonitor before snapshotting data; preserve its worker-generated credentials and session secret.",
-    "tak":"Stop MicroTAK before capturing database, backups and CA/private-key material; protect the encrypted repository.",
+    "tak":"Recovery unsupported: MicroTAK 0.18.1 has no confirmed clean shutdown or native consistent restore. Preserve CA/private-key material securely; managed snapshot is diagnostic only and refuses nonzero exit.",
     "kolibri":"Stop Kolibri and finish imports before capturing facility databases and learning content.",
     "media":"Stop Jellyfin before snapshotting configuration; finish media imports; cache is regenerable.",
     "notes":"Stop DokuWiki or prevent all edits before snapshotting documents, ACLs and accounts.",
