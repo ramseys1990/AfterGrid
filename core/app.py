@@ -133,7 +133,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.8-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.9-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -824,13 +824,28 @@ def create_app(data_dir=None):
             raise HTTPException(code if code in (400,409) else 502,result.get("detail","Core restore verification unavailable"))
         return result
 
+    @api.post("/api/admin/backups/worker/snapshot",status_code=202)
+    def worker_snapshot(payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:
+            raise HTTPException(409,"Confirm encrypted repository and off-server recovery password")
+        try:
+            code,result=call("/jobs",{"module":"kopia","action":"worker-snapshot"})
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=202:
+            raise HTTPException(code if code in (400,409) else 502,result.get("detail","Worker snapshot unavailable"))
+        return result
+
     @api.get("/api/admin/backups/core")
     def core_backup_plan(request: Request):
         require_admin(request)
         return {"coverage":"planned only","snapshot_verified":False,
                 "sources":[{"path":"/source/data/core/recovery-export","guidance":"Managed online SQLite export of core.sqlite3; sessions removed from copy. Other core state is not included."},
+                           {"path":"/tmp/aftergrid-worker-export","guidance":"Managed private worker database and reviewed generated-secret export; restore not yet verified."},
                            {"path":"/source/modules","guidance":"Reviewed module definitions, not the complete core release."}],
-                "missing":["Download bookkeeping, regional job records and rebuildable place indexes","Worker state volume (jobs, sharing settings and generated secrets)","Core release and host .env configuration","Exact Docker images and recovery metadata"],
+                "missing":["Download bookkeeping, regional job records and rebuildable place indexes","Worker state restoration and exact secret recovery","Core release and host .env configuration","Exact Docker images and recovery metadata"],
                 "repository_guidance":"Configure Kopia natively. Keep the repository password and an independent repository copy off the server."}
 
     @api.post("/api/admin/modules/{ident}/snapshot",status_code=202)

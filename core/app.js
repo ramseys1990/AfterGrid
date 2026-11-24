@@ -225,6 +225,16 @@ $("backup-core-verify").addEventListener("click",async()=>{
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{button.disabled=false;}
 });
+$("backup-worker-snapshot").addEventListener("click",async()=>{
+  if(!confirm("Back up the worker database and existing generated application credentials to connected encrypted Kopia. Confirm you have saved the repository password securely off-server and no native backup administration is active. Unfinished jobs are marked interrupted in the copy only. This is not a verified recovery yet. Continue?"))return;
+  const button=$("backup-worker-snapshot"),root=$("backup-core-result");
+  button.disabled=true;
+  try{
+    await api("/api/admin/backups/worker/snapshot",{confirmed:true});
+    if(status?.admin){root.textContent="Worker state snapshot queued. See installation activity.";await renderJobs();}
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
 $("backup-core-check").addEventListener("click",async()=>{
   const button=$("backup-core-check"),root=$("backup-core-result");
   button.disabled=true;root.textContent="Reading core backup requirements…";

@@ -151,6 +151,13 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         restored_db=Path("restore")/core_target.removeprefix("/restore/")/"data/core.sqlite3"
         subprocess.run(["sudo","python3","-c","import sqlite3,sys,pathlib; c=sqlite3.connect(pathlib.Path(sys.argv[1]).resolve().as_uri()+\"?mode=ro&immutable=1\",uri=True); assert c.execute(\"SELECT username,server_name FROM admin\").fetchone()==(\"admin\",\"CI\"); assert c.execute(\"SELECT COUNT(*) FROM sessions\").fetchone()==(0,)",str(restored_db)],check=True)
         print("Isolated core database restore, expected administrator and absent sessions passed.",flush=True)
+        worker_snapshot=api("/api/admin/backups/worker/snapshot",{"confirmed":True})["id"]
+        wait_job(worker_snapshot,"private worker state snapshot")
+        worker_record=next(j for j in api("/api/admin/jobs") if j["id"]==worker_snapshot)
+        assert "Worker state export snapshot:" in worker_record["log"] and "2 secret sets" in worker_record["log"]
+        assert subprocess.run(["docker","exec","aftergrid-kopia-kopia-1","test","!","-e","/tmp/aftergrid-worker-export"]).returncode==0
+        assert api("/api/admin/status")
+        print("Private worker state and generated secret snapshot, staging cleanup passed.",flush=True)
         action("install","grocy")
         snapshot_job=api("/api/admin/modules/grocy/snapshot",{"confirmed":True})["id"]
         wait_job(snapshot_job,"quiesced Grocy snapshot")

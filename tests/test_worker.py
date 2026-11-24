@@ -467,3 +467,50 @@ def test_core_restore_selects_only_successful_core_snapshot(tmp_path,monkeypatch
     monkeypatch.setattr(worker,"verify_snapshot",lambda job,ident:observed.append((job,ident)))
     worker.execute(worker.jobs()[0])
     assert observed==[(verify,"core")]
+
+
+def test_worker_recovery_export_preserves_secrets_and_disables_pending_jobs(tmp_path,monkeypatch):
+    import base64,json,sqlite3
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    kopia=worker.module_secrets("kopia",create=True)
+    homebox=worker.module_secrets("homebox",create=True)
+    j=worker.enqueue("kopia","worker-snapshot")
+    worker.change(j,state="running")
+    pending=worker.enqueue("grocy","install")
+    payload,count=worker.worker_recovery_payload(j)
+    value=json.loads(payload)
+    assert count==2 and value["job"]==j and value["format"]==1
+    assert value["secrets"]=={"kopia":kopia,"homebox":homebox}
+    restored=tmp_path/"restored.db"
+    restored.write_bytes(base64.b64decode(value["jobs_sqlite3"],validate=True))
+    with sqlite3.connect(restored) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()==("ok",)
+        assert conn.execute("SELECT state FROM jobs ORDER BY id").fetchall()==[("interrupted",),("interrupted",)]
+    assert {row["id"]:row["state"] for row in worker.jobs()}=={j:"running",pending:"queued"}
+    (tmp_path/"secrets"/"unknown.json").write_text("{}")
+    with pytest.raises(RuntimeError):worker.worker_recovery_payload(j)
+
+def test_worker_snapshot_uses_private_stdin_and_cleans_on_failure(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    with pytest.raises(ValueError):worker.enqueue("grocy","worker-snapshot")
+    monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected"})
+    monkeypatch.setattr(worker,"worker_recovery_payload",lambda job:(b"fixture-private-bytes",1))
+    monkeypatch.setattr(worker,"compose_env",lambda ident:{})
+    calls=[]
+    monkeypatch.setattr(worker.subprocess,"run",lambda argv,**kwargs:calls.append((argv,kwargs)))
+    def failure(source):
+        assert source==worker.WORKER_EXPORT_SOURCE
+        raise RuntimeError("fixture failure")
+    monkeypatch.setattr(worker,"native_snapshot_source",failure)
+    worker.enqueue("kopia","worker-snapshot")
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed"
+    assert len(calls)==2 and calls[0][1]["input"]==b"fixture-private-bytes" and calls[1][1]["input"] is None
+    assert all("fixture-private-bytes" not in arg for argv,_ in calls for arg in argv)
+    assert "fixture-private-bytes" not in worker.jobs()[0]["log"]

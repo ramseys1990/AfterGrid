@@ -75,3 +75,5 @@ Preparedness: shared LAN landing-page indicators for indexed knowledge, local ma
 0.8.7: implement private online core SQLite export and native Kopia snapshot; clear active sessions in copy, check integrity, remove owned staging. CI pending. Core database restore verification and worker-state recovery next. Homebox/DokuWiki expanded CI still running at start of this slice.
 
 0.8.8: previous expanded application backups and online core export passed CI 45485912415 / 45486710318. Add isolated core snapshot restoration with exact job marker, schema, administrator and absent session checks. CI pending. Next: worker-state consistent recovery export and verification, including generated secrets.
+
+0.8.9: worker state and generated secret consistent export and encrypted Kopia snapshot implemented, no pending job replay, no new mounts, private staging cleanup; CI pending. Core isolated restoration workflow still running at start. Next verify worker export restoration and then expand remaining app coverage.

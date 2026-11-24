@@ -9,6 +9,7 @@ import re
 import secrets
 import socketserver
 import sqlite3
+import stat
 import subprocess
 import threading
 import time
@@ -22,7 +23,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -170,7 +171,7 @@ def enqueue(ident, action, backup_confirmed=False):
         raise ValueError("Unsupported module or action")
     if action in ("snapshot","verify-snapshot") and ident not in SNAPSHOT_SOURCES:
         raise ValueError("Application snapshot not yet supported")
-    if action in ("initialize-repository","core-snapshot","core-verify-snapshot") and ident!="kopia":
+    if action in ("initialize-repository","core-snapshot","core-verify-snapshot","worker-snapshot") and ident!="kopia":
         raise ValueError("Kopia-only action")
     if action == "update" and (backup_confirmed is not True or ident == "routing"):
         raise ValueError("Update requires backup confirmation and a supported module")
@@ -470,6 +471,82 @@ def core_snapshot(job):
         change(job,stage="Remove private core export")
         export("clear")
     change(job,completed=3,state="succeeded",stage="Core database snapshot complete; restore not verified")
+
+WORKER_EXPORT_SOURCE="/tmp/aftergrid-worker-export"
+WORKER_DB_LIMIT=32*1024*1024
+WORKER_EXPORT_LIMIT=48*1024*1024
+
+def worker_recovery_payload(job):
+    """Export a consistent private copy; never modify the live worker database."""
+    try:
+        if type(job) is not int or not 0<job<10**19:raise ValueError("Invalid export job")
+        reviewed={ident:set(m.get("generated_secrets",[])) for ident,m in catalog().items() if m.get("generated_secrets")}
+        recovered={}
+        directory=STATE/"secrets"
+        with SECRET_LOCK:
+            if directory.exists() or directory.is_symlink():
+                if not stat.S_ISDIR(directory.lstat().st_mode):raise ValueError("Invalid secret directory")
+                for path in directory.iterdir():
+                    ident=path.stem
+                    info=path.lstat()
+                    if path.suffix!=".json" or ident not in reviewed or not stat.S_ISREG(info.st_mode) or info.st_mode&0o077 or not 0<info.st_size<=16384:
+                        raise ValueError("Unexpected worker secret file")
+                    value=json.loads(path.read_text())
+                    if not isinstance(value,dict) or set(value)!=reviewed[ident] or not all(isinstance(v,str) and re.fullmatch(r"[a-f0-9]{64}",v) for v in value.values()):
+                        raise ValueError("Invalid reviewed secret values")
+                    recovered[ident]=value
+            if "kopia" not in recovered:raise ValueError("Kopia recovery secrets missing")
+            source=STATE/"jobs.sqlite3"
+            if not stat.S_ISREG(source.lstat().st_mode):raise ValueError("Worker database unavailable")
+            with tempfile.TemporaryDirectory(prefix="aftergrid-worker-export-") as tmp:
+                target=Path(tmp)/"jobs.sqlite3"
+                deadline=time.monotonic()+25
+                with db() as src:
+                    page_size=src.execute("PRAGMA page_size").fetchone()[0]
+                    if src.execute("PRAGMA page_count").fetchone()[0]*page_size>WORKER_DB_LIMIT:raise ValueError("Worker database exceeds export limit")
+                    dst=sqlite3.connect(target)
+                    try:
+                        def progress(status,remaining,total):
+                            if time.monotonic()>deadline or total*page_size>WORKER_DB_LIMIT:raise ValueError("Worker export limit exceeded")
+                        src.backup(dst,pages=128,progress=progress,sleep=0.05)
+                        dst.execute("PRAGMA journal_mode=DELETE")
+                        dst.execute("UPDATE jobs SET state='interrupted',stage='Restored unfinished job; inspect and retry manually' WHERE state IN ('queued','running')")
+                        dst.commit()
+                        dst.set_progress_handler(lambda: int(time.monotonic()>deadline),10000)
+                        if dst.execute("PRAGMA integrity_check").fetchmany(2)!=[("ok",)]:raise ValueError("Worker export integrity check failed")
+                        if not {"jobs","sharing","batches"}<={r[0] for r in dst.execute("SELECT name FROM sqlite_master WHERE type='table'")}:raise ValueError("Worker export schema missing")
+                    finally:dst.close()
+                if target.stat().st_size>WORKER_DB_LIMIT:raise ValueError("Worker database exceeds export limit")
+                payload=json.dumps({"format":1,"job":job,"jobs_sqlite3":base64.b64encode(target.read_bytes()).decode("ascii"),
+                                    "secrets":recovered},separators=(",",":")).encode("utf-8")
+        if not 0<len(payload)<=WORKER_EXPORT_LIMIT:raise ValueError("Worker export exceeds limit")
+        return payload,len(recovered)
+    except (OSError,ValueError,TypeError,sqlite3.Error):
+        raise RuntimeError("Private worker export failed; inspect worker state and reviewed secret files") from None
+
+def worker_snapshot(job):
+    change(job,state="running",total=3,completed=0,stage="Check repository and export worker state")
+    if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
+    payload,count=worker_recovery_payload(job)
+    env=compose_env("kopia")
+    def stage(script,stdin=None):
+        try:
+            subprocess.run(command("kopia","exec","-T","kopia","/bin/sh","-c",script,"worker-export",WORKER_EXPORT_SOURCE,str(job)),
+                           env=env,input=stdin,capture_output=True,timeout=45,check=True)
+        except (OSError,subprocess.SubprocessError):
+            raise RuntimeError("Private worker staging operation failed; inspect existing staging before retrying") from None
+    change(job,completed=1,stage="Stage private worker recovery export")
+    # Pass secrets only through stdin, never argv, environment, HTTP or logs.
+    stage('test -d /tmp && test ! -L /tmp && umask 077 && mkdir "$1" && printf "%s" "$2" > "$1/job-id" && cat > "$1/worker-recovery.json" && test -s "$1/worker-recovery.json"',payload)
+    del payload
+    try:
+        change(job,completed=2,stage="Create native encrypted worker snapshot")
+        snapshot_id=native_snapshot_source(WORKER_EXPORT_SOURCE)
+        log(job,"\nWorker state export snapshot: "+snapshot_id+"; "+str(count)+" secret sets; restore not verified.\n")
+    finally:
+        change(job,stage="Remove private worker export")
+        stage('test -d "$1" && test ! -L "$1" && test -f "$1/job-id" && test ! -L "$1/job-id" && test "$(cat "$1/job-id")" = "$2" && test -f "$1/worker-recovery.json" && test ! -L "$1/worker-recovery.json" && test "$(find "$1" -mindepth 1 -maxdepth 1 | wc -l)" -eq 2 && rm "$1/worker-recovery.json" "$1/job-id" && rmdir "$1"')
+    change(job,completed=3,state="succeeded",stage="Worker state snapshot complete; restore not verified")
 
 CORE_SNAPSHOT_SOURCE="/source/data/core/recovery-export"
 CORE_TABLES={"admin","sessions","first_run","households","inventory_locations",
@@ -835,6 +912,10 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="worker-snapshot":
+            if ident!="kopia":raise ValueError("Kopia-only action")
+            worker_snapshot(job)
+            return
         if action=="core-verify-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
             verify_snapshot(job,"core")

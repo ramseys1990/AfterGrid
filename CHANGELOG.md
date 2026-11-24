@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.9-dev
+- Add private worker database and reviewed generated-secret export into native encrypted Kopia snapshots, without mounting worker state into Kopia.
+- Mark unfinished jobs interrupted in the exported copy, bound size and time, transfer via stdin and clean owned staging.
+- Add admin confirmation, unit/API tests and disposable snapshot test. Worker restore verification and full recovery remain pending.
+
 ## 0.8.8-dev
 - Add isolated restoration and verification of the latest successful core database snapshot, including exact export job marker, integrity, schema, administrator and absent session records.
 - Confirm prior Homebox/DokuWiki backup and core export CI passed. Add native disposable core restoration test; new CI pending.
