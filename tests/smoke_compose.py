@@ -402,3 +402,55 @@ assert module("media")["status"]=="not installed"
 assert fixture.is_file()
 assert subprocess.run(["sudo","test","-f","data/media/config/config/system.xml"]).returncode==0 or subprocess.run(["sudo","test","-f","data/media/config/system.xml"]).returncode==0
 print("Jellyfin native setup, library, authentication, read-only media, sharing and lifecycle passed.")
+
+# Native DokuWiki installer and edit flow, using disposable credentials.
+from playwright.sync_api import sync_playwright, expect
+action("install","notes")
+assert module("notes")["status"]=="running"
+notes_base="http://127.0.0.1:8097"
+def notes_binding(host):
+    inspect=json.loads(subprocess.check_output(["docker","inspect","aftergrid-notes-notes-1"],text=True))[0]
+    assert any(p["HostIp"]==host for p in inspect["NetworkSettings"]["Ports"]["8080/tcp"])
+notes_binding("127.0.0.1")
+with sync_playwright() as p:
+    browser=p.chromium.launch(headless=True)
+    context=browser.new_context(service_workers="block")
+    context.route("**/*",lambda route: route.continue_() if route.request.url.startswith(notes_base+"/") else route.abort())
+    page=context.new_page()
+    page.goto(notes_base+"/install.php")
+    for field,value in {"title":"AfterGrid CI","superuser":"ciadmin","fullname":"CI Administrator","email":"ci@example.invalid","password":"disposable-wiki-test-password","confirm":"disposable-wiki-test-password"}.items():
+        page.locator("#"+field).fill(value)
+    page.locator("#acl").check()
+    page.locator("#policy").select_option("2")
+    page.locator("#allowreg").uncheck()
+    page.locator("#pop").uncheck()
+    page.locator("button[name=submit]").click()
+    page.goto(notes_base+"/doku.php?id=emergency:fixture&do=login")
+    page.locator("input[name=u]").fill("ciadmin")
+    page.locator("input[name=p]").fill("disposable-wiki-test-password")
+    page.locator("form#dw__login button[type=submit], form#dw__login input[type=submit]").first.click()
+    page.goto(notes_base+"/doku.php?id=emergency:fixture&do=edit")
+    page.locator("textarea[name=wikitext]").fill("====== AfterGrid private fixture ======\n\nLocal emergency checklist.")
+    page.locator("#edbtn__save").click()
+    expect(page.locator("body")).to_contain_text("Local emergency checklist.")
+    guest=browser.new_context(service_workers="block")
+    guest.route("**/*",lambda route: route.continue_() if route.request.url.startswith(notes_base+"/") else route.abort())
+    public=guest.new_page()
+    public.goto(notes_base+"/doku.php?id=emergency:fixture")
+    expect(public.locator("body")).not_to_contain_text("Local emergency checklist.")
+    guest.close()
+    browser.close()
+assert subprocess.run(["sudo","test","-f","data/notes/conf/users.auth.php"]).returncode==0
+action("share","notes")
+assert module("notes")["shared"]
+notes_binding("192.168.254.253")
+action("unshare","notes")
+notes_binding("127.0.0.1")
+action("stop","notes")
+assert module("notes")["status"]=="stopped"
+action("start","notes")
+assert module("notes")["status"]=="running"
+action("uninstall","notes")
+assert module("notes")["status"]=="not installed"
+assert b"Local emergency checklist." in subprocess.check_output(["sudo","cat","data/notes/data/pages/emergency/fixture.txt"])
+print("DokuWiki native setup, private page, LAN sharing and data preservation passed.")

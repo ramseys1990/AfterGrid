@@ -1,0 +1,13 @@
+{
+  "id": "notes",
+  "name": "DokuWiki documents and notes",
+  "category": "Preparedness",
+  "description": "Local wiki for emergency procedures, shared notes, checklists and document attachments.",
+  "port": 8097,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-notes:8080/health.php",
+  "upstream": "https://www.dokuwiki.org/",
+  "loopback_only": true,
+  "lan_shareable": true,
+  "setup_note": "Open /install.php on the local app URL. Enable ACLs, choose Closed Wiki, create a strong administrator password and disable self-registration and popularity reporting. Create local users and review page and media permissions before sharing on LAN."
+}

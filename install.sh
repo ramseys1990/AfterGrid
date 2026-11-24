@@ -70,6 +70,7 @@ install -d -m 0755 -o 10001 -g 10001 "$ROOT/content/maps"
 install -d -m 0755 -o 10001 -g 10001 "$ROOT/content/routing"
 install -d -m 0700 -o 10001 -g 10001 "$ROOT/data/media/config" "$ROOT/data/media/cache"
 install -d -m 0755 -o 10001 -g 10001 "$ROOT/content/media"
+install -d -m 0700 -o 10001 -g 10001 "$ROOT/data/notes"
 install -m 0644 -o 10001 -g 10001 "$ROOT/modules/kiwix/library.xml" "$ROOT/content/kiwix/library.xml"
 token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 printf '%s\n' "$token" > "$ROOT/data/core/setup-token"

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2-dev
+- Add optional DokuWiki 2026-07-14c for local notes, revision history and emergency document attachments, with native ACL setup and persistent storage.
+- Add disposable native setup, page editing, guest access denial, LAN sharing and lifecycle tests; CI pending.
+- Jellyfin native setup, authentication, read-only media and lifecycle CI passed. Physical playback and disconnected acceptance remain outstanding.
+
 ## 0.7.1-dev
 - Optional Jellyfin 12.4 media library with native local setup, accounts and LAN sharing; original videos/audio mounted read-only, persistent configuration/cache.
 - Native setup, library, authentication, mount and lifecycle smoke tests added. Playback and disconnected media acceptance pending.
