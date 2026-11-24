@@ -18,7 +18,7 @@ from pathlib import Path
 
 IMAGE_ID=re.compile(r"sha256:[a-f0-9]{64}")
 MODULES={"grocy","homebox","kiwix","kolibri","kopia","maps","media","meshmonitor","notes","routing","tak"}
-TOP_FILES={"compose.yaml","install.sh","README.md","CHANGELOG.md","LICENSE","AGENTS.md","recovery_prepare.py","recovery_assets.py","recovery_install.py"}
+TOP_FILES={"compose.yaml","install.sh","README.md","CHANGELOG.md","LICENSE","AGENTS.md","recovery_prepare.py","recovery_assets.py","recovery_install.py","recovery_data.py"}
 SOURCE_DIRS={"core","worker","modules","docs"}
 SOURCE_SUFFIXES={".py",".js",".css",".html",".txt",".md",".yaml",".json",".sh",".xml"}
 FILE_LIMIT=16*1024*1024

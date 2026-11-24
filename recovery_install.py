@@ -36,6 +36,11 @@ def copy_release(verified,root):
             target.mkdir(mode=0o700,parents=True,exist_ok=True)
         else:
             assets.copy_file(path,target)
+    # The private root protects the release on the host. Native applications
+    # mount specific reviewed module files and may run as UID 10001.
+    for path in (root/"modules").rglob("*"):
+        path.chmod(0o755 if path.is_dir() or path.stat().st_mode&0o111 else 0o644)
+    (root/"modules").chmod(0o755)
     # Preserve original host settings privately but never activate old addresses.
     (root/".env").rename(root/"recovery-original.env")
     preparation.private_write(root/".env",(

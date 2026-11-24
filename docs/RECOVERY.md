@@ -88,3 +88,16 @@ sudo python3 recovery_install.py start-core \
 Staging reconstructs validated databases, reviewed secrets and available metadata, assigns core UID/GID 10001, binds private recovered worker state, and preserves original host settings in recovery-original.env. Initial recovered access is loopback-only on port 8080; use a trusted SSH tunnel. LAN configuration must be reviewed before re-enabling it. Core startup refuses existing containers and AfterGrid networks/volumes, checks exact imported IDs, uses --no-build --pull never, waits for health and checks running IDs. No application data is restored or optional services started. Empty content folders and the initial Kiwix library are placeholders only; do not mistake them for original data. Do not start optional modules from the portal before their data and offline image mappings are restored. A failed start can leave containers; inspect rather than retry blindly. This is a development core-only recovery path; native clean-host startup acceptance is pending, as is recovery package coordination and full application restoration.
 
 Core-only recovery now requires captured core and worker images advertising recovery write-guard support (0.8.19 onward). Both services receive AFTERGRID_RECOVERY_CORE_ONLY=1; login/logout remain available, other portal writes and worker POST/queued execution are disabled. The mode is deliberately not normal operation. A separate disposable hosted CI step exercises actual core export, worker export, asset capture, new root, no-build/no-pull startup, original account and household, session exclusion, and recovered worker secrets/sharing. It uses existing locally built exact IDs to avoid deleting unrelated runner images; native Docker archive import is tested separately. This is not a network-disconnected or full application recovery test. CI pending.
+
+
+## Restore optional application data before core startup
+
+After importing images and staging the replacement root, but BEFORE starting any containers, run the matching recovery utility once for each captured module:
+
+```sh
+sudo python3 recovery_data.py --root /opt/aftergrid \
+  --assets /secure/aftergrid-assets --repository /secure/kopia-repository \
+  --inventory /secure/recovery-inventory.json --module kiwix --confirm-replacement
+```
+
+Supported sources are Grocy, Homebox, MeshMonitor, MicroTAK, Kolibri, notes, Kiwix, maps, routing and Jellyfin (both configuration and media). A verified inventory entry and matching captured image are required; MicroTAK remains blocked until its consistent snapshot passes. The downloaded inventory must match staged core/worker job IDs and worker digest. A locally imported Kopia container runs with no network and read-only repository mount, connects read-only using the recovered password, locates the exact native manifest by ID and source, checks completeness and restores into a new private directory on the replacement filesystem. Restored ownership is retained; symlinks and special files are refused. Only known empty placeholders are replaced. A per-module receipt records snapshot IDs and inventory checksum. Re-run only after inspecting any failed partial restoration. Kopia repository connection and optional app startup are separate. This workflow does not claim atomic multi-source capture or application startup acceptance. CI pending.

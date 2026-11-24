@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.20-dev
+- Restore exact verified application and offline-content snapshots into a staged replacement root using a network-isolated native Kopia helper and read-only repository.
+- Preserve native ownership, refuse non-placeholder destinations and unsafe restored file types, record per-module restoration receipts. CI pending; optional startup not included.
+
 ## 0.8.19-dev
 - Add independent disposable recovered-core startup acceptance before application smoke, with original login, household, session exclusion, exact worker credentials/sharing, and no-pull startup checks.
 - Guard core-only recovery against portal and worker mutation requests; require compatible captured core image labels before starting. Fix stale portal version string. CI pending.
