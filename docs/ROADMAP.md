@@ -69,3 +69,5 @@ Preparedness: shared LAN landing-page indicators for indexed knowledge, local ma
 0.8.5: isolated Grocy restore verification and SQLite integrity/schema checks implemented; CI pending. Registry checks and backup source plans passed CI. Repository initialization reached connected status in CI but obsolete host marker assertion failed; replace with restart/reconnection and subsequent native snapshot/restore. Next: resolve any native lifecycle failures before expanding backup coverage.
 
 0.8.5.1: correct native snapshot JSON compatibility (verbose statistics) and fail-closed diagnostics. CI 45481862223 passed unit/build checks, repository restart/reconnect and Grocy stop/restart, but failed snapshot confirmation. New CI pending. Do not expand coverage or enable unattended updates until the full Grocy workflow passes.
+
+0.8.6: Grocy managed snapshot and isolated restore validated by CI 45482855682. Expand managed snapshots to Homebox and DokuWiki, with isolated SQLite or configuration/page checks and native disposable smoke coverage. Expanded CI pending. Worker secrets and core consistency remain next.

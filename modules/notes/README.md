@@ -14,3 +14,5 @@ Use native wiki pages, namespaces, revision history, search and media manager fo
 Kopia should back up data/notes, including config and attachments, with the app quiesced for a consistent snapshot. Cache can be regenerated. Stop/uninstall retains the entire directory. Native setup, access control, editing, LAN bindings and persistence smoke coverage is included; full backup restoration and physical disconnected operation remain pending.
 
 Upstream: https://github.com/dokuwiki/docker
+
+Managed snapshots and isolated configuration/ACL/account/page checks are available from the portal. No live files are replaced. Expanded CI pending.

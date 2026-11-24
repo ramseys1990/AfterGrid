@@ -350,7 +350,7 @@ def initialize_repository(job):
     change(job,completed=3,state="succeeded",stage="Repository connected; snapshots not verified")
 
 # Initial reviewed application with one persistent data directory.
-SNAPSHOT_SOURCES={"grocy":"/source/data/grocy"}
+SNAPSHOT_SOURCES={"grocy":"/source/data/grocy","homebox":"/source/data/homebox","notes":"/source/data/notes"}
 
 def cleanly_stopped(ident):
     try:
@@ -465,7 +465,7 @@ def restore_manifest(ident,snapshot_id):
     except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
         raise RuntimeError("Managed snapshot missing, invalid or exceeds isolated restore limit") from None
 
-def check_restored_grocy(data):
+def check_restored_database(data,required_tables):
     if not isinstance(data,bytes) or not 0<len(data)<=64*1024*1024 or not data.startswith(b"SQLite format 3\x00"):
         raise RuntimeError("Restored database missing, invalid or exceeds verification limit")
     try:
@@ -479,21 +479,27 @@ def check_restored_grocy(data):
                 conn.set_progress_handler(lambda: int(time.monotonic()>deadline),10000)
                 if conn.execute("PRAGMA integrity_check").fetchmany(2)!=[("ok",)]:
                     raise RuntimeError("Restored database integrity check failed")
-                tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('products','users')")}
-                if tables!={"products","users"}:
-                    raise RuntimeError("Expected Grocy schema missing")
+                tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if not required_tables<=tables:
+                    raise RuntimeError("Expected application schema missing")
             finally:conn.close()
     except (OSError,sqlite3.Error):
         raise RuntimeError("Restored database integrity check unavailable") from None
 
+def check_restored_grocy(data):
+    check_restored_database(data,{"products","users"})
+
+def check_restored_homebox(data):
+    check_restored_database(data,{"groups","users","attachments"})
+
 def verify_snapshot(job,ident):
-    if ident!="grocy":raise ValueError("Unsupported restore verification")
+    if ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported restore verification")
     change(job,state="running",total=4,completed=0,stage="Locate latest managed snapshot")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
     snapshot_id=latest_managed_snapshot(ident)
     root=restore_manifest(ident,snapshot_id)
     # Each verification gets a new private directory, never a live data mount.
-    target="/restore/aftergrid-grocy-"+str(job)+"-"+secrets.token_hex(8)
+    target="/restore/aftergrid-"+ident+"-"+str(job)+"-"+secrets.token_hex(8)
     env=compose_env("kopia")
     def execute(*args,timeout=20):
         return subprocess.run(command("kopia","exec","-T","kopia",*args),env=env,
@@ -505,16 +511,30 @@ def verify_snapshot(job,ident):
         change(job,completed=2,stage="Restore managed snapshot into isolated storage")
         execute("timeout","--kill-after=10s","300s","/bin/kopia","restore","--no-overwrite-files",
                 "--no-overwrite-symlinks","--no-ignore-permission-errors",root,target+"/data",timeout=330)
-        change(job,completed=3,stage="Verify restored Grocy SQLite database")
-        # Reject symlink traversal, active journals and oversized databases.
-        data=execute("/bin/sh","-c",
-            'p="$1/data/data"; f="$p/grocy.db"; test -d "$1" && test ! -L "$1" && test -d "$1/data" && test ! -L "$1/data" && test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && test ! -e "$f-wal" && test ! -L "$f-wal" && test ! -e "$f-journal" && test ! -L "$f-journal" && size=$(stat -c %s "$f") && test "$size" -le 67108864 && cat "$f"',
-            "check-database",target,timeout=30)
-        check_restored_grocy(data)
+        change(job,completed=3,stage="Verify restored application data")
+        if ident=="notes":
+            # Verify native setup/ACL files and at least one regular page without
+            # evaluating PHP, logging account data or following symlink directories.
+            execute("/bin/sh","-c",
+                'p="$1/data"; test -d "$p" && test ! -L "$p" && for d in conf data data/pages; do test -d "$p/$d" && test ! -L "$p/$d" || exit 1; done && for f in local.php users.auth.php acl.auth.php; do test -f "$p/conf/$f" && test ! -L "$p/conf/$f" && test -s "$p/conf/$f" || exit 1; done && page=$(find "$p/data/pages" -type f -name "*.txt" -print -quit) && test -n "$page"',
+                "check-wiki",target)
+            result="DokuWiki configuration, ACL/account files and page presence passed"
+        else:
+            # Fixed database paths; refuse symlinks, active journals and oversize files.
+            folder="data/data" if ident=="grocy" else "data"
+            filename="grocy.db" if ident=="grocy" else "homebox.db"
+            data=execute("/bin/sh","-c",
+                'p="$1/$2"; f="$p/$3"; test -d "$1" && test ! -L "$1" && test -d "$1/data" && test ! -L "$1/data" && test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && test ! -e "$f-wal" && test ! -L "$f-wal" && test ! -e "$f-journal" && test ! -L "$f-journal" && size=$(stat -c %s "$f") && test "$size" -le 67108864 && cat "$f"',
+                "check-database",target,folder,filename,timeout=30)
+            if ident=="grocy":check_restored_grocy(data)
+            else:check_restored_homebox(data)
+            result="SQLite integrity and expected schema passed"
     except (OSError,subprocess.SubprocessError,ValueError):
-        raise RuntimeError("Isolated restore or database read failed; inspect private restore directory") from None
-    log(job,"\nSnapshot "+snapshot_id+" restored; SQLite integrity and expected schema passed. Native application startup not tested.\n")
-    change(job,completed=4,state="succeeded",stage="Isolated restore and SQLite check passed")
+        raise RuntimeError("Isolated restore or application data check failed; inspect private restore directory") from None
+    log(job,"\nSnapshot "+snapshot_id+" restored; "+result+". Native application startup not tested.\n")
+    if ident=="homebox":log(job,"Homebox worker API-key pepper is outside this snapshot; exact recovery not verified.\n")
+    change(job,completed=4,state="succeeded",stage="Isolated restore and application data check passed")
+
 
 def backup_sources(config, root):
     """Classify normalized Compose mounts; no host directory traversal."""
@@ -579,7 +599,7 @@ def backup_plan(ident):
         sources=[{**source,"role":"excluded from self-backup","kopia_path":None} for source in sources]
     return {"module":ident,"sources":sources,"guidance":BACKUP_GUIDANCE.get(ident,"Establish an application-consistent backup procedure before scheduling."),
             "worker_secrets_required":bool(manifest.get("generated_secrets")),
-            "coverage":"planned only","snapshot_verified":False}
+            "coverage":"planned only","snapshot_verified":False,"managed_snapshot_supported":ident in SNAPSHOT_SOURCES}
 
 def version_report(ident):
     """Local Docker evidence only: no registry lookup, secrets or environment returned."""

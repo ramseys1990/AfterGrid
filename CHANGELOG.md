@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.6-dev
+- Expand the validated Grocy maintenance-stop snapshot pattern to Homebox and DokuWiki.
+- Verify isolated Homebox SQLite integrity/schema and DokuWiki configuration, ACL/account files and page presence; compare restored private wiki fixture in disposable CI.
+- Keep worker-secret recovery separate and automatic updates disabled. Expanded CI pending.
+
 ## 0.8.5.1-dev
 - Request native Kopia verbose snapshot JSON so required statistics are available, and share strict validation between creation and restore lookup.
 - Distinguish missing statistics, command errors, invalid JSON and nonzero error/exclusion counters without exposing native output.

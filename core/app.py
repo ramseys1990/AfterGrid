@@ -133,7 +133,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.5.1-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.6-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -415,7 +415,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.8.5.1-dev"}
+                "version": "0.8.6-dev"}
 
     @api.get("/api/preparedness")
     def preparedness():
@@ -809,7 +809,7 @@ def create_app(data_dir=None):
     def module_snapshot(ident: str,payload: RepositoryConfirmation,request: Request):
         require_admin(request)
         same_origin(request)
-        if ident!="grocy":
+        if ident not in {"grocy","homebox","notes"}:
             raise HTTPException(400,"Application snapshot not yet supported")
         if not payload.confirmed:
             raise HTTPException(409,"Confirm temporary service interruption and exclusive administration")
@@ -825,7 +825,7 @@ def create_app(data_dir=None):
     def module_verify_snapshot(ident: str,payload: RepositoryConfirmation,request: Request):
         require_admin(request)
         same_origin(request)
-        if ident!="grocy":
+        if ident not in {"grocy","homebox","notes"}:
             raise HTTPException(400,"Application restore verification not yet supported")
         if not payload.confirmed:
             raise HTTPException(409,"Confirm isolated restore and storage requirements")

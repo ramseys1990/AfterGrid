@@ -92,23 +92,23 @@ async function renderModules(){
           finally{backupButton.disabled=false;}
         });
         backup.append(backupTitle,backupButton,backupInfo);
-        if(mod.id==="grocy"&&["running","stopped"].includes(mod.status)){
+        if(["grocy","homebox","notes"].includes(mod.id)&&["running","stopped"].includes(mod.status)){
           const snapshot=document.createElement("button");snapshot.type="button";snapshot.textContent="Create consistent snapshot";
           snapshot.disabled=pending.has(mod.id);
           snapshot.addEventListener("click",async()=>{
-            if(!confirm("Temporarily stop Grocy if running, create a Kopia snapshot, then restore its prior state. Confirm Kopia is connected, no other backups or native administration are active and no one is editing application files. This does not verify a restore. Continue?"))return;
+            if(!confirm("Temporarily stop "+mod.name+" if running, create a Kopia snapshot, then restore its prior state. Confirm Kopia is connected, no other backups or native administration are active and no one is editing application files. This does not verify a restore or separate worker secrets. Continue?"))return;
             snapshot.disabled=true;
             try{await api("/api/admin/modules/"+mod.id+"/snapshot",{confirmed:true});await renderJobs();await renderModules();}
             catch(e){error(e.message);snapshot.disabled=false;}
           });backup.append(snapshot);
         }
-        if(mod.id==="grocy"){
+        if(["grocy","homebox","notes"].includes(mod.id)){
           const verify=document.createElement("button");verify.type="button";verify.textContent="Verify latest managed snapshot";
           verify.disabled=pending.has(mod.id);
           verify.addEventListener("click",async()=>{
-            if(!confirm("Restore the latest successful managed Grocy snapshot into a NEW private directory under /restore, then check its SQLite database. Live files are not replaced. Confirm space is available and no native backup administration is active. Restored files remain on disk for review. Continue?"))return;
+            if(!confirm("Restore the latest successful managed "+mod.name+" snapshot into a NEW private directory under /restore, then check application data. Live files are not replaced. Confirm space is available and no native backup administration is active. Restored files remain on disk for review. Continue?"))return;
             verify.disabled=true;
-            try{await api("/api/admin/modules/grocy/verify-snapshot",{confirmed:true});await renderJobs();await renderModules();}
+            try{await api("/api/admin/modules/"+mod.id+"/verify-snapshot",{confirmed:true});await renderJobs();await renderModules();}
             catch(e){error(e.message);verify.disabled=false;}
           });backup.append(verify);
         }

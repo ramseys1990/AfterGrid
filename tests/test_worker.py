@@ -288,7 +288,7 @@ def test_snapshot_quiesces_and_restores_running_application(tmp_path,monkeypatch
     monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
     monkeypatch.setattr(worker,"STATE",tmp_path)
     worker.init()
-    with pytest.raises(ValueError):worker.enqueue("homebox","snapshot")
+    with pytest.raises(ValueError):worker.enqueue("routing","snapshot")
     commands=[]
     monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected"})
     monkeypatch.setattr(worker,"state",lambda ident:"running")
@@ -372,7 +372,7 @@ def test_restore_uses_latest_successful_managed_snapshot(tmp_path,monkeypatch):
     newer=worker.enqueue("grocy","snapshot")
     worker.change(newer,state="failed")
     assert worker.latest_managed_snapshot("grocy")=="a"*32
-    with pytest.raises(ValueError):worker.enqueue("homebox","verify-snapshot")
+    with pytest.raises(ValueError):worker.enqueue("routing","verify-snapshot")
     with pytest.raises(RuntimeError):worker.latest_managed_snapshot("homebox")
 
 
@@ -392,3 +392,15 @@ def test_restore_manifest_requires_verbose_and_exact_id(monkeypatch):
     with pytest.raises(RuntimeError):worker.restore_manifest("grocy","c"*32)
     manifest["stats"]["ignoredErrorCount"]=1
     with pytest.raises(RuntimeError,match="ignoredErrorCount=1"):worker.restore_manifest("grocy","a"*32)
+
+
+def test_homebox_restore_schema_and_reviewed_sources(tmp_path):
+    import sqlite3
+    assert worker.SNAPSHOT_SOURCES=={"grocy":"/source/data/grocy","homebox":"/source/data/homebox","notes":"/source/data/notes"}
+    path=tmp_path/"homebox.db"
+    with sqlite3.connect(path) as db:
+        for table in ("groups","users","attachments"):
+            db.execute("CREATE TABLE "+table+"(id INTEGER PRIMARY KEY)")
+    worker.check_restored_homebox(path.read_bytes())
+    with sqlite3.connect(path) as db:db.execute("DROP TABLE attachments")
+    with pytest.raises(RuntimeError):worker.check_restored_homebox(path.read_bytes())

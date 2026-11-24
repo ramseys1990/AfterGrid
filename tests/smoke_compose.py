@@ -149,6 +149,17 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         print("Isolated Grocy restore and SQLite integrity passed.",flush=True)
         assert module("grocy")["status"]=="running"
         action("uninstall","grocy")
+        action("install","homebox")
+        homebox_snapshot=api("/api/admin/modules/homebox/snapshot",{"confirmed":True})["id"]
+        wait_job(homebox_snapshot,"quiesced Homebox snapshot")
+        assert module("homebox")["status"]=="running"
+        homebox_restore=api("/api/admin/modules/homebox/verify-snapshot",{"confirmed":True})["id"]
+        wait_job(homebox_restore,"isolated Homebox restore")
+        restored=next(j for j in api("/api/admin/jobs") if j["id"]==homebox_restore)
+        assert "SQLite integrity and expected schema passed" in restored["log"]
+        assert "pepper is outside this snapshot" in restored["log"]
+        action("uninstall","homebox")
+        print("Homebox managed snapshot and isolated database restore passed.",flush=True)
     else:
         with urllib.request.urlopen("http://127.0.0.1:"+str(port)+"/",timeout=10) as response:
             assert response.status==200
@@ -480,6 +491,24 @@ with sync_playwright() as p:
     guest.close()
     browser.close()
 assert subprocess.run(["sudo","test","-f","data/notes/conf/users.auth.php"]).returncode==0
+# Reuse the initialized repository after uninstall/reinstall; do not recreate it.
+action("install","kopia")
+assert api("/api/admin/kopia/status")["connection"]=="connected"
+notes_snapshot=api("/api/admin/modules/notes/snapshot",{"confirmed":True})["id"]
+wait_job(notes_snapshot,"quiesced DokuWiki snapshot")
+assert module("notes")["status"]=="running"
+notes_restore=api("/api/admin/modules/notes/verify-snapshot",{"confirmed":True})["id"]
+wait_job(notes_restore,"isolated DokuWiki restore")
+restored=next(j for j in api("/api/admin/jobs") if j["id"]==notes_restore)
+assert "DokuWiki configuration, ACL/account files and page presence passed" in restored["log"]
+# The disposable test knows the expected document contents, unlike generic validation.
+import re
+target=re.search(r"Isolated restore directory: (/restore/aftergrid-notes-[0-9]+-[a-f0-9]{16})",restored["log"]).group(1)
+fixture=Path("restore")/target.removeprefix("/restore/")/"data/data/pages/emergency/fixture.txt"
+assert b"Local emergency checklist." in subprocess.check_output(["sudo","cat",str(fixture)])
+assert module("notes")["status"]=="running"
+action("uninstall","kopia")
+print("DokuWiki managed snapshot, isolated restore and private fixture comparison passed.",flush=True)
 action("share","notes")
 assert module("notes")["shared"]
 notes_binding("192.168.254.253")

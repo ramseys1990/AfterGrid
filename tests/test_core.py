@@ -283,9 +283,11 @@ def test_snapshot_requires_admin_and_confirmation(tmp_path,monkeypatch):
         assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
         assert c.post(path,json={"confirmed":True}).status_code==403
         assert c.post(path,json={"confirmed":False},headers=ORIGIN).status_code==409
-        assert c.post("/api/admin/modules/homebox/snapshot",json={"confirmed":True},headers=ORIGIN).status_code==400
+        assert c.post("/api/admin/modules/routing/snapshot",json={"confirmed":True},headers=ORIGIN).status_code==400
         assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
-        assert calls==[("/jobs",{"module":"grocy","action":"snapshot"})]
+        for ident in ("homebox","notes"):
+            assert c.post("/api/admin/modules/"+ident+"/snapshot",json={"confirmed":True},headers=ORIGIN).status_code==202
+        assert calls==[("/jobs",{"module":ident,"action":"snapshot"}) for ident in ("grocy","homebox","notes")]
 
 
 def test_restore_verification_requires_admin_and_confirmation(tmp_path,monkeypatch):
@@ -303,4 +305,6 @@ def test_restore_verification_requires_admin_and_confirmation(tmp_path,monkeypat
         assert c.post(path,json={"confirmed":True}).status_code==403
         assert c.post(path,json={"confirmed":False},headers=ORIGIN).status_code==409
         assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
-        assert calls==[("/jobs",{"module":"grocy","action":"verify-snapshot"})]
+        for ident in ("homebox","notes"):
+            assert c.post("/api/admin/modules/"+ident+"/verify-snapshot",json={"confirmed":True},headers=ORIGIN).status_code==202
+        assert calls==[("/jobs",{"module":ident,"action":"verify-snapshot"}) for ident in ("grocy","homebox","notes")]
