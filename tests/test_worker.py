@@ -396,7 +396,7 @@ def test_restore_manifest_requires_verbose_and_exact_id(monkeypatch):
 
 def test_homebox_restore_schema_and_reviewed_sources(tmp_path):
     import sqlite3
-    assert worker.SNAPSHOT_SOURCES=={"grocy":"/source/data/grocy","homebox":"/source/data/homebox","notes":"/source/data/notes"}
+    assert worker.SNAPSHOT_SOURCES=={"grocy":"/source/data/grocy","homebox":"/source/data/homebox","notes":"/source/data/notes","meshmonitor":"/source/data/meshmonitor","tak":"/source/data/tak","kolibri":"/source/data/kolibri","media":"/source/data/media/config"}
     path=tmp_path/"homebox.db"
     with sqlite3.connect(path) as db:
         for table in ("groups","users","attachments"):

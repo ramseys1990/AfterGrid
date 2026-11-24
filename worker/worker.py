@@ -353,7 +353,7 @@ def initialize_repository(job):
     change(job,completed=3,state="succeeded",stage="Repository connected; snapshots not verified")
 
 # Initial reviewed application with one persistent data directory.
-SNAPSHOT_SOURCES={"grocy":"/source/data/grocy","homebox":"/source/data/homebox","notes":"/source/data/notes"}
+SNAPSHOT_SOURCES={"grocy":"/source/data/grocy","homebox":"/source/data/homebox","notes":"/source/data/notes","meshmonitor":"/source/data/meshmonitor","tak":"/source/data/tak","kolibri":"/source/data/kolibri","media":"/source/data/media/config"}
 
 def cleanly_stopped(ident):
     try:
@@ -704,6 +704,18 @@ def verify_snapshot(job,ident):
             count=check_restored_worker(payload,source_job,expected_checksum)
             del payload
             result="Exact worker envelope digest, database integrity, interrupted jobs and "+str(count)+" reviewed secret sets verified"
+        elif ident=="tak":
+            # Only a certificate-presence check here. CI compares the exact public CA.
+            execute("/bin/sh","-c",
+                'p="$1/data/data"; f="$p/ca-cert.pem"; test -d "$1/data" && test ! -L "$1/data" && test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && test -s "$f" && grep -q "^-----BEGIN CERTIFICATE-----" "$f"',
+                "check-tak-ca",target)
+            result="MicroTAK restored CA certificate presence passed"
+        elif ident=="media":
+            # Only native configuration is in this managed snapshot; media and cache are separate.
+            execute("/bin/sh","-c",
+                'p="$1/data"; test -d "$p" && test ! -L "$p" && if test -d "$p/config"; then test ! -L "$p/config" || exit 1; f="$p/config/system.xml"; else f="$p/system.xml"; fi; test -f "$f" && test ! -L "$f" && test -s "$f"',
+                "check-media-config",target)
+            result="Jellyfin restored system configuration presence passed; media files not included"
         elif ident=="notes":
             # Verify native setup/ACL files and at least one regular page without
             # evaluating PHP, logging account data or following symlink directories.
@@ -714,12 +726,18 @@ def verify_snapshot(job,ident):
         else:
             # Fixed database paths; refuse symlinks, active journals and oversize files.
             folder="data/data" if ident=="grocy" else "data"
-            filename={"grocy":"grocy.db","homebox":"homebox.db","core":"core.sqlite3"}[ident]
+            filename={"grocy":"grocy.db","homebox":"homebox.db","core":"core.sqlite3","meshmonitor":"meshmonitor.db","kolibri":"db.sqlite3"}[ident]
             data=execute("/bin/sh","-c",
                 'p="$1/$2"; f="$p/$3"; test -d "$1" && test ! -L "$1" && test -d "$1/data" && test ! -L "$1/data" && test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && test ! -e "$f-wal" && test ! -L "$f-wal" && test ! -e "$f-journal" && test ! -L "$f-journal" && size=$(stat -c %s "$f") && test "$size" -le 67108864 && cat "$f"',
                 "check-database",target,folder,filename,timeout=30)
             if ident=="grocy":check_restored_grocy(data)
             elif ident=="homebox":check_restored_homebox(data)
+            elif ident=="meshmonitor":check_restored_database(data,{"settings"})
+            elif ident=="kolibri":
+                check_restored_database(data,{"django_migrations"})
+                execute("/bin/sh","-c",
+                    'p="$1/data"; f="$p/.node_id"; test -d "$p" && test ! -L "$p" && test -f "$f" && test ! -L "$f" && test -s "$f"',
+                    "check-kolibri-identity",target)
             else:
                 marker=execute("/bin/sh","-c",
                     'f="$1/data/job-id"; test -f "$f" && test ! -L "$f" && test "$(stat -c %s "$f")" -le 19 && cat "$f"',
@@ -733,6 +751,7 @@ def verify_snapshot(job,ident):
         raise RuntimeError("Isolated restore or application data check failed; inspect private restore directory") from None
     log(job,"\nSnapshot "+snapshot_id+" restored; "+result+". Native application startup not tested.\n")
     if ident=="homebox":log(job,"Homebox worker API-key pepper is outside this snapshot; exact recovery not verified.\n")
+    if ident=="meshmonitor":log(job,"MeshMonitor generated credentials are outside this snapshot; exact recovery not verified.\n")
     change(job,completed=4,state="succeeded",stage="Isolated restore and application data check passed")
 
 

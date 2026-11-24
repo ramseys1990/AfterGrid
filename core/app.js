@@ -92,7 +92,7 @@ async function renderModules(){
           finally{backupButton.disabled=false;}
         });
         backup.append(backupTitle,backupButton,backupInfo);
-        if(["grocy","homebox","notes"].includes(mod.id)&&["running","stopped"].includes(mod.status)){
+        if(["grocy","homebox","notes","meshmonitor","tak","kolibri","media"].includes(mod.id)&&["running","stopped"].includes(mod.status)){
           const snapshot=document.createElement("button");snapshot.type="button";snapshot.textContent="Create consistent snapshot";
           snapshot.disabled=pending.has(mod.id);
           snapshot.addEventListener("click",async()=>{
@@ -102,7 +102,7 @@ async function renderModules(){
             catch(e){error(e.message);snapshot.disabled=false;}
           });backup.append(snapshot);
         }
-        if(["grocy","homebox","notes"].includes(mod.id)){
+        if(["grocy","homebox","notes","meshmonitor","tak","kolibri","media"].includes(mod.id)){
           const verify=document.createElement("button");verify.type="button";verify.textContent="Verify latest managed snapshot";
           verify.disabled=pending.has(mod.id);
           verify.addEventListener("click",async()=>{

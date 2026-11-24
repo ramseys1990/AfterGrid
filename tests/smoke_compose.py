@@ -226,8 +226,11 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
     assert module(ident)["status"]=="stopped"
     action("start",ident)
     assert module(ident)["status"]=="running"
-    action("uninstall",ident)
-    assert module(ident)["status"]=="not installed"
+    # Keep the already-pulled native repository online for the rest of the smoke test.
+    # Its uninstall/persistence acceptance is exercised at the end.
+    if ident!="kopia":
+        action("uninstall",ident)
+        assert module(ident)["status"]=="not installed"
     assert Path("data",ident).is_dir()
     print(ident+" lifecycle passed; data directory retained.")
 
@@ -326,6 +329,21 @@ print("Native routing graph, three costing modes and lifecycle passed.")
 assert api("/api/maps/places?q=Vaduz")["results"]
 print("Place index remains accessible with routing uninstalled.")
 
+# Exercise managed recovery while Kopia remains connected, with no native admin jobs.
+def verify_managed(ident,expected):
+    import re
+    snap=api("/api/admin/modules/"+ident+"/snapshot",{"confirmed":True})["id"]
+    wait_job(snap,"quiesced "+ident+" snapshot")
+    assert module(ident)["status"]=="running"
+    verify=api("/api/admin/modules/"+ident+"/verify-snapshot",{"confirmed":True})["id"]
+    wait_job(verify,"isolated "+ident+" restore")
+    record=next(j for j in api("/api/admin/jobs") if j["id"]==verify)
+    assert expected in record["log"],record["stage"]
+    target=re.search(r"Isolated restore directory: (/restore/aftergrid-"+ident+r"-[0-9]+-[a-f0-9]{16})",record["log"]).group(1)
+    assert module(ident)["status"]=="running"
+    print(ident+" managed snapshot and isolated restore passed.",flush=True)
+    return Path("restore")/target.removeprefix("/restore/")/"data"
+
 # Native MeshMonitor lifecycle without radio hardware or remote broker.
 action("install","meshmonitor")
 assert module("meshmonitor")["status"]=="running"
@@ -346,6 +364,8 @@ action("stop","meshmonitor")
 assert module("meshmonitor")["status"]=="stopped"
 action("start","meshmonitor")
 assert module("meshmonitor")["status"]=="running"
+assert mesh_login(creds["initial_password"])["success"]
+verify_managed("meshmonitor","SQLite integrity and expected schema passed")
 assert mesh_login(creds["initial_password"])["success"]
 action("uninstall","meshmonitor")
 assert module("meshmonitor")["status"]=="not installed"
@@ -403,6 +423,10 @@ with tempfile.TemporaryDirectory() as tmp:
     assert module("tak")["status"]=="running"
     with socket.create_connection(("127.0.0.1",8089),timeout=10) as sock:
         with tls.wrap_socket(sock,server_hostname="127.0.0.1") as secure:assert secure.version()
+    recovered=verify_managed("tak","MicroTAK restored CA certificate presence passed")
+    assert subprocess.check_output(["sudo","cat",str(recovered/"data/ca-cert.pem")])==ca.read_bytes()
+    with socket.create_connection(("127.0.0.1",8089),timeout=10) as sock:
+        with tls.wrap_socket(sock,server_hostname="127.0.0.1") as secure:assert secure.version()
     action("uninstall","tak")
     assert module("tak")["status"]=="not installed"
     assert subprocess.check_output(["sudo","cat","data/tak/data/ca-cert.pem"])==ca.read_bytes()
@@ -434,6 +458,8 @@ action("stop","kolibri")
 assert module("kolibri")["status"]=="stopped"
 action("start","kolibri")
 assert module("kolibri")["status"]=="running" and kolibri_identity()==identity
+recovered=verify_managed("kolibri","SQLite integrity and expected schema passed")
+assert subprocess.check_output(["sudo","cat",str(recovered/".node_id")]).strip()==identity
 action("uninstall","kolibri")
 assert module("kolibri")["status"]=="not installed" and kolibri_identity()==identity
 print("Kolibri native setup, dual-port sharing, lifecycle and persistent identity passed.")
@@ -482,6 +508,8 @@ assert module("media")["status"]=="stopped"
 action("start","media")
 assert module("media")["status"]=="running"
 assert media_login()["AccessToken"]
+verify_managed("media","Jellyfin restored system configuration presence passed")
+assert media_login()["AccessToken"]
 action("uninstall","media")
 assert module("media")["status"]=="not installed"
 assert fixture.is_file()
@@ -526,8 +554,7 @@ with sync_playwright() as p:
     guest.close()
     browser.close()
 assert subprocess.run(["sudo","test","-f","data/notes/conf/users.auth.php"]).returncode==0
-# Reuse the initialized repository after uninstall/reinstall; do not recreate it.
-action("install","kopia")
+# Reuse the initialized repository without an unnecessary second registry pull.
 assert api("/api/admin/kopia/status")["connection"]=="connected"
 notes_snapshot=api("/api/admin/modules/notes/snapshot",{"confirmed":True})["id"]
 wait_job(notes_snapshot,"quiesced DokuWiki snapshot")
@@ -543,6 +570,7 @@ fixture=Path("restore")/target.removeprefix("/restore/")/"data/data/pages/emerge
 assert b"Local emergency checklist." in subprocess.check_output(["sudo","cat",str(fixture)])
 assert module("notes")["status"]=="running"
 action("uninstall","kopia")
+assert module("kopia")["status"]=="not installed" and Path("data/kopia").is_dir()
 print("DokuWiki managed snapshot, isolated restore and private fixture comparison passed.",flush=True)
 action("share","notes")
 assert module("notes")["shared"]

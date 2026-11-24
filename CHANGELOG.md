@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.12-dev
+- Expand managed snapshots and isolated data checks to MeshMonitor, MicroTAK, Kolibri and Jellyfin configuration; preserve native CA and node identity fixture comparisons.
+- Keep Kopia online through disposable smoke acceptance to avoid redundant registry pulls; retain final uninstall and persistence checks.
+- Core restore CI passed; worker snapshot milestone passed before registry throttling. Expanded CI pending.
+
 ## 0.8.11-dev
 - Add standalone offline recovery preparation tool for restored core and worker exports; reconstruct private databases and generated secret files into a new directory without touching Docker or live data.
 - Add refusal and recovery fixture tests and explicit clean-machine recovery prerequisites. CI pending.
