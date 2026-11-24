@@ -134,3 +134,32 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
     assert module(ident)["status"]=="not installed"
     assert Path("data",ident).is_dir()
     print(ident+" lifecycle passed; data directory retained.")
+
+# Maps starts without downloading any demo data, then serves a local fixture.
+assert module("maps")["status"]=="not installed"
+action("install","maps")
+assert module("maps")["status"]=="running"
+map_base="http://127.0.0.1:8084"
+with urllib.request.urlopen(map_base+"/data.json",timeout=10) as response:
+    assert json.load(response)==[]
+import shutil
+shutil.copyfile(os.environ["MAP_FIXTURE"],"content/maps/region.pmtiles")
+action("restart","maps")
+with urllib.request.urlopen(map_base+"/data/region-pmtiles.json",timeout=10) as response:
+    tilejson=json.load(response)
+    assert tilejson["tiles"]
+    url=tilejson["tiles"][0].replace("{z}","0").replace("{x}","0").replace("{y}","0")
+    assert url.startswith(map_base+"/")
+with urllib.request.urlopen(url,timeout=10) as response:
+    assert response.status==200 and response.headers.get_content_type().startswith("image/") and len(response.read())>0
+with urllib.request.urlopen(map_base+"/",timeout=10) as response:
+    assert response.status==200
+    assert b"region-pmtiles" in response.read()
+action("stop","maps")
+assert module("maps")["status"]=="stopped"
+action("start","maps")
+assert module("maps")["status"]=="running"
+action("uninstall","maps")
+assert module("maps")["status"]=="not installed"
+assert Path("content/maps/region.pmtiles").is_file()
+print("Maps empty startup, local tile serving and lifecycle passed; map archive retained.")

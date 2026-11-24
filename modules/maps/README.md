@@ -1,0 +1,19 @@
+# Offline maps
+
+This optional module runs the upstream lightweight TileServer GL container with its bundled browser previews and local tile endpoints. It starts with an explicit configuration and no required archive; missing archive slots are skipped instead of using the upstream automatic demo download.
+
+## Use
+
+Install Offline maps in the AfterGrid application catalog. On LAN installations open the card link on port 8084. No sign-in is required by the map viewer itself. Only share on a trusted LAN; the map files may contain sensitive information. Never port-forward the service to the internet.
+
+Copy a trusted, licensed local archive into /opt/aftergrid/content/maps:
+- region.pmtiles (PMTiles)
+- region.mbtiles (MBTiles)
+
+Keep the original source and attribution. Ensure the file and directory are readable by the service. Copy to a temporary name and rename only when complete. Restart the Maps module using the portal. Open the native browser preview. One archive of each type is supported initially; empty installation is valid and no map data is included. Raster archives provide a rendered map; vector archives provide a data inspection view, not a complete cartographic navigation experience. The source archive determines coverage, zoom levels and attribution. The viewer and tile endpoints are served locally.
+
+The module never mounts the Docker socket or writes map content. Uninstall preserves the map directory. Software and data are independent. Operators can use the upstream [PMTiles CLI](https://docs.protomaps.com/pmtiles/cli) to prepare regional extracts elsewhere, or obtain appropriately licensed MBTiles. Do not bulk scrape public OpenStreetMap tile servers.
+
+## Next
+
+Regional selection and downloads with progress/storage estimates; a complete labeled basemap and local glyphs/sprites; waypoint and GPX/KML tools; independent Valhalla routing data and UI. No road routing is available in this milestone. Actual browser behavior with the WAN disconnected, local map attribution, and hardware performance remain to be tested. Hosted CI exercises a small pinned upstream PMTiles fixture and the normal module lifecycle.

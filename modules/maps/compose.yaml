@@ -1,0 +1,27 @@
+services:
+  maps:
+    image: maptiler/tileserver-gl-light:v5.7.0
+    command: ["--config", "/aftergrid/config.json", "--ignore-missing-files"]
+    restart: unless-stopped
+    ports:
+      - "${AFTERGRID_BIND:-127.0.0.1}:8084:8080"
+    volumes:
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/content/maps
+        target: /data
+        read_only: true
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/modules/maps/config.json
+        target: /aftergrid/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      apps:
+        aliases: [aftergrid-maps]
+    security_opt:
+      - no-new-privileges:true
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps

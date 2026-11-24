@@ -1,0 +1,11 @@
+{
+  "id": "maps",
+  "name": "Offline maps",
+  "category": "Navigation",
+  "description": "Local PMTiles and MBTiles archives with upstream browser previews; no cloud map service.",
+  "port": 8084,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-maps:8080/health",
+  "upstream": "https://github.com/maptiler/tileserver-gl",
+  "setup_note": "Copy a trusted regional archive as content/maps/region.pmtiles or region.mbtiles, then restart Maps. Empty installation is expected. Vector archives have a native inspection preview; full styled navigation and routing are separate milestones."
+}

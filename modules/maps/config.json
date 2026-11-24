@@ -1,0 +1,18 @@
+{
+  "options": {
+    "paths": {
+      "root": "/data"
+    },
+    "serveAllStyles": false,
+    "serveAllFonts": false
+  },
+  "styles": {},
+  "data": {
+    "region-pmtiles": {
+      "pmtiles": "region.pmtiles"
+    },
+    "region-mbtiles": {
+      "mbtiles": "region.mbtiles"
+    }
+  }
+}

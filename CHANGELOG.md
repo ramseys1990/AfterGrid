@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0-dev
+- Optional LAN-accessible TileServer GL Light module with local PMTiles/MBTiles sources and native previews.
+- Explicit configuration skips missing archives; no default map downloads. Map data mounted read-only and retained on uninstall.
+- Add real upstream-pinned raster PMTiles fixture and lifecycle smoke coverage. Results pending; vector cartographic styling and routing are not implemented.
+- Prior household and inventory logic CI passed; authenticated native inventory runtime validation remains pending.
+
+
 ## 0.4.1-dev
 - Connect native Homebox and Grocy API keys, discover locations and populate household mappings.
 - On-demand administrator-only Homebox item-record counts and Grocy stock totals by product and native stock unit at mapped locations.
