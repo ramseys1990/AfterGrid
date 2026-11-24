@@ -2,7 +2,7 @@
 (async()=>{
   const message=document.getElementById("map-status");
   const form=document.getElementById("route-form"), routeMessage=document.getElementById("route-message");
-  let map=null, pick=null, lastRoute=null, requestNumber=0, routeMode=null, mapPlans={waypoints:[],routes:[]}, canEdit=false;
+  let map=null, mapReady=false, pick=null, lastRoute=null, requestNumber=0, routeMode=null, mapPlans={waypoints:[],routes:[]}, canEdit=false;
   try{
     const archive=location.origin+"/maps/archive.pmtiles";
     const protocol=new pmtiles.Protocol();
@@ -25,20 +25,20 @@
     map=new maplibregl.Map({container:"map",style,center:[header.centerLon,header.centerLat],zoom:Math.min(header.maxZoom,Math.max(header.minZoom,header.centerZoom)),maxZoom:Math.min(22,header.maxZoom+3),hash:true});
     map.addControl(new maplibregl.NavigationControl(),"top-right");
     map.addControl(new maplibregl.ScaleControl());
-    map.on("load",()=>{message.textContent="Local map loaded";document.body.dataset.mapReady="true";if(lastRoute)drawRoute(lastRoute);drawWaypoints();});
+    map.on("load",()=>{mapReady=true;message.textContent="Local map loaded";document.body.dataset.mapReady="true";if(lastRoute)drawRoute(lastRoute);drawWaypoints();});
     map.on("error",event=>{message.textContent="Map resource error: "+(event.error?.message||"inspect local archive");});
     map.on("click",event=>{document.getElementById("coordinates").textContent=event.lngLat.lat.toFixed(6)+", "+event.lngLat.lng.toFixed(6);if(pick){const target=pick==="waypoint"?document.getElementById("waypoint-form").elements.coords:form.elements[pick];target.value=event.lngLat.lng.toFixed(6)+","+event.lngLat.lat.toFixed(6);pick=null;routeMessage.textContent="Location selected";}});
   }catch(e){message.textContent="Map unavailable: "+e.message+" Download or import a regional PMTiles archive first.";}
   function drawRoute(route){
-    if(!map||!map.isStyleLoaded())return;
+    if(!map||!mapReady)return;
     const data={type:"Feature",geometry:{type:"LineString",coordinates:route.coordinates},properties:{}};
     if(map.getSource("route"))map.getSource("route").setData(data);
     else{map.addSource("route",{type:"geojson",data});map.addLayer({id:"route",type:"line",source:"route",paint:{"line-color":"#2963dd","line-width":5}});}
-    const bounds=new maplibregl.LngLatBounds();for(const p of route.coordinates)bounds.extend(p);map.fitBounds(bounds,{padding:40,maxZoom:15});
+    const bounds=new maplibregl.LngLatBounds();for(const p of route.coordinates)bounds.extend(p);map.fitBounds(bounds,{padding:40,maxZoom:15});document.body.dataset.routeReady="true";
   }
   function readPoint(value){const parts=value.split(",").map(s=>s.trim());if(parts.length!==2||parts.some(s=>!s||!Number.isFinite(Number(s))))throw Error("Use longitude, latitude");return parts.map(Number);}
   for(const field of ["start","end"])document.getElementById("route-"+field).addEventListener("click",()=>{if(!map){routeMessage.textContent="Map unavailable; enter coordinates manually.";return;}pick=field;routeMessage.textContent="Click the map to choose "+field;});
-  document.getElementById("route-clear").addEventListener("click",()=>{requestNumber++;lastRoute=null;routeMode=null;pick=null;form.reset();document.getElementById("route-choices").replaceChildren();if(map?.getLayer("route")){map.removeLayer("route");map.removeSource("route");}document.getElementById("route-details").hidden=true;routeMessage.textContent="Route cleared";});
+  document.getElementById("route-clear").addEventListener("click",()=>{requestNumber++;lastRoute=null;routeMode=null;pick=null;form.reset();delete document.body.dataset.routeReady;document.getElementById("route-choices").replaceChildren();if(map?.getLayer("route")){map.removeLayer("route");map.removeSource("route");}document.getElementById("route-details").hidden=true;routeMessage.textContent="Route cleared";});
   form.addEventListener("submit",async event=>{
     event.preventDefault();const sequence=++requestNumber;
     const mode=form.elements.mode.value;
@@ -68,7 +68,7 @@
     const data=await r.json();if(!r.ok)throw Error(typeof data.detail==="string"?data.detail:"Plan request failed");return data;
   }
   function drawWaypoints(){
-    if(!map||!map.isStyleLoaded())return;
+    if(!map||!mapReady)return;
     const data={type:"FeatureCollection",features:mapPlans.waypoints.map(w=>({type:"Feature",geometry:{type:"Point",coordinates:[w.lon,w.lat]},properties:{name:w.name,kind:w.kind}}))};
     if(map.getSource("waypoints"))map.getSource("waypoints").setData(data);
     else{map.addSource("waypoints",{type:"geojson",data});map.addLayer({id:"waypoints",type:"circle",source:"waypoints",paint:{"circle-radius":7,"circle-color":"#b74a30","circle-stroke-color":"#fff","circle-stroke-width":2}});

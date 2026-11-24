@@ -204,6 +204,19 @@ assert api("/api/admin/routing-data")["original_ready"]
 action("rollback-graph","routing")
 assert api("/api/admin/routing-data")["selected_slot"]=="tiles"
 assert api("/api/maps/route",{"start":[9.5209,47.1394],"end":[9.5238,47.1417],"mode":"auto"})["distance_km"]>0
+# Native Osmium index from the selected real OSM fixture.
+assert api("/api/admin/maps/places/build",{})["queued"]
+deadline=time.monotonic()+120
+while time.monotonic()<deadline:
+    index=api("/api/admin/maps/places")
+    if index["state"] in ("complete","failed"):break
+    time.sleep(1)
+assert index["ready"] and index["count"]>0,index
+assert api("/api/maps/places?q=Vaduz")["results"]
+print("Local Osmium place index and search passed.")
+
+from browser_maps import browser_maps
+browser_maps()
 action("stop","routing")
 assert module("routing")["status"]=="stopped"
 action("start","routing")
@@ -214,13 +227,5 @@ assert api("/api/admin/routing-data")["graph_ready"]
 assert any(x["name"]=="region.osm.pbf" for x in api("/api/admin/routing-data")["files"])
 print("Native routing graph, three costing modes and lifecycle passed.")
 
-# Native Osmium index from the retained real OSM fixture after routing uninstall.
-assert api("/api/admin/maps/places/build",{})["queued"]
-deadline=time.monotonic()+120
-while time.monotonic()<deadline:
-    index=api("/api/admin/maps/places")
-    if index["state"] in ("complete","failed"):break
-    time.sleep(1)
-assert index["ready"] and index["count"]>0,index
 assert api("/api/maps/places?q=Vaduz")["results"]
-print("Local Osmium place index and search passed with routing stopped.")
+print("Place index remains accessible with routing uninstalled.")

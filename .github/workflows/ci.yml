@@ -21,6 +21,10 @@ jobs:
           export HBOX_AUTH_API_KEY_PEPPER=disposable-ci-placeholder-secret-1234567890
           export KOPIA_UI_PASSWORD=disposable-ci-ui-password KOPIA_PASSWORD=disposable-ci-repo-password
           for file in modules/*/compose.yaml; do docker compose -f "$file" config -q; done
+      - name: Install disposable browser test runtime
+        run: |
+          pip install playwright==1.51.0
+          python -m playwright install --with-deps chromium
       - name: Disposable Compose lifecycle smoke test
         timeout-minutes: 20
         shell: bash

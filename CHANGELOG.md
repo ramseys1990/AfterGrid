@@ -1,5 +1,10 @@
 # Changelog
 
+### Browser acceptance follow-up
+- Add pinned Playwright Chromium test in disposable CI with off-server browser HTTP(S) requests blocked and recorded. Exercise real raster map rendering, region presets, route overlay, search, saved plans and guest access.
+- Keep route/waypoint rendering enabled after the map's initial load even while subsequent tiles load. New browser CI pending.
+
+
 ## 0.5.10-dev
 - Alternate the two fixed routing graph/source slots across repeatable updates, with explicit inactive-slot archiving and no deletion.
 - Refuse occupied graph/source slots and selected-graph retirement; retained archive status and incomplete archive visibility.
