@@ -7,7 +7,8 @@ FEED=b'''<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/
 def test_feed():
     parsed=parse_feed(FEED)
     assert parsed["total"]==21
-    assert parsed["entries"][0]["size_bytes"] is None
+    assert parsed["entries"][0]["size_bytes"]==12345
+    assert parsed["entries"][0]["download_key"] is None
     assert "href" not in parsed["entries"][0]
     with pytest.raises(CatalogUnavailable):
         parse_feed(b'<!DOCTYPE feed [<!ENTITY x "test">]><feed>&x;</feed>')

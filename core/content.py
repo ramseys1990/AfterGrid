@@ -43,6 +43,7 @@ def parse_feed(raw):
         key=None
         for link in entry.findall("atom:link",NS):
             if "acquisition" in link.get("rel",""):
+                if size is None and link.get("length","").isdigit():size=int(link.get("length"))
                 candidate=key_for_url(link.get("href",""))
                 if candidate:
                     key=candidate

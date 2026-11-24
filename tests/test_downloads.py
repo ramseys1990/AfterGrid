@@ -26,3 +26,31 @@ def test_persistent_queue(tmp_path):
     (content/"test.zim.part").write_bytes(b"abc")
     assert manager.list()[0]["bytes"]==3
     with pytest.raises(ValueError):manager.enqueue("/zim/../oops.zim")
+
+
+def test_verify_before_publish(tmp_path,monkeypatch):
+    from core import downloads
+    content=tmp_path/"content";content.mkdir()
+    manager=Downloads(tmp_path,content)
+    with manager.db() as con:
+        con.execute("CREATE TABLE downloads (key TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,state TEXT NOT NULL,size INTEGER,digest TEXT,detail TEXT NOT NULL DEFAULT '',updated INTEGER NOT NULL)")
+    manager.enqueue(KEY)
+    expected=hashlib.sha256(b"abc").hexdigest()
+    monkeypatch.setattr(downloads,"metadata",lambda key:(3,expected))
+    monkeypatch.setattr(downloads,"RESERVE",0)
+    indexed=[]
+    monkeypatch.setattr(downloads,"index_archive",lambda directory,name:indexed.append(name))
+    partial=content/"test.zim.part"
+    partial.write_bytes(b"bad")
+    with manager.db() as con:
+        row=con.execute("SELECT * FROM downloads").fetchone()
+    with pytest.raises(ValueError,match="SHA-256"):
+        manager.execute(row)
+    assert not (content/"test.zim").exists()
+    assert indexed==[]
+    partial.write_bytes(b"abc")
+    manager.execute(row)
+    assert (content/"test.zim").read_bytes()==b"abc"
+    assert not partial.exists()
+    assert indexed==["test.zim"]
+    assert manager.list()[0]["state"]=="complete"

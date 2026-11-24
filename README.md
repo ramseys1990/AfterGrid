@@ -41,6 +41,6 @@ For optional inventory sharing on a trusted network, see [LAN access and stable 
 
 The normal deployment is LAN-first. No local DNS is required for IP-based access. Set AFTERGRID_LAN_DOMAIN at install if you want stable separate hostnames for the portal and shared apps. See the LAN guide for HTTP risks and first-time native account setup.
 
-The administrator content panel now shows local ZIM files and disk space and searches the upstream Kiwix OPDS catalog on demand. No background internet requests or server-side downloads are enabled. Download queue, checksums and automatic library indexing remain planned.
+The administrator content panel now shows local ZIM files and disk space and searches the upstream Kiwix OPDS catalog on demand. Catalog queries are on demand. The download queue runs only after an administrator requests an archive.
 
 Content downloads now use a persistent unprivileged queue and native curl, official Metalink SHA-256 metadata and kiwix-manage indexing. Existing development installations must make content/kiwix writable by UID 10001 (sudo chown -R 10001:10001 /opt/aftergrid/content/kiwix) before enabling downloads. New installs handle this automatically. Catalog entries without a supported official download path or SHA-256 metadata are not supported. Actual upstream download and reader reload validation remain pending. Delete corrupt .part files manually after confirming no job is running; removal and USB import UI are not yet implemented.
