@@ -13,6 +13,7 @@ jobs:
       - run: pip install -r core/requirements-dev.txt
       - run: python -m pytest -q
       - run: bash -n install.sh
+      - run: node --check core/app.js
       - run: docker compose config -q
       - run: docker compose build core worker
       - name: Validate module Compose definitions
@@ -31,7 +32,7 @@ jobs:
           mkdir -p data/core content/kiwix
           cp modules/kiwix/library.xml content/kiwix/library.xml
           printf '%s\n' "$SMOKE_TOKEN" > data/core/setup-token
-          sudo chown -R 10001:10001 data/core
+          sudo chown -R 10001:10001 data/core content/kiwix
           sudo chmod 700 data/core
           sudo chmod 600 data/core/setup-token
           cleanup() {

@@ -21,9 +21,11 @@ from pydantic import BaseModel, Field
 try:
     from .worker_client import call, WorkerUnavailable
     from .content import search_catalog, local_inventory, CatalogUnavailable
+    from .downloads import Downloads
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
+    from downloads import Downloads
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -63,6 +65,7 @@ def create_app(data_dir=None):
     data = Path(data_dir or os.environ.get("AFTERGRID_DATA", "./data/core"))
     secure_cookie = os.environ.get("AFTERGRID_SECURE_COOKIE", "false").lower() == "true"
     configured_origin = os.environ.get("AFTERGRID_ORIGIN", "").rstrip("/")
+    downloads = Downloads(data, os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
     attempts = deque()
     lock = threading.Lock()
 
@@ -91,9 +94,13 @@ def create_app(data_dir=None):
                     selection TEXT, result TEXT);
             """)
             con.execute("INSERT OR IGNORE INTO first_run(id,token) VALUES (1,?)", (secrets.token_hex(24),))
-        yield
+        downloads.start()
+        try:
+            yield
+        finally:
+            downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.3.4-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.3.5-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -163,7 +170,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.3.4-dev"}
+                "version": "0.3.5-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -186,6 +193,24 @@ def create_app(data_dir=None):
     def require_admin(request):
         if not admin_session(request):
             raise HTTPException(401, "Administrator login required")
+
+    @api.get("/api/admin/content/downloads")
+    def content_downloads(request: Request):
+        require_admin(request)
+        return downloads.list()
+
+    class DownloadRequest(BaseModel):
+        key: str = Field(min_length=1,max_length=400)
+
+    @api.post("/api/admin/content/downloads",status_code=202)
+    def content_download(payload: DownloadRequest,request: Request):
+        require_admin(request)
+        same_origin(request)
+        try:
+            downloads.enqueue(payload.key)
+        except (ValueError,sqlite3.IntegrityError) as exc:
+            raise HTTPException(400,str(exc))
+        return {"queued":True}
 
     @api.get("/api/admin/content/local")
     def content_local(request: Request):

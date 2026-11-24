@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.5-dev
+- Persistent single-worker content queue with curl resume, free-space checks, actual partial-file byte counts and SHA-256 verification from official Metalink metadata.
+- Native kiwix-manage indexing and reader monitorLibrary option; no Docker access in downloader.
+- Add selection, progress and retry controls; tests for official URL validation and queue persistence. Live metadata, transfer and reader reload unverified.
+- Fix regression in Kopia credential endpoint test.
+
+
 ## 0.3.4-dev
 - Read-only content inventory with available disk space, plus on-demand official Kiwix OPDS search, language filter and pagination.
 - Keep local content inventory independent of internet availability. No automatic downloads or indexing yet.

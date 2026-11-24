@@ -5,6 +5,10 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+try:
+    from .downloads import key_for_url
+except ImportError:
+    from downloads import key_for_url
 
 CATALOG = "https://opds.library.kiwix.org/catalog/v2/entries"
 MAX_FEED = 2_000_000
@@ -36,14 +40,17 @@ def parse_feed(raw):
         def value(path,limit=400):
             return (entry.findtext(path,default="",namespaces=NS) or "")[:limit]
         size=None
+        key=None
         for link in entry.findall("atom:link",NS):
-            if "acquisition" in link.get("rel","") and link.get("length","").isdigit():
-                size=int(link.get("length"))
-                break
+            if "acquisition" in link.get("rel",""):
+                candidate=key_for_url(link.get("href",""))
+                if candidate:
+                    key=candidate
+                    if link.get("length","").isdigit():size=int(link.get("length"))
         entries.append({"title":value("atom:title",200),"id":value("atom:id",160),
                         "description":value("atom:summary") or value("atom:content"),
                         "language":value("dc:language",40),"updated":value("atom:updated",40),
-                        "size_bytes":size})
+                        "size_bytes":size,"download_key":key})
     total=root.findtext("opensearch:totalResults",default="",namespaces=NS)
     return {"entries":entries,"total":int(total) if total.isdigit() else None}
 

@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("content-message").textContent="";}
+  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -151,7 +151,13 @@ async function searchContent(offset){
       const h=document.createElement("h4");h.textContent=entry.title;
       const p=document.createElement("p");p.textContent=entry.description;
       const meta=document.createElement("small");meta.textContent=bytes(entry.size_bytes)+" · "+entry.language+" · "+entry.updated.slice(0,10);
-      card.append(h,p,meta);root.append(card);
+      card.append(h,p,meta);
+      if(entry.download_key){
+        const b=document.createElement("button");b.textContent="Download to server";
+        b.addEventListener("click",async()=>{if(!confirm("Download and verify "+entry.title+" ("+bytes(entry.size_bytes)+")?"))return;b.disabled=true;try{await api("/api/admin/content/downloads",{key:entry.download_key});await renderDownloads();}catch(e){error(e.message);}finally{b.disabled=false;}});
+        card.append(b);
+      }
+      root.append(card);
     }
     $("content-message").textContent=data.entries.length?"Showing "+(offset+1)+"–"+(offset+data.entries.length)+(data.total!==null?" of "+data.total:""):"No catalog results.";
     $("content-prev").disabled=offset===0;
@@ -164,6 +170,20 @@ $("content-search").addEventListener("submit",event=>{
 });
 $("content-prev").addEventListener("click",()=>searchContent(Math.max(0,contentOffset-20)));
 $("content-next").addEventListener("click",()=>searchContent(contentOffset+20));
+
+async function renderDownloads(){
+  const rows=await api("/api/admin/content/downloads");
+  if(!status?.admin)return;
+  const root=$("downloads");root.replaceChildren();
+  for(const d of rows){
+    const card=document.createElement("article"),title=document.createElement("strong"),detail=document.createElement("p");
+    title.textContent=d.name+" · "+d.state;detail.textContent=d.detail+" — "+bytes(d.bytes)+" / "+bytes(d.size);card.append(title,detail);
+    if(d.size){const bar=document.createElement("progress");bar.max=d.size;bar.value=Math.min(d.bytes,d.size);card.append(bar);}
+    if(d.state==="failed"){const retry=document.createElement("button");retry.textContent="Retry / resume";retry.addEventListener("click",async()=>{try{await api("/api/admin/content/downloads",{key:d.key});await renderDownloads();}catch(e){error(e.message);}});card.append(retry);}
+    root.append(card);
+  }
+  if(!rows.length)root.textContent="No downloads queued.";
+}
 
 async function renderJobs(){
   const jobs=await api("/api/admin/jobs");
@@ -189,7 +209,7 @@ const refreshModules=document.createElement("button");refreshModules.textContent
 setInterval(async()=>{
   if(polling||!status?.admin||$("dashboard").hidden)return;
   polling=true;
-  try{if(await renderJobs())await renderModules();}catch(e){error(e.message);}finally{polling=false;}
+  try{if(await renderJobs())await renderModules();await renderDownloads();}catch(e){error(e.message);}finally{polling=false;}
 },2000);
 
 for(const [id,path] of [["setup-form","/api/setup"],["login-form","/api/login"]]){

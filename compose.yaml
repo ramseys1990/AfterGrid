@@ -12,7 +12,7 @@ services:
       AFTERGRID_ORIGIN: "${AFTERGRID_ORIGIN:-}"
     volumes:
       - ./data/core:/data
-      - ./content/kiwix:/content/kiwix:ro
+      - ./content/kiwix:/content/kiwix
       - worker_socket:/run/aftergrid:ro
     depends_on:
       worker:

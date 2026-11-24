@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.3.4-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.3.5-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -42,3 +42,5 @@ For optional inventory sharing on a trusted network, see [LAN access and stable 
 The normal deployment is LAN-first. No local DNS is required for IP-based access. Set AFTERGRID_LAN_DOMAIN at install if you want stable separate hostnames for the portal and shared apps. See the LAN guide for HTTP risks and first-time native account setup.
 
 The administrator content panel now shows local ZIM files and disk space and searches the upstream Kiwix OPDS catalog on demand. No background internet requests or server-side downloads are enabled. Download queue, checksums and automatic library indexing remain planned.
+
+Content downloads now use a persistent unprivileged queue and native curl, official Metalink SHA-256 metadata and kiwix-manage indexing. Existing development installations must make content/kiwix writable by UID 10001 (sudo chown -R 10001:10001 /opt/aftergrid/content/kiwix) before enabling downloads. New installs handle this automatically. Catalog entries without a supported official download path or SHA-256 metadata are not supported. Actual upstream download and reader reload validation remain pending. Delete corrupt .part files manually after confirming no job is running; removal and USB import UI are not yet implemented.
