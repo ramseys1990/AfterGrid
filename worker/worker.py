@@ -366,6 +366,22 @@ def cleanly_stopped(ident):
     except (OSError,subprocess.SubprocessError,ValueError,TypeError):
         return False
 
+def log_shutdown_evidence(job,ident):
+    """Report only bounded exit states; never dump native configuration or logs."""
+    try:
+        raw=subprocess.run(command(ident,"ps","--all","--format","json"),env=compose_env(ident),
+                           capture_output=True,text=True,timeout=8,check=True).stdout.strip()
+        rows=json.loads(raw) if raw.startswith("[") else [json.loads(line) for line in raw.splitlines() if line]
+        if not isinstance(rows,list) or not 0<len(rows)<=16:raise ValueError("Invalid shutdown evidence")
+        for row in rows:
+            state=row.get("State")
+            code=row.get("ExitCode")
+            if state not in {"running","exited","created","dead","restarting","paused","removing"} or type(code) is not int or not 0<=code<=255:
+                raise ValueError("Invalid shutdown state")
+            log(job,"\nShutdown evidence: "+state+", exit code "+str(code)+".\n")
+    except (OSError,subprocess.SubprocessError,ValueError,TypeError,AttributeError):
+        log(job,"\nShutdown evidence unavailable.\n")
+
 def snapshot_statistics(value,source):
     """Require verbose native evidence; never infer missing counters are zero."""
     if not isinstance(value,dict) or not isinstance(value.get("stats"),dict):
@@ -427,7 +443,9 @@ def snapshot_application(job,ident):
     restart=original=="running"
     try:
         if restart:run(job,ident,"stop","--timeout","60")
-        if not cleanly_stopped(ident):raise RuntimeError("Clean application shutdown not confirmed; snapshot refused")
+        if not cleanly_stopped(ident):
+            log_shutdown_evidence(job,ident)
+            raise RuntimeError("Clean application shutdown not confirmed; snapshot refused")
         change(job,completed=2,stage="Create native Kopia snapshot")
         snapshot_id=native_snapshot(ident)
         if not cleanly_stopped(ident):raise RuntimeError("Application state changed during snapshot; consistency unconfirmed")

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.18-dev
+- Add host-only replacement core and worker staging, validated private files, ownership, preserved original environment, and explicit no-pull/no-build core-only start.
+- Add bounded shutdown refusal diagnostics; retain MicroTAK strict consistency gate. Routing native verification passed prior Core checks milestone; latest CI pending.
+
 ## 0.8.17-dev
 - Add explicit image import on an empty matching replacement daemon, exact image-ID checks, recovery-only tags and no-pull Compose override generation.
 - Correct native content read verification to account for Kopia's distinct-object tree traversal rather than requiring one read per path. Preserve zero-error and manifest count checks.

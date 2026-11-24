@@ -69,3 +69,20 @@ sudo python3 recovery_assets.py prepare-overrides /secure/aftergrid-assets \
 ```
 
 Import verifies the entire asset file set first, loads images natively, checks the exact set of image IDs and adds deterministic recovery-only tags. Overrides reference those tags with pull_policy: never. Future Compose startup must additionally specify --no-build --pull never; this step does not start any service, alter live data, or reconnect Kopia. Failed imports may leave images on the replacement daemon; inspect manually, never automatically prune. The eventual recovery launcher must reconcile worker-managed module actions and digest-pinned references with recovered images. Use only trusted archives; checksums are integrity evidence, not signatures.
+
+
+## Stage and start the recovered core (development)
+
+After verifying and importing installation assets, use the original native core/worker restore directories, their job IDs and recorded worker envelope digest. Run the trusted matching recovery_install.py on a replacement Linux host as root. Use a new root outside the asset directory, e.g. /opt/aftergrid, and keep all data private:
+
+```sh
+sudo python3 recovery_install.py stage \
+  --assets /secure/aftergrid-assets \
+  --core-dir /secure/recovered/core/data --worker-dir /secure/recovered/worker/data \
+  --core-job 101 --worker-job 102 --worker-sha256 YOUR_64_HEX_DIGEST \
+  --destination /opt/aftergrid
+sudo python3 recovery_install.py start-core \
+  --assets /secure/aftergrid-assets --root /opt/aftergrid --confirm-core-only
+```
+
+Staging reconstructs validated databases, reviewed secrets and available metadata, assigns core UID/GID 10001, binds private recovered worker state, and preserves original host settings in recovery-original.env. Initial recovered access is loopback-only on port 8080; use a trusted SSH tunnel. LAN configuration must be reviewed before re-enabling it. Core startup refuses existing containers and AfterGrid networks/volumes, checks exact imported IDs, uses --no-build --pull never, waits for health and checks running IDs. No application data is restored or optional services started. Empty content folders and the initial Kiwix library are placeholders only; do not mistake them for original data. Do not start optional modules from the portal before their data and offline image mappings are restored. A failed start can leave containers; inspect rather than retry blindly. This is a development core-only recovery path; native clean-host startup acceptance is pending, as is recovery package coordination and full application restoration.

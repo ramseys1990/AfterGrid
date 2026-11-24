@@ -12,7 +12,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r core/requirements-dev.txt
       - run: python -m pytest -q
-      - run: python recovery_prepare.py --help && python recovery_assets.py --help
+      - run: python recovery_prepare.py --help && python recovery_assets.py --help && python recovery_install.py --help
       - name: Native Docker image archive fixture
         shell: bash
         run: |
