@@ -79,8 +79,10 @@ def test_lan_sharing_configuration(tmp_path, monkeypatch):
     assert worker.lan_available()
     assert worker.sharing_env("homebox")["AFTERGRID_MODULE_BIND"]=="127.0.0.1"
     assert worker.sharing_env("homebox")["AFTERGRID_HOMEBOX_REGISTRATION"]=="true"
-    with pytest.raises(ValueError):
-        worker.enqueue("kopia","share")
+    assert worker.enqueue("kopia","share") > 0
+    assert worker.sharing_env("kopia")["AFTERGRID_MODULE_BIND"]=="127.0.0.1"
+    worker.set_sharing("kopia",True)
+    assert worker.sharing_env("kopia")["AFTERGRID_MODULE_BIND"]=="192.168.10.4"
     worker.set_sharing("homebox",True)
     env=worker.sharing_env("homebox")
     assert env["AFTERGRID_MODULE_BIND"]=="192.168.10.4"
@@ -94,5 +96,8 @@ def test_lan_sharing_configuration(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         worker.enqueue("homebox","share")
     monkeypatch.setattr(worker,"LAN_BIND","192.168.10.4")
+    monkeypatch.setattr(worker,"LAN_DOMAIN","")
+    assert worker.lan_available()
+    assert worker.lan_url("homebox",worker.catalog()["homebox"])=="http://192.168.10.4:8082"
     monkeypatch.setattr(worker,"LAN_DOMAIN","example.com")
     assert not worker.lan_available()

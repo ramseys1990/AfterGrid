@@ -1,34 +1,31 @@
-# Local network access (development)
+# Local network access
 
-AfterGrid starts loopback-only unless the operator explicitly chooses a private server IPv4. The core can be reached through an SSH tunnel for setup; no mandatory identity provider or public DNS service is needed.
+AfterGrid is a LAN-first appliance. The installer detects the private IPv4 source address of the default route and prints the portal URL. If it cannot detect one, it falls back to loopback; use AFTERGRID_BIND to choose the correct private address. No wildcard/public bind, router changes, public DNS or external identity provider is required.
 
 ## Configure once
 
-Give the server a DHCP reservation or static address, e.g. 192.168.10.4. In the router or local DNS server, add these records pointing to that address:
+Reserve the server address in your router, e.g. 192.168.10.4. Open http://192.168.10.4:8080 from any device on your LAN. Kiwix is available on port 8081 when installed. Homebox, Grocy and Kopia can all be explicitly shared from the admin dashboard, following native setup. No optional apps are installed automatically.
+
+For stable DNS names, choose a local domain during installation, e.g. AFTERGRID_LAN_DOMAIN=aftergrid.home.arpa, and point these local DNS records to the reserved server IP:
 
 | Name | Port |
 |---|---|
+| aftergrid.home.arpa | 8080 |
 | homebox.aftergrid.home.arpa | 8082 |
 | grocy.aftergrid.home.arpa | 8083 |
+| kopia.aftergrid.home.arpa | 51515 |
 
-These are examples, not automatically created DNS records. Use your local resolver on phones and computers. Choose a different base name under home.arpa if desired, using AFTERGRID_LAN_DOMAIN in /opt/aftergrid/.env. Keep the hostname unchanged after printing labels.
+DNS records are not created automatically. If no domain is supplied, shared application URLs use the private IP directly. Reserve that IP before generating QR labels. A separate DNS name for each application is recommended: cookies are not isolated by port. Without separate DNS names, sign out of the portal before opening applications, especially untrusted content. Use a trusted HTTPS reverse proxy for administrative and backup credentials. HTTP mode is for a trusted private LAN only; never forward ports to the internet.
 
-If the installer was run with AFTERGRID_BIND set to the private server IP, the worker uses that address. To keep the portal loopback-only while allowing inventory sharing, a root operator may set AFTERGRID_LAN_BIND to the assigned private server IP in /opt/aftergrid/.env and recreate only the worker. From /opt/aftergrid:
+## Initial access and sharing
 
-```sh
-sudo docker compose up -d --no-deps worker
-```
+- Homebox: create the native account locally (or through an SSH tunnel), then Share on LAN. Registration closes and its native hostname option is set to the chosen stable URL.
+- Grocy: change the default admin/admin password locally before Share on LAN. AfterGrid asks the administrator to confirm; it does not independently verify the change.
+- Kopia: generated native UI credentials; authenticated administrator can reveal them on the configured portal origin after acknowledging HTTP risk. Share on LAN explicitly to enable the native UI; no default passwords. The portal only hides the link for family users; Kopia itself enforces its own credentials.
+- Return to local-only recreates the selected Compose project while retaining data. Homebox registration remains closed. Kopia may always be left local-only.
 
-Do not set a public address or forward these ports on the router. This initial development mode uses HTTP, so credentials and inventory are not encrypted in transit. Use a trusted LAN or a locally trusted HTTPS reverse proxy. Do not reuse the portal's hostname for other applications; cookies are not isolated by port. Use SSH for the administrator portal when possible. This is not hardened for hostile local networks.
+A root operator on an existing development installation can set AFTERGRID_BIND to the assigned private IPv4, AFTERGRID_ORIGIN to its full portal URL, and optionally AFTERGRID_LAN_DOMAIN in /opt/aftergrid/.env, then recreate core and worker with sudo docker compose up -d. Reapply any existing shared module configuration using its Start/Share action if changing the bind/domain. Do not change the address or name after printing labels without preserving the old URL.
 
-## Share Homebox and Grocy
+## Testing
 
-1. Install and open locally (SSH forward the app port for a remote host).
-2. Create the Homebox native account, and change Grocy's default admin/admin credentials.
-3. Add the local DNS records. Confirm **Share on LAN** on the application card.
-4. The worker recreates the selected Compose project with the private bind. Homebox registration is closed and its upstream hostname option is set to the LAN URL.
-5. Open the link on a family device and sign in with native credentials. Generate QR labels only after verifying the final URL.
-
-AfterGrid does not verify that native account setup was completed; the administrator explicitly confirms it. The app URL is persisted through the worker configuration. Return to local-only recreates and starts the application on loopback without reopening Homebox registration. Uninstall preserves data and sharing preferences. Kopia remains loopback-only. Kiwix uses the existing core bind behavior. QR scan, native credential changes, actual LAN/DNS and trusted HTTPS are still unverified. Recovery must preserve the worker state, server DNS and app data.
-
-The disposable hosted CI test exercises binding changes using a private IPv4 assigned to the runner loopback interface. It inspects Docker's published addresses and Homebox environment. This is not a physical LAN, DNS, login or QR scanning acceptance test.
+Hosted CI tests Docker bindings with a disposable private address, not real Wi-Fi clients. Physical LAN, local DNS, QR scans, HTTPS trust and native account changes still require real-host testing.

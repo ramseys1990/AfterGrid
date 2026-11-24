@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import ipaddress
 import os
 import re
 import secrets
@@ -11,6 +12,7 @@ import time
 from collections import deque
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -89,7 +91,7 @@ def create_app(data_dir=None):
             con.execute("INSERT OR IGNORE INTO first_run(id,token) VALUES (1,?)", (secrets.token_hex(24),))
         yield
 
-    api = FastAPI(title="AfterGrid", version="0.3.2-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.3.3-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -159,7 +161,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.3.2-dev"}
+                "version": "0.3.3-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -172,7 +174,7 @@ def create_app(data_dir=None):
                 for m in installed:
                     item = {key: m[key] for key in ("id", "name", "description", "category", "status", "port")}
                     item["installable"] = True
-                    item.update(loopback_only=m.get("loopback_only", False), admin_only=m.get("admin_only", False), setup_note=m.get("setup_note", ""), share_available=m.get("share_available", False), shared=m.get("shared", False), lan_url=m.get("lan_url", ""), registration_closed=m.get("registration_closed", False))
+                    item.update(loopback_only=m.get("loopback_only", False), admin_only=m.get("admin_only", False), setup_note=m.get("setup_note", ""), share_available=m.get("share_available", False), shared=m.get("shared", False), lan_url=m.get("lan_url", ""), registration_closed=m.get("registration_closed", False), lan_dns=m.get("lan_dns", False))
                     by_id[m["id"]] = item
                 result = list(by_id.values())
         except WorkerUnavailable:
@@ -221,11 +223,27 @@ def create_app(data_dir=None):
             raise HTTPException(502, "Module manager request failed")
         return result
 
-    @api.get("/api/admin/kopia/credentials")
+    def local_credential_origin():
+        origin = urlsplit(configured_origin)
+        host = origin.hostname or ""
+        if secure_cookie and origin.scheme == "https":
+            return True
+        if origin.scheme != "http":
+            return False
+        if host == "localhost" or host == "127.0.0.1" or host.endswith(".home.arpa"):
+            return True
+        try:
+            addr = ipaddress.IPv4Address(host)
+            return any(addr in ipaddress.IPv4Network(n) for n in ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"))
+        except ValueError:
+            return False
+
+    @api.post("/api/admin/kopia/credentials")
     def kopia_credentials(request: Request):
         require_admin(request)
-        if not (secure_cookie and configured_origin.startswith("https://")) and not (configured_origin.startswith("http://127.0.0.1:") or configured_origin.startswith("http://localhost:")):
-            raise HTTPException(403, "Use the local SSH tunnel or a configured HTTPS portal to reveal credentials")
+        same_origin(request)
+        if not local_credential_origin():
+            raise HTTPException(403, "Use the configured private LAN or trusted HTTPS portal to reveal credentials")
         try:
             code, result = call("/credentials/kopia")
         except WorkerUnavailable:

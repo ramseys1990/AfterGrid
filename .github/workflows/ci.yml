@@ -45,7 +45,7 @@ jobs:
           }
           trap cleanup EXIT
           # A disposable private address on runner loopback; no external LAN needed.
-          export AFTERGRID_LAN_BIND=192.168.254.253
+          export AFTERGRID_LAN_BIND=192.168.254.253 AFTERGRID_LAN_DOMAIN=aftergrid.home.arpa
           sudo ip address add "$AFTERGRID_LAN_BIND/32" dev lo
           docker compose up -d --wait --wait-timeout 90
           python tests/smoke_compose.py

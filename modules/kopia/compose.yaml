@@ -16,7 +16,7 @@ services:
       USER: aftergrid
       TZ: UTC
     ports:
-      - "127.0.0.1:51515:51515"
+      - "${AFTERGRID_MODULE_BIND:-127.0.0.1}:51515:51515"
     volumes:
       - "${AFTERGRID_ROOT:-/opt/aftergrid}/data/kopia/config:/app/config"
       - "${AFTERGRID_ROOT:-/opt/aftergrid}/data/kopia/cache:/app/cache"

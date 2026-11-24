@@ -22,7 +22,7 @@ ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share"
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
-LAN_DOMAIN = os.environ.get("AFTERGRID_LAN_DOMAIN", "aftergrid.home.arpa")
+LAN_DOMAIN = os.environ.get("AFTERGRID_LAN_DOMAIN", "")
 MAX_LOG = 24000
 SECRET_LOCK = threading.Lock()
 
@@ -42,7 +42,7 @@ def public_module(ident, manifest):
     shared, closed = share_settings(ident) if manifest.get("lan_shareable") else (False,False)
     available = bool(manifest.get("lan_shareable") and lan_available())
     return {**manifest, "status": state(ident), "share_available": available, "shared": shared,
-            "lan_url": lan_url(ident,manifest) if available else "", "registration_closed": closed}
+            "lan_url": lan_url(ident,manifest) if available else "", "registration_closed": closed, "lan_dns": bool(LAN_DOMAIN)}
 
 def command(ident, *args):
     if ident not in catalog():
@@ -86,6 +86,8 @@ def lan_available():
     except ValueError:
         return False
     private = any(addr in ipaddress.IPv4Network(n) for n in ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"))
+    if not LAN_DOMAIN:
+        return private
     labels = LAN_DOMAIN.split(".")
     valid = len(labels) >= 3 and labels[-2:] == ["home","arpa"] and len(LAN_DOMAIN) <= 200
     valid = valid and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels)
@@ -104,7 +106,8 @@ def set_sharing(ident, enabled):
             (ident,int(enabled),int(enabled and ident=="homebox")))
 
 def lan_url(ident, manifest):
-    return f"http://{ident}.{LAN_DOMAIN}:{manifest['port']}"
+    host = f"{ident}.{LAN_DOMAIN}" if LAN_DOMAIN else LAN_BIND
+    return f"http://{host}:{manifest['port']}"
 
 def sharing_env(ident):
     manifest = catalog()[ident]
@@ -159,7 +162,7 @@ def enqueue(ident, action):
     if action in {"share","unshare"} and not manifest.get("lan_shareable"):
         raise ValueError("Module does not support LAN sharing")
     if action == "share" and not lan_available():
-        raise ValueError("Configure a private LAN bind and home.arpa domain first")
+        raise ValueError("Configure a private LAN bind (local DNS is optional)")
     with db() as conn:
         cursor = conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES (?,?,'queued','Queued',?)",
                               (ident, action, int(time.time())))

@@ -7,7 +7,7 @@ Keep milestones functional, not paperwork-heavy.
 | 0.1 | Core bootstrap, browser setup, local administrator and shared landing page | Initial implementation; runtime validation pending |
 | 0.2 | Generic Compose worker, catalog, live job progress and lifecycle | Four lifecycle and batch wizard CI passed; shared dependency handling pending |
 | 0.3 | Kiwix, Homebox, Grocy, Kopia independently installable | Four module lifecycles passed hosted CI; native setup and backup restoration remain pending |
-| 0.4 | Household organization, ownership/location mapping, inventory reporting, stable QR links | LAN sharing implemented; QR validation and household reporting pending |
+| 0.4 | Household organization, ownership/location mapping, inventory reporting, stable QR links | LAN-first access and explicit inventory/backup sharing implemented; QR validation and household reporting pending |
 | 0.5 | Regional maps, downloads, offline routing | Planned |
 | 0.6 | Meshtastic, MeshCore, TAK, hardware/client setup | Planned |
 | 0.7 | Kolibri, media, notes, PACE, content packs | Planned |

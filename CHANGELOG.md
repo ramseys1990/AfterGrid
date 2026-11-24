@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3-dev
+- Installer prefers the detected private LAN IP, with explicit address override and loopback fallback.
+- Optional DNS; stable IP URLs work without a DNS server. Configure separate hostnames for stronger cookie isolation and stable QR labels.
+- Kopia supports explicit LAN sharing with native authentication and origin-checked administrator credential retrieval.
+- Expand Docker LAN binding tests to Kopia. Physical LAN and native account setup are not yet validated.
+
+
 ## 0.3.2-dev
 - Explicit LAN sharing and local-only reconfiguration for Homebox and Grocy; Kopia stays loopback-only.
 - Stable home.arpa application URLs, persistent sharing preferences and Homebox registration closure.

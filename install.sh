@@ -9,7 +9,19 @@ die(){ echo "AfterGrid: $*" >&2; exit 1; }
 [[ ! -d /etc/pve ]] && ! command -v pveversion >/dev/null || die "Install inside a Linux guest, not the Proxmox hypervisor."
 for cmd in curl tar od tr ip; do command -v "$cmd" >/dev/null || die "Missing prerequisite: $cmd"; done
 ROOT=/opt/aftergrid
-BIND=${AFTERGRID_BIND:-127.0.0.1}
+BIND=${AFTERGRID_BIND:-}
+LAN_DOMAIN=${AFTERGRID_LAN_DOMAIN:-}
+# Prefer the assigned source address of the default route. Never use wildcard
+# or a public address. A machine without an unambiguous private route can
+# explicitly supply AFTERGRID_BIND; loopback remains a safe fallback.
+private_ipv4(){ [[ $1 =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+)$ ]]; }
+if [[ -z $BIND ]]; then
+  candidate=$(ip -4 route get 192.0.2.1 2>/dev/null | awk '{for(i=1;i<NF;i++)if($i=="src"){print $(i+1);exit}}' || true)
+  if [[ -n $candidate ]] && private_ipv4 "$candidate"; then BIND=$candidate; else BIND=127.0.0.1; fi
+fi
+if [[ -n $LAN_DOMAIN ]]; then
+  [[ $LAN_DOMAIN =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+home\.arpa$ && ${#LAN_DOMAIN} -le 200 ]] || die "Choose a lowercase local domain below home.arpa, or leave it empty."
+fi
 PORT=${AFTERGRID_PORT:-8080}
 REF=${AFTERGRID_REF:-main}
 [[ $REF =~ ^[a-zA-Z0-9._-]+$ ]] || die "Invalid source ref."
@@ -58,10 +70,13 @@ token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 printf '%s\n' "$token" > "$ROOT/data/core/setup-token"
 chown 10001:10001 "$ROOT/data/core/setup-token"
 chmod 0600 "$ROOT/data/core/setup-token"
-printf 'AFTERGRID_BIND=%s\nAFTERGRID_PORT=%s\nAFTERGRID_ORIGIN=http://%s:%s\nAFTERGRID_SECURE_COOKIE=false\n' "$BIND" "$PORT" "$BIND" "$PORT" > "$ROOT/.env"
+PORT=$((10#$PORT))
+PORTAL_HOST=$BIND
+if [[ -n $LAN_DOMAIN && $BIND != 127.0.0.1 ]]; then PORTAL_HOST=$LAN_DOMAIN; fi
+printf 'AFTERGRID_BIND=%s\nAFTERGRID_PORT=%s\nAFTERGRID_ORIGIN=http://%s:%s\nAFTERGRID_SECURE_COOKIE=false\nAFTERGRID_LAN_DOMAIN=%s\n' "$BIND" "$PORT" "$PORTAL_HOST" "$PORT" "$LAN_DOMAIN" > "$ROOT/.env"
 cd "$ROOT"
 echo "[3/4] Building and starting core only"
-export AFTERGRID_BIND="$BIND" AFTERGRID_PORT="$PORT" AFTERGRID_ORIGIN="http://$BIND:$PORT" AFTERGRID_SECURE_COOKIE=false
+export AFTERGRID_BIND="$BIND" AFTERGRID_PORT="$PORT" AFTERGRID_ORIGIN="http://$PORTAL_HOST:$PORT" AFTERGRID_SECURE_COOKIE=false AFTERGRID_LAN_DOMAIN="$LAN_DOMAIN"
 compose=(docker compose --project-name aftergrid-core --file "$ROOT/compose.yaml" --env-file "$ROOT/.env")
 "${compose[@]}" config -q
 if ! "${compose[@]}" up -d --build --wait --wait-timeout 120; then
@@ -70,13 +85,15 @@ if ! "${compose[@]}" up -d --build --wait --wait-timeout 120; then
   exit 1
 fi
 echo "[4/4] Core is healthy"
-echo "Open http://$BIND:$PORT"
+echo "Open http://$PORTAL_HOST:$PORT"
+if [[ $PORTAL_HOST != "$BIND" ]]; then echo "Create a local DNS record for $PORTAL_HOST pointing to $BIND before signing in."; fi
 if [[ $BIND == 127.0.0.1 ]]; then
   echo "Remote browser? On your computer run: ssh -L $PORT:127.0.0.1:$PORT USER@SERVER"
   echo "Then open http://127.0.0.1:$PORT"
   echo "For Kiwix after optional installation, add: -L 8081:127.0.0.1:8081"
 else
-  echo "WARNING: trusted LAN HTTP is unencrypted. Prefer an SSH tunnel or HTTPS for credentials."
+  echo "LAN access is enabled on $BIND. Reserve this address in your router."
+  echo "WARNING: trusted LAN HTTP is unencrypted. Prefer a trusted HTTPS reverse proxy for credentials. Never forward these ports to the internet."
 fi
 echo "One-time setup token: $token"
 echo "No optional modules installed. Development build; not production-ready."

@@ -1,6 +1,6 @@
 # Kopia
 
-Install from the portal, then open its native interface at http://127.0.0.1:51515 over a local browser or SSH tunnel. The portal administrator can reveal generated credentials only through loopback or configured secure HTTPS. Save both credentials securely off the server; the repository password is essential for recovery. Do not expose this HTTP port directly to the LAN or internet.
+Install from the portal, then open its native interface at http://127.0.0.1:51515 over a local browser or SSH tunnel. The portal administrator can reveal generated credentials through the configured private LAN or trusted HTTPS origin, with an explicit warning before HTTP disclosure. Use Share on LAN to enable native authenticated access. Save both credentials securely off the server; the repository password is essential for recovery. Never expose this HTTP port to the internet; trusted LAN HTTP is unencrypted. Prefer locally trusted HTTPS.
 
 Use Kopia's UI to create/connect a repository and configure snapshot policies. For a local repository choose /repository, mapped to /opt/aftergrid/backups. Mount an external drive there before starting the module if desired; local storage alone does not protect against disk failure. Choose individual application directories under /source/data and content under /source/content; do not snapshot /source/data/kopia recursively. Restore to /restore for review, not directly into running application directories. Configuration, cache and logs are under data/kopia.
 

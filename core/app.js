@@ -49,16 +49,17 @@ async function renderModules(){
           const credentials=document.createElement("pre");credentials.hidden=true;
           reveal.addEventListener("click",async()=>{
             if(!credentials.hidden){credentials.textContent="";credentials.hidden=true;reveal.textContent="Show backup credentials";return;}
-            try{const c=await api("/api/admin/kopia/credentials");credentials.textContent="Username: "+c.username+"\nUI password: "+c.ui_password+"\nRepository password: "+c.repository_password;credentials.hidden=false;reveal.textContent="Hide credentials";}
+            if(location.protocol!=="https:"&&!["127.0.0.1","localhost"].includes(location.hostname)&&!confirm("These backup credentials will travel over unencrypted HTTP. Continue only on your trusted LAN?"))return;
+            try{const c=await api("/api/admin/kopia/credentials",{});credentials.textContent="Username: "+c.username+"\nUI password: "+c.ui_password+"\nRepository password: "+c.repository_password;credentials.hidden=false;reveal.textContent="Hide credentials";}
             catch(e){error(e.message);}
           });card.append(reveal,credentials);
         }
         const actions=mod.status==="not installed"?["install"]:mod.status==="running"?["stop","restart","update","uninstall"]:["start","install","stop","uninstall"];
         if(mod.shared && mod.lan_url){
-          const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+" — local DNS must point to the server. HTTP is unencrypted.";card.append(note);
+          const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+" HTTP is unencrypted.";card.append(note);
         }else if(mod.share_available){
-          const note=document.createElement("p");note.textContent="To share, add a local DNS record for "+new URL(mod.lan_url).hostname+" and complete native account setup first.";card.append(note);
-        }else if(["homebox","grocy"].includes(mod.id)){
+          const note=document.createElement("p");note.textContent=(mod.lan_dns?"Add a local DNS record for "+new URL(mod.lan_url).hostname+". ":"")+"Complete native account setup before sharing. LAN URL: "+mod.lan_url;card.append(note);
+        }else if(["homebox","grocy","kopia"].includes(mod.id)){
           const note=document.createElement("small");note.textContent="LAN sharing needs a private LAN bind configured on the server; see the LAN setup guide.";card.append(note);
         }
         if(mod.shared && mod.status!=="not installed")actions.push("unshare");
@@ -66,7 +67,10 @@ async function renderModules(){
         const controls=document.createElement("div");controls.className="controls";
         for(const action of actions){
           const b=document.createElement("button");b.textContent=action==="share"?"Share on LAN":action==="unshare"?"Return to local-only":action;b.addEventListener("click",async()=>{
-            if(action==="share"&&!confirm(mod.id==="homebox"?"Confirm you created your Homebox account and configured local DNS. Sharing closes public registration and uses unencrypted LAN HTTP. Continue?":"Confirm you changed Grocy's default admin password and configured local DNS. Sharing uses unencrypted LAN HTTP. Continue?"))return;
+            if(action==="share"){
+              const warning=mod.id==="homebox"?"Confirm you created your Homebox account. Sharing closes public registration.":mod.id==="grocy"?"Confirm you changed Grocy's default administrator password.":"Kopia uses its generated native administrator password. Keep it private.";
+              if(!confirm(warning+" "+(mod.lan_dns?"Confirm local DNS is configured. ":"")+"LAN HTTP is unencrypted. Continue only on a trusted LAN?"))return;
+            }
             if(action==="unshare"&&!confirm("Return to loopback-only access? This recreates and starts the application while keeping its data."))return;
             if(action==="uninstall"&&!confirm("Remove this application's containers? Its data will be retained."))return;
             if(action==="update"&&!confirm("Pull the configured image and recreate if needed? Back up application data first."))return;

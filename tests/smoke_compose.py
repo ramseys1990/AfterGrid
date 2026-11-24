@@ -67,7 +67,7 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
     assert module(ident)["status"]=="running"
     if ident=="kopia":
         import base64
-        credentials=api("/api/admin/kopia/credentials")
+        credentials=api("/api/admin/kopia/credentials",{})
         auth=base64.b64encode((credentials["username"]+":"+credentials["ui_password"]).encode()).decode()
         req=urllib.request.Request("http://127.0.0.1:51515/",headers={"Authorization":"Basic "+auth})
         with urllib.request.urlopen(req,timeout=10) as response:
@@ -75,7 +75,7 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
     else:
         with urllib.request.urlopen("http://127.0.0.1:"+str(port)+"/",timeout=10) as response:
             assert response.status==200
-    if ident in ("homebox","grocy"):
+    if ident in ("homebox","grocy","kopia"):
         def inspect_container():
             cid=subprocess.check_output(["docker","ps","-q","--filter","label=com.docker.compose.project=aftergrid-"+ident],text=True).strip()
             return json.loads(subprocess.check_output(["docker","inspect",cid],text=True))[0]

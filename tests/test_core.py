@@ -58,7 +58,7 @@ def test_kopia_credentials_are_admin_only(tmp_path, monkeypatch):
     monkeypatch.setattr(core_app,"call",lambda path: (200,{"username":"aftergrid","ui_password":"secret","repository_password":"secret2"}))
     (tmp_path/"setup-token").write_text("test-token")
     with TestClient(create_app(tmp_path)) as client:
-        assert client.get("/api/admin/kopia/credentials").status_code==401
+        assert client.post("/api/admin/kopia/credentials",json={},headers={"Origin":"http://127.0.0.1:8080"}).status_code==401
         setup={"username":"admin","password":"long test password","token":"test-token","server_name":"Test"}
         assert client.post("/api/setup",json=setup,headers={"Origin":"http://127.0.0.1:8080"}).status_code==201
         assert client.get("/api/admin/kopia/credentials").json()["username"]=="aftergrid"
@@ -105,3 +105,16 @@ def test_sharing_requires_admin(tmp_path, monkeypatch):
         assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
         assert client.post("/api/admin/modules/homebox/share",json={}).status_code==403
         assert client.post("/api/admin/modules/homebox/share",json={},headers=ORIGIN).json()=={"id":7}
+
+
+def test_lan_kopia_credentials_require_origin(tmp_path, monkeypatch):
+    from core import app as core_app
+    origin="http://192.168.10.4:8080"
+    monkeypatch.setenv("AFTERGRID_ORIGIN",origin)
+    monkeypatch.setattr(core_app,"call",lambda path: (200,{"username":"aftergrid","ui_password":"secret","repository_password":"secret2"}))
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        setup={"username":"admin","password":"long test password","token":"test-token"}
+        assert client.post("/api/setup",json=setup,headers={"Origin":origin}).status_code==201
+        assert client.post("/api/admin/kopia/credentials",json={}).status_code==403
+        assert client.post("/api/admin/kopia/credentials",json={},headers={"Origin":origin}).status_code==200
