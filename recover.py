@@ -143,6 +143,21 @@ def capture_inventory(call,modules,*,job_timeout=7*60*60,progress=print):
     return value
 
 
+def canonical_inventory_digest(value):
+    return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+
+
+def guarded_capture(call,modules,*,job_timeout=7*60*60,progress=print):
+    capture_steps(modules)
+    call("/api/admin/recovery-maintenance/begin",{"confirmed":True,"modules":modules})
+    # A failure deliberately leaves maintenance active for inspection.
+    value=capture_inventory(call,modules,job_timeout=job_timeout,progress=progress)
+    sealed=call("/api/admin/recovery-maintenance/seal",{"confirmed":True})
+    if sealed.get("phase")!="sealed" or sealed.get("inventory_sha256")!=canonical_inventory_digest(value):
+        raise ValueError("Maintenance seal does not match verified inventory")
+    return value
+
+
 def capture_client(url,origin=None):
     """Authenticate only over loopback HTTP or verified HTTPS; no redirects."""
     import http.cookiejar
@@ -206,7 +221,22 @@ def require_quiescent():
     if any(name.startswith("aftergrid-") for name in raw.splitlines()):
         raise ValueError("Stop all AfterGrid services and external repository writers first")
 
-def pack(root,inventory,destination,modules,password):
+def package_handoff(root,inventory_bytes,modules,required=False):
+    marker=root/"data/core/recovery-maintenance.json"
+    if not marker.exists() and not marker.is_symlink():
+        if required:raise ValueError("Sealed recovery maintenance required")
+        return None
+    raw=prep.read_private(marker,8192)
+    value=json.loads(raw)
+    inventory=json.loads(inventory_bytes)
+    if (value.get("format")!=1 or value.get("phase")!="sealed" or value.get("modules")!=sorted(modules)
+        or value.get("inventory_sha256")!=canonical_inventory_digest(inventory)
+        or value.get("manifest_job")!=inventory.get("manifest_job")):
+        raise ValueError("Maintenance seal differs from selected recovery inventory")
+    return raw
+
+
+def pack(root,inventory,destination,modules,password,*,require_sealed=False):
     """Bundle a quiescent source installation and verified independent captures."""
     if os.geteuid()!=0:raise ValueError("Root required")
     root=assets.real_directory(root)
@@ -214,6 +244,7 @@ def pack(root,inventory,destination,modules,password):
     if root in destination.parents or destination in root.parents:raise ValueError("Package must be outside installation")
     inventory=Path(inventory).absolute()
     inventory_bytes=prep.read_private(inventory,65536)
+    handoff=package_handoff(root,inventory_bytes,modules,require_sealed)
     if not password or len(password)>1024:raise ValueError("Repository password required")
     require_quiescent()
     repository=assets.real_directory(root/"backups")
@@ -246,6 +277,8 @@ def pack(root,inventory,destination,modules,password):
         if repository_digest(target)!=before or repository_digest(repository)!=before:
             raise ValueError("Repository changed during package assembly")
         require_quiescent()
+        if package_handoff(root,inventory_bytes,modules,require_sealed)!=handoff:
+            raise ValueError("Maintenance seal changed during package assembly")
         report={"format":1,"selected":sorted(modules),"omitted_captured":omitted,
                 "assets_manifest_sha256":assets.sha256_file(destination/"assets/assets-manifest.json"),
                 "inventory_sha256":assets.sha256_file(destination/"inventory.json"),"repository":before,
@@ -578,6 +611,12 @@ def main():
     bundle.add_argument("--destination",required=True,type=Path)
     bundle.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
     bundle.add_argument("--confirm-quiescent",action="store_true")
+    bundle.add_argument("--require-sealed",action="store_true")
+    release=sub.add_parser("release-maintenance")
+    release.add_argument("--url",required=True)
+    release.add_argument("--origin")
+    release.add_argument("--username",default="admin")
+    release.add_argument("--confirm-release",action="store_true")
     verify=sub.add_parser("verify-package")
     verify.add_argument("--package",required=True,type=Path)
     restore_pack=sub.add_parser("restore-package")
@@ -600,17 +639,26 @@ def main():
             call=capture_client(args.url,args.origin)
             call("/api/login",{"username":args.username,"password":getpass.getpass("AfterGrid administrator password: ")})
             try:
-                value=capture_inventory(call,args.module)
+                value=guarded_capture(call,args.module)
                 payload=json.dumps(value,indent=2).encode()
                 if len(payload)>65536:raise ValueError("Recovery inventory too large")
                 prep.private_write(destination,payload)
             finally:
                 try:call("/api/logout",{})
                 except Exception:print("Portal logout not confirmed; session will expire.",flush=True)
-            print("Fresh verified inventory saved. Keep maintenance active; stop source services before pack. Not an atomic capture.")
+            print("Fresh verified inventory sealed. Stop source services before pack --require-sealed. Maintenance remains active until explicit release.")
+        elif args.action=="release-maintenance":
+            if not args.confirm_release:raise ValueError("Confirm maintenance release after inspecting jobs and source state")
+            call=capture_client(args.url,args.origin)
+            call("/api/login",{"username":args.username,"password":getpass.getpass("AfterGrid administrator password: ")})
+            try:call("/api/admin/recovery-maintenance/release",{"confirmed":True})
+            finally:
+                try:call("/api/logout",{})
+                except Exception:print("Portal logout not confirmed; session will expire.",flush=True)
+            print("Recovery maintenance released.")
         elif args.action=="pack":
             if not args.confirm_quiescent:raise ValueError("Confirm source maintenance and quiescent repository")
-            report=pack(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "))
+            report=pack(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "),require_sealed=args.require_sealed)
             print("Package created. Omitted captured modules: "+(", ".join(report["omitted_captured"]) or "none")+". Independent snapshots, not atomic recovery.")
         elif args.action=="verify-package":
             verify_package(args.package)
