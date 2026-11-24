@@ -1,0 +1,13 @@
+{
+  "id": "kolibri",
+  "name": "Kolibri",
+  "category": "Knowledge",
+  "description": "Offline education, lessons, exercises and local learner progress using the native Kolibri platform.",
+  "port": 8086,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-kolibri:8086/",
+  "upstream": "https://learningequality.org/kolibri/",
+  "loopback_only": true,
+  "lan_shareable": true,
+  "setup_note": "Complete native first-run facility and administrator setup locally or via SSH forwarding for ports 8086 and 8087. Then enable LAN sharing. Import educational channels via Kolibri's native content manager; use USB or local sources when offline."
+}

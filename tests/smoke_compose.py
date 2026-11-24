@@ -322,3 +322,33 @@ with tempfile.TemporaryDirectory() as tmp:
     assert module("tak")["status"]=="not installed"
     assert subprocess.check_output(["sudo","cat","data/tak/data/ca-cert.pem"])==ca.read_bytes()
 print("MicroTAK TLS enrollment, bootstrap rejection/reuse, certificate handshake, sharing and retained CA passed.")
+
+# Official Kolibri image, both local ports, native data and stable node identity.
+action("install","kolibri")
+assert module("kolibri")["status"]=="running"
+with urllib.request.urlopen("http://127.0.0.1:8086/",timeout=20) as response:
+    assert response.status==200 and response.read(1)
+def kolibri_identity():
+    return subprocess.check_output(["sudo","cat","data/kolibri/.node_id"]).strip()
+identity=kolibri_identity()
+assert identity
+def kolibri_bindings():
+    ids=subprocess.check_output(["docker","compose","-p","aftergrid-kolibri","-f","modules/kolibri/compose.yaml","ps","-q"],text=True).split()
+    assert len(ids)==1
+    return json.loads(subprocess.check_output(["docker","inspect",ids[0]],text=True))[0]["NetworkSettings"]["Ports"]
+for port in ("8086/tcp","8087/tcp"):
+    assert any(p["HostIp"]=="127.0.0.1" for p in kolibri_bindings()[port])
+# Disposable native provisioning. Do not use these credentials on a real host.
+subprocess.run(["docker","exec","-u","kolibri","aftergrid-kolibri-kolibri-1","kolibri","manage","provisiondevice","--noinput","--facility","AfterGrid CI","--superusername","ciadmin","--superuserpassword","disposable-education-test-password","--language_id","en","--preset","nonformal"],check=True)
+action("share","kolibri")
+assert module("kolibri")["shared"]
+for port in ("8086/tcp","8087/tcp"):
+    assert any(p["HostIp"]=="192.168.254.253" for p in kolibri_bindings()[port])
+action("unshare","kolibri")
+action("stop","kolibri")
+assert module("kolibri")["status"]=="stopped"
+action("start","kolibri")
+assert module("kolibri")["status"]=="running" and kolibri_identity()==identity
+action("uninstall","kolibri")
+assert module("kolibri")["status"]=="not installed" and kolibri_identity()==identity
+print("Kolibri native setup, dual-port sharing, lifecycle and persistent identity passed.")

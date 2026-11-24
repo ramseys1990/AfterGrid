@@ -1,0 +1,22 @@
+services:
+  kolibri:
+    image: ghcr.io/learningequality/kolibri:0.19.5
+    restart: unless-stopped
+    environment:
+      KOLIBRI_HOME: /kolibri
+      KOLIBRI_HTTP_PORT: "8086"
+      KOLIBRI_ZIP_CONTENT_PORT: "8087"
+      KOLIBRI_DISABLE_PING: "true"
+    ports:
+      - "${AFTERGRID_MODULE_BIND:-127.0.0.1}:8086:8086"
+      - "${AFTERGRID_MODULE_BIND:-127.0.0.1}:8087:8087"
+    volumes:
+      - "${AFTERGRID_ROOT:-/opt/aftergrid}/data/kolibri:/kolibri"
+    networks:
+      apps:
+        aliases: [aftergrid-kolibri]
+    security_opt: ["no-new-privileges:true"]
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps

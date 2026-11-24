@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0-dev
+- Fix communications startup regression caused by referencing a request model before declaration (preceding corrective commit).
+- Add official Kolibri 0.19.5 optional education module with native facility setup, persistent data, dual-port LAN sharing and native content management; lifecycle smoke tests added.
+- Document native mesh/TAK interoperability candidates without enabling an unauthenticated CoT feed or automatic bridging. Hardware and native communication validation remain pending.
+
+
 ## 0.6.2-dev
 - Local communications readiness page with service status, shared PACE plan CRUD, device directory and administrator-confirmed manual checks. No live radio status or credentials.
 - Fix native MeshMonitor login smoke test to acquire the upstream CSRF token without bypassing protection.
