@@ -236,7 +236,18 @@ def package_handoff(root,inventory_bytes,modules,required=False):
     return raw
 
 
-def pack(root,inventory,destination,modules,password,*,require_sealed=False):
+def validate_package_scope(captured,modules,acknowledge_blocked=False):
+    if "kopia" not in captured or len(modules)!=len(set(modules)) or any(m not in data.SOURCES or m not in captured for m in modules):
+        raise ValueError("Choose captured verified applications; Kopia must exist")
+    blocked={m:data.BLOCKED_RECOVERY[m] for m in sorted(captured & data.BLOCKED_RECOVERY.keys())}
+    if set(modules)&blocked.keys():
+        raise ValueError("Selected module has an unaccepted recovery path")
+    if blocked and not acknowledge_blocked:
+        raise ValueError("Explicitly acknowledge excluded MicroTAK recovery before packaging")
+    return blocked
+
+
+def pack(root,inventory,destination,modules,password,*,require_sealed=False,acknowledge_blocked=False):
     """Bundle a quiescent source installation and verified independent captures."""
     if os.geteuid()!=0:raise ValueError("Root required")
     root=assets.real_directory(root)
@@ -248,6 +259,10 @@ def pack(root,inventory,destination,modules,password,*,require_sealed=False):
     if not password or len(password)>1024:raise ValueError("Repository password required")
     require_quiescent()
     repository=assets.real_directory(root/"backups")
+    # Reject unsupported selection or unacknowledged omission before archiving images.
+    source_rows=assets.image_inventory()
+    source_modules={r["service"] for r in source_rows if r["project"]!="aftergrid-core"}
+    blocked=validate_package_scope(source_modules,modules,acknowledge_blocked)
     destination.mkdir(mode=0o700)
     try:
         # Parse exactly the bytes being packaged, not a second read of a mutable input.
@@ -256,8 +271,8 @@ def pack(root,inventory,destination,modules,password,*,require_sealed=False):
         value=assets.capture(root,destination/"assets")
         rows=assets.recovery_image_rows(value)
         captured={r["service"] for r in rows if r["project"]!="aftergrid-core"}
-        if "kopia" not in captured or len(modules)!=len(set(modules)) or any(m not in data.SOURCES or m not in captured for m in modules):
-            raise ValueError("Choose captured verified applications; Kopia must exist")
+        if captured!=source_modules or validate_package_scope(captured,modules,acknowledge_blocked)!=blocked:
+            raise ValueError("Source module inventory changed during capture")
         omitted=sorted(captured-{"kopia"}-set(modules))
         checks=[(key,source,records[key]["snapshot_id"]) for key,source in (("core",CORE_SOURCE),("worker",WORKER_SOURCE))]
         for m in modules:
@@ -279,7 +294,7 @@ def pack(root,inventory,destination,modules,password,*,require_sealed=False):
         require_quiescent()
         if package_handoff(root,inventory_bytes,modules,require_sealed)!=handoff:
             raise ValueError("Maintenance seal changed during package assembly")
-        report={"format":1,"selected":sorted(modules),"omitted_captured":omitted,
+        report={"format":1,"selected":sorted(modules),"omitted_captured":omitted,"blocked_recovery":blocked,
                 "assets_manifest_sha256":assets.sha256_file(destination/"assets/assets-manifest.json"),
                 "inventory_sha256":assets.sha256_file(destination/"inventory.json"),"repository":before,
                 "checked_snapshots":{key:sid for key,_,sid in checks},
@@ -309,6 +324,8 @@ def verify_package(directory):
     if not isinstance(selected,list) or len(selected)!=len(set(selected)) or "kopia" not in captured or any(m not in captured or m not in data.SOURCES for m in selected):
         raise ValueError("Invalid package module selection")
     if report["omitted_captured"]!=sorted(captured-{"kopia"}-set(selected)):raise ValueError("Package selection mismatch")
+    blocked=validate_package_scope(captured,selected,True)
+    if "blocked_recovery" in report and report["blocked_recovery"]!=blocked:raise ValueError("Package blocked recovery scope mismatch")
     checks={k:records[k]["snapshot_id"] for k in ("core","worker")}
     for m in selected:checks.update({k:sid for k,_,_,sid in data.required_records(records,m)})
     if checks!=report["checked_snapshots"]:raise ValueError("Package snapshot selection mismatch")
@@ -612,6 +629,7 @@ def main():
     bundle.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
     bundle.add_argument("--confirm-quiescent",action="store_true")
     bundle.add_argument("--require-sealed",action="store_true")
+    bundle.add_argument("--acknowledge-blocked",action="store_true",help="Acknowledge that captured MicroTAK data is excluded from recovery")
     release=sub.add_parser("release-maintenance")
     release.add_argument("--url",required=True)
     release.add_argument("--origin")
@@ -658,8 +676,9 @@ def main():
             print("Recovery maintenance released.")
         elif args.action=="pack":
             if not args.confirm_quiescent:raise ValueError("Confirm source maintenance and quiescent repository")
-            report=pack(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "),require_sealed=args.require_sealed)
+            report=pack(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "),require_sealed=args.require_sealed,acknowledge_blocked=args.acknowledge_blocked)
             print("Package created. Omitted captured modules: "+(", ".join(report["omitted_captured"]) or "none")+". Independent snapshots, not atomic recovery.")
+            if report["blocked_recovery"]:print("Excluded unsupported recovery: "+", ".join(report["blocked_recovery"]))
         elif args.action=="verify-package":
             verify_package(args.package)
             print("Recovery package file checksums and selected inventory verified; native recovery remains separate.")
