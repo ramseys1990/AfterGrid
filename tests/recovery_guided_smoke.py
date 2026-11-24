@@ -148,6 +148,10 @@ def main(fixture):
             assert reader_fixture()
             assert repository_digest(repository)==before
             assert call(fresh,"/api/admin/modules/kiwix/stop",{},409)["detail"]
+            # Native writable opt-in is only allowed on the independent copy
+            # while the guarded core is still active.
+            recover.enable_backups(root,bundle,inventory)
+            assert repository_digest(repository)==before
             recover.activate(root,bundle,inventory)
             status=call(fresh,"/api/status")
             assert status["recovery_offline"] and not status["recovery_core_only"]
@@ -157,7 +161,10 @@ def main(fixture):
             assert call(fresh,"/api/admin/kopia/status")["connection"]=="connected"
             for path in ("/api/admin/modules/kiwix/update","/api/admin/modules/maps/install","/api/admin/content/downloads"):
                 assert call(fresh,path,{},409)["detail"]
+            post_job(fresh,"/api/admin/backups/core/snapshot",{"confirmed":True})
+            post_job(fresh,"/api/admin/backups/core/verify-snapshot",{"confirmed":True})
             assert repository_digest(repository)==before
+            print("Recovered writable copy: new managed core snapshot and isolated restore passed.",flush=True)
             print("Guided recovery passed: real native snapshots, exact local images, original login, household, Kiwix bytes and catalog, read-only Kopia reconnect, offline activation and lifecycle, original repository unchanged.",flush=True)
         finally:
             cleanup_modules()

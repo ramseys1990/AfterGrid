@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.25-dev
+- Add explicit writable Kopia working-copy opt-in before offline activation, with guarded replacement validation and native reconnect/rollback.
+- Permit reviewed managed offline backup jobs only with mapped images, opt-in and confirmed native writable repository. Extend guided CI to new snapshot/restore and source repository hash checks. CI pending.
+
 ## 0.8.24-dev
 - Add independent guided native recovery CI fixture: actual managed core, worker and Kiwix snapshots, generated inventory, replacement restore, read-only Kopia reconnect, native login and catalog comparison, offline activation and no-pull lifecycle, source repository digest comparison.
 - Reuse exact locally built/pulled images in the fixture; native archive import is exercised separately. Full disconnected and writable backup acceptance remain outstanding. CI pending.

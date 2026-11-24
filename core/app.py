@@ -137,7 +137,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.24-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.25-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -146,11 +146,12 @@ def create_app(data_dir=None):
     async def security(request, call_next):
         path=request.url.path
         lifecycle=bool(re.fullmatch(r"/api/admin/modules/[a-z][a-z0-9-]{0,39}/(?:start|stop|restart|uninstall|share|unshare)",path))
+        backup_post=bool(re.fullmatch(r"/api/admin/(?:backups/(?:core|worker)/(?:snapshot|verify-snapshot)|backups/content/[a-z][a-z0-9-]{0,39}/(?:snapshot|verify)|backups/recovery-manifest|modules/[a-z][a-z0-9-]{0,39}/(?:snapshot|verify-snapshot))",path))
         safe_posts={"/api/login","/api/logout","/api/maps/route","/api/admin/kopia/credentials","/api/admin/meshmonitor/credentials"}
         restricted=(recovery_core_only or recovery_offline)
         denied=(request.method not in {"GET","HEAD","OPTIONS"} and
                 path not in ({"/api/login","/api/logout"} if recovery_core_only else safe_posts) and
-                not (recovery_offline and not recovery_core_only and lifecycle))
+                not (recovery_offline and not recovery_core_only and (lifecycle or backup_post)))
         if restricted and (denied or path=="/api/admin/content/catalog"):
             response=JSONResponse({"detail":"Recovery mode: this operation is disabled"},status_code=409)
         else:

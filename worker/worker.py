@@ -33,6 +33,7 @@ LAN_DOMAIN = os.environ.get("AFTERGRID_LAN_DOMAIN", "")
 RECOVERY_CORE_ONLY = os.environ.get("AFTERGRID_RECOVERY_CORE_ONLY") == "1"
 RECOVERY_OFFLINE = os.environ.get("AFTERGRID_RECOVERY_OFFLINE") == "1"
 OFFLINE_ACTIONS={"start","stop","restart","uninstall","share","unshare"}
+OFFLINE_BACKUP_ACTIONS={"snapshot","verify-snapshot","content-snapshot","content-verify","core-snapshot","core-verify-snapshot","worker-snapshot","worker-verify-snapshot","recovery-manifest"}
 MAX_LOG = 24000
 SECRET_LOCK = threading.Lock()
 REGISTRY_LOCK = threading.Lock()
@@ -80,9 +81,22 @@ def offline_mapping(ident):
     return row,override
 
 def offline_admission(ident,action):
-    if action not in OFFLINE_ACTIONS:raise ValueError("Action unavailable in offline recovery")
+    if action not in OFFLINE_ACTIONS|OFFLINE_BACKUP_ACTIONS:raise ValueError("Action unavailable in offline recovery")
     try:
         row,_=offline_mapping(ident)
+        if action in OFFLINE_BACKUP_ACTIONS:
+            marker=STATE/"offline-kopia-writable.json"
+            if not stat.S_ISREG(marker.lstat().st_mode) or marker.stat().st_size>4096 or json.loads(marker.read_text())!={"format":1,"repository":"/repository"}:
+                raise ValueError("Writable backup opt-in required")
+            kopia,_=offline_mapping("kopia")
+            raw=subprocess.run(["docker","image","inspect","--format","{{json .Id}}",kopia["recovery_tag"]],
+                               env=compose_env("kopia"),capture_output=True,text=True,timeout=8,check=True).stdout
+            if json.loads(raw)!=kopia["image_id"]:raise ValueError("Offline Kopia image changed")
+            raw=subprocess.run(command("kopia","exec","-T","kopia","/bin/kopia","repository","status","--json"),
+                               env=compose_env("kopia"),capture_output=True,text=True,timeout=15,check=True).stdout
+            status=json.loads(raw)
+            if status["clientOptions"].get("readonly",False) is not False or status["storage"]["type"]!="filesystem" or status["storage"].get("config",{}).get("path")!="/repository":
+                raise ValueError("Native writable repository not confirmed")
         if catalog()[ident].get("generated_secrets"):
             path=STATE/"secrets"/(ident+".json")
             if not stat.S_ISREG(path.lstat().st_mode):raise ValueError("Recovered credentials missing")
@@ -90,8 +104,8 @@ def offline_admission(ident,action):
         raw=subprocess.run(["docker","image","inspect","--format","{{json .Id}}",row["recovery_tag"]],
                            env=compose_env(ident),capture_output=True,text=True,timeout=8,check=True).stdout
         if json.loads(raw)!=row["image_id"]:raise ValueError("Offline image changed")
-    except (OSError,subprocess.SubprocessError,ValueError,TypeError,AttributeError):
-        raise ValueError("Offline image or recovered credentials unavailable") from None
+    except (OSError,subprocess.SubprocessError,ValueError,TypeError,AttributeError,KeyError):
+        raise ValueError("Offline image, writable repository or recovered credentials unavailable") from None
 
 def command(ident, *args):
     if ident not in catalog():

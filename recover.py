@@ -137,6 +137,98 @@ def recover(root,assets_dir,repository,inventory,modules,password):
     prep.private_write(root/"recovery-guided-report.json",json.dumps(report,indent=2).encode())
     return report
 
+def enable_backups(root,assets_dir,inventory):
+    """Opt in to native writes on the independent copy, before activation."""
+    if os.geteuid()!=0:raise ValueError("Root required")
+    root,assets_dir=map(assets.real_directory,(root,assets_dir))
+    value,plan,metadata,rows=data.load_plan(root,assets_dir)
+    data.inventory_records(inventory,plan,metadata)
+    report=json.loads(prep.read_private(root/"recovery-guided-report.json",65536))
+    if report.get("guarded") is not True or report.get("repository_readonly") is not True or report.get("inventory_sha256")!=assets.sha256_file(inventory):
+        raise ValueError("Guided recovery report mismatch")
+    receipt=json.loads(prep.read_private(root/"recovery-restored/kopia.json",65536))
+    if receipt.get("repository_copy_connected_readonly") is not True or receipt.get("application_started") is not True or receipt.get("inventory_sha256")!=report["inventory_sha256"]:
+        raise ValueError("Read-only working copy receipt required")
+    marker=root/"recovery-worker-state/offline-kopia-writable.json"
+    if marker.exists() or marker.is_symlink():raise ValueError("Writable backup opt-in already exists")
+    if assets.local_docker()!=value["platform"]:raise ValueError("Architecture mismatch")
+    row=next(r for r in rows if r["project"]=="aftergrid-kopia")
+    env={"PATH":os.environ["PATH"],"HOME":"/root","DOCKER_HOST":"unix:///var/run/docker.sock"}
+    cmd=install.compose_command(root)
+    def run(argv,*args,timeout=30,environment=env):
+        return subprocess.run([*argv,*args],env=environment,check=True,capture_output=True,text=True,timeout=timeout).stdout.strip()
+    for core in (r for r in rows if r["project"]=="aftergrid-core"):
+        cid=run(cmd,"ps","-q",core["service"])
+        if not re.fullmatch(r"[a-f0-9]{12,64}",cid):raise ValueError("Guarded core required")
+        info=json.loads(assets.docker("container","inspect","--format","{{json .}}",cid))
+        if (info["Image"]!=core["image_id"] or not info["State"]["Running"]
+            or info["Config"]["Labels"].get("com.docker.compose.project.working_dir")!=str(root)
+            or "AFTERGRID_RECOVERY_CORE_ONLY=1" not in info["Config"]["Env"]):
+            raise ValueError("Guarded core mismatch; enable backups before activation")
+    ids=assets.docker("ps","--quiet","--filter","label=com.docker.compose.project=aftergrid-kopia").splitlines()
+    if len(ids)!=1:raise ValueError("Exactly one recovered Kopia container required")
+    cid=ids[0]
+    info=json.loads(assets.docker("container","inspect","--format","{{json .}}",cid))
+    repository=assets.real_directory(root/"backups")
+    cfg=assets.real_directory(root/"data/kopia/config")
+    mounts={m["Destination"]:m for m in info["Mounts"]}
+    if (info["Image"]!=row["image_id"] or not info["State"]["Running"]
+        or mounts.get("/repository",{}).get("Source")!=str(repository)
+        or mounts.get("/app/config",{}).get("Source")!=str(cfg)
+        or json.loads(assets.docker("image","inspect","--format","{{json .Id}}",row["recovery_tag"]))!=row["image_id"]):
+        raise ValueError("Recovered Kopia copy or image mismatch")
+    current=cfg/"repository.config"
+    original=prep.read_private(current,65536)
+    old=json.loads(original)
+    if old.get("readonly") is not True or old.get("storage",{}).get("type")!="filesystem" or old["storage"].get("config",{}).get("path")!="/repository":
+        raise ValueError("Expected native read-only filesystem connection")
+    next_path=cfg/"repository-next.config"
+    if next_path.exists() or next_path.is_symlink():raise ValueError("Inspect existing recovery config candidate")
+    password=json.loads(prep.read_private(root/"recovery-worker-state/secrets/kopia.json",16384))["KOPIA_PASSWORD"]
+    if not re.fullmatch(r"[a-f0-9]{64}",password):raise ValueError("Invalid recovered repository password")
+    helper_env={**env,"KOPIA_PASSWORD":password}
+    helper=["docker","run","--rm","--network","none","--pull","never","--user","0:0","--hostname","aftergrid-kopia",
+            "--env","USER=aftergrid","--env","KOPIA_PASSWORD","--env","KOPIA_CHECK_FOR_UPDATES=false",
+            "--env","KOPIA_PERSIST_CREDENTIALS_ON_CONNECT=false","--env","KOPIA_CONFIG_PATH=/app/config/repository-next.config"]
+    for source,dest in ((repository,"/repository"),(cfg,"/app/config"),(root/"data/kopia/cache","/app/cache"),(root/"data/kopia/logs","/app/logs")):
+        assets.real_directory(source)
+        if not re.fullmatch(r"/[a-zA-Z0-9_./-]+",str(source)):raise ValueError("Invalid mount path")
+        helper.extend(("--mount","type=bind,src="+str(source)+",dst="+dest))
+    helper.extend(("--entrypoint","/bin/kopia",row["recovery_tag"]))
+    swapped=False
+    run(["docker"],"stop","--time","30",cid,timeout=45)
+    try:
+        run(helper,"repository","connect","filesystem","--path=/repository","--no-check-for-updates",timeout=120,environment=helper_env)
+        candidate=json.loads(prep.read_private(next_path,65536))
+        if candidate.get("readonly",False) is not False or candidate.get("storage",{}).get("type")!="filesystem" or candidate["storage"].get("config",{}).get("path")!="/repository":
+            raise ValueError("Native writable connection not confirmed")
+        os.replace(next_path,current)
+        swapped=True
+        run(["docker"],"start",cid)
+        import time
+        deadline=time.monotonic()+60
+        while True:
+            try:
+                status=json.loads(run(["docker","exec",cid,"/bin/kopia"],"repository","status","--json",timeout=10))
+                if status["clientOptions"].get("readonly",False) is not False or status["storage"]["type"]!="filesystem":
+                    raise ValueError("Writable repository not confirmed")
+                break
+            except (subprocess.SubprocessError,ValueError,KeyError):
+                if time.monotonic()>deadline:raise
+                time.sleep(2)
+        prep.private_write(marker,b'{"format":1,"repository":"/repository"}')
+    except Exception:
+        # Restore the prior guarded connection. The copy may contain native
+        # maintenance writes; the original repository remains untouched.
+        if swapped:
+            run(["docker"],"stop","--time","30",cid,timeout=45)
+            fd,tmp=tempfile.mkstemp(prefix=".readonly-",dir=cfg)
+            with os.fdopen(fd,"wb") as out:out.write(original)
+            os.replace(tmp,current)
+        next_path.unlink(missing_ok=True)
+        run(["docker"],"start",cid)
+        raise
+
 def activate(root,assets_dir,inventory):
     """Enable restricted local lifecycle mode after operator native checks."""
     if os.geteuid()!=0:raise ValueError("Root required")
@@ -223,9 +315,11 @@ def main():
     run.add_argument("--repository",required=True,type=Path)
     run.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
     run.add_argument("--confirm-empty-replacement",action="store_true")
+    backups=sub.add_parser("enable-backups")
+    backups.add_argument("--confirm-working-copy-writes",action="store_true")
     finish=sub.add_parser("activate-offline")
     finish.add_argument("--confirm-native-checks",action="store_true")
-    for cmd in (run,finish):
+    for cmd in (run,finish,backups):
         for name in ("root","assets","inventory"):cmd.add_argument("--"+name,required=True,type=Path)
     args=parser.parse_args()
     try:
@@ -234,10 +328,14 @@ def main():
             password=getpass.getpass("Original Kopia repository password: ")
             recover(args.root,args.assets,args.repository,args.inventory,args.module,password)
             print("Guarded recovery staged and started. Verify native accounts and content before activate-offline. Not complete recovery.")
+        elif args.action=="enable-backups":
+            if not args.confirm_working_copy_writes:raise ValueError("Confirm writable independent copy")
+            enable_backups(args.root,args.assets,args.inventory)
+            print("Native working copy connected writable. Core-only guard remains active; verify a new managed backup after activation.")
         else:
             if not args.confirm_native_checks:raise ValueError("Explicit native account and content checks required")
             activate(args.root,args.assets,args.inventory)
-            print("Restricted offline lifecycle mode enabled on localhost. Full recovery and writable Kopia acceptance remain unverified.")
+            print("Restricted offline lifecycle mode enabled on localhost. Full recovery remains unverified; writable backups require prior opt-in and a new successful backup test.")
     except Exception:
         parser.exit(1,"Recovery stopped or refused. Inspect the replacement root, Docker and recovery receipts before retrying. No automatic cleanup of imported images or running services.\n")
 
