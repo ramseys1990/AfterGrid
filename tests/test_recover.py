@@ -199,3 +199,92 @@ def test_microtak_historical_inventory_cannot_enable_restore():
     with pytest.raises(ValueError,match="MicroTAK"):
         recover.data.required_records({"application/tak":{"verification":"isolated",
             "repository_status":"present","snapshot_id":"a"*32,"source":"/source/data/tak"}},"tak")
+
+
+def source_rows():
+    return {name:{"id":str(i)*64,"image_id":"sha256:"+str(i)*64,
+                  "project":"aftergrid-core" if name in {"core","worker"} else "aftergrid-"+name,
+                  "state":"exited" if name=="maps" else "running"}
+            for i,name in enumerate(("core","worker","kopia","kiwix","maps"),1)}
+
+
+@pytest.mark.parametrize("fail_pack",[False,True])
+def test_host_handoff_restores_only_original_running_containers(tmp_path,monkeypatch,fail_pack):
+    root=tmp_path/"source"
+    root.mkdir()
+    inventory=tmp_path/"inventory.json"
+    inventory.write_text("{}")
+    destination=tmp_path/"package"
+    rows=source_rows()
+    original=json.loads(json.dumps(rows))
+    events=[]
+    monkeypatch.setattr(recover.os,"geteuid",lambda:0)
+    monkeypatch.setattr(recover,"package_handoff",lambda *args:b"sealed")
+    monkeypatch.setattr(recover,"inventory_core_records",lambda value:{})
+    monkeypatch.setattr(recover.data,"required_records",lambda *args:[])
+    monkeypatch.setattr(recover,"source_containers",lambda root:json.loads(json.dumps(rows)))
+    monkeypatch.setattr(recover,"require_quiescent",lambda:None)
+    def docker(action,*args,**kwargs):
+        name=next(k for k,v in rows.items() if v["id"]==args[-1])
+        events.append((action,name))
+        rows[name]["state"]="exited" if action=="stop" else "running"
+    monkeypatch.setattr(recover.assets,"docker",docker)
+    def pack(*args,**kwargs):
+        assert all(r["state"]=="exited" for r in rows.values())
+        assert kwargs["require_sealed"]
+        assert (root/"recovery-source-restart.json").is_file()
+        if fail_pack:raise ValueError("fixture pack failed")
+        return {"omitted_captured":["maps"]}
+    monkeypatch.setattr(recover,"pack",pack)
+    monkeypatch.setattr(recover,"verify_package",lambda p:{"omitted_captured":["maps"]})
+    if fail_pack:
+        with pytest.raises(ValueError,match="fixture pack failed"):
+            recover.pack_and_resume(root,inventory,destination,["kiwix"],"password")
+    else:
+        assert recover.pack_and_resume(root,inventory,destination,["kiwix"],"password")=={"omitted_captured":["maps"]}
+    assert rows==original
+    assert events==[("stop","core"),("stop","worker"),("stop","kiwix"),("stop","kopia"),
+                    ("start","kopia"),("start","kiwix"),("start","worker"),("start","core")]
+    assert not (root/"recovery-source-restart.json").exists()
+
+
+def test_resume_source_refuses_changed_container_identity(tmp_path,monkeypatch):
+    rows=source_rows()
+    journal=tmp_path/"recovery-source-restart.json"
+    journal.write_text(json.dumps({"format":1,"root":str(tmp_path),"containers":rows}))
+    rows["kiwix"]["id"]="f"*64
+    monkeypatch.setattr(recover.os,"geteuid",lambda:0)
+    monkeypatch.setattr(recover,"source_containers",lambda root:rows)
+    monkeypatch.setattr(recover.assets,"docker",lambda *a,**k:pytest.fail("Must not start a replacement container"))
+    with pytest.raises(ValueError,match="identities changed"):
+        recover.resume_source(tmp_path)
+    assert journal.is_file()
+
+
+def test_source_containers_excludes_unrelated_projects_and_checks_mount_root(tmp_path,monkeypatch):
+    rows=source_rows()
+    unrelated="f"*64
+    inspected=[]
+    monkeypatch.setattr(recover.assets,"local_docker",lambda:"linux/amd64")
+    wrong=[False]
+    def docker(*args,**kwargs):
+        if args[0]=="ps":
+            return "\n".join([json.dumps(v["id"])+" "+json.dumps(v["project"]) for v in rows.values()]
+                             +[json.dumps(unrelated)+" "+json.dumps("unrelated-project")])
+        cid=args[-1]
+        inspected.append(cid)
+        name=next(k for k,v in rows.items() if v["id"]==cid)
+        row=rows[name]
+        dest,relative={"core":("/data","data/core"),"worker":("/modules","modules"),
+                       "kopia":("/repository","backups"),"kiwix":("/data","content/kiwix"),
+                       "maps":("/data","content/maps")}[name]
+        source=str(tmp_path/relative) if not (wrong[0] and name=="kiwix") else "/unrelated/content"
+        return json.dumps({"Id":cid,"Image":row["image_id"],"State":{"Status":row["state"]},
+                           "Config":{"Labels":{"com.docker.compose.project":row["project"],"com.docker.compose.service":name}},
+                           "Mounts":[{"Type":"bind","Destination":dest,"Source":source}]})
+    monkeypatch.setattr(recover.assets,"docker",docker)
+    assert recover.source_containers(tmp_path)==rows
+    assert unrelated not in inspected
+    wrong[0]=True
+    with pytest.raises(ValueError,match="outside source root"):
+        recover.source_containers(tmp_path)
