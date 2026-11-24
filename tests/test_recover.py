@@ -150,3 +150,35 @@ def test_fresh_capture_inventory_exact_job_binding(failure):
 def test_capture_client_rejects_unsafe_urls(url):
     with pytest.raises(ValueError):
         recover.capture_client(url)
+
+
+def test_package_handoff_matches_inventory_and_selection(tmp_path):
+    root=tmp_path/"source"
+    marker=root/"data/core/recovery-maintenance.json"
+    marker.parent.mkdir(parents=True)
+    inventory={"manifest_job":19,"records":[]}
+    raw=json.dumps(inventory).encode()
+    with pytest.raises(ValueError,match="Sealed"):
+        recover.package_handoff(root,raw,["kiwix"],True)
+    marker.write_text(json.dumps({"format":1,"phase":"capturing"}))
+    with pytest.raises(ValueError):
+        recover.package_handoff(root,raw,["kiwix"],True)
+    marker.write_text(json.dumps({"format":1,"phase":"sealed","modules":["kiwix"],"manifest_job":19,
+                                  "inventory_sha256":recover.canonical_inventory_digest(inventory)}))
+    assert recover.package_handoff(root,raw,["kiwix"],True)==marker.read_bytes()
+    with pytest.raises(ValueError):
+        recover.package_handoff(root,raw,["maps"],True)
+    with pytest.raises(ValueError):
+        recover.package_handoff(root,json.dumps({**inventory,"manifest_job":20}).encode(),["kiwix"],True)
+
+
+def test_guarded_capture_refuses_mismatched_seal(monkeypatch):
+    value={"manifest_job":11}
+    monkeypatch.setattr(recover,"capture_inventory",lambda *args,**kwargs:value)
+    calls=[]
+    def call(path,payload):
+        calls.append(path)
+        return {"phase":"sealed","inventory_sha256":"wrong"}
+    with pytest.raises(ValueError,match="seal"):
+        recover.guarded_capture(call,["kiwix"])
+    assert calls==["/api/admin/recovery-maintenance/begin","/api/admin/recovery-maintenance/seal"]
