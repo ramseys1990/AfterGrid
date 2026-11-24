@@ -111,19 +111,27 @@ def main(fixture):
             post_job(old,"/api/admin/kopia/initialize",{"confirmed":True})
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             inventory=tmp/"inventory.json"
-            capture=recover.capture_inventory(lambda path,payload=None:call(old,path,payload,202 if payload is not None else 200),
-                                              ["kiwix"],job_timeout=240)
+            def capture_call(path,payload=None):
+                status=202 if payload is not None and "/recovery-maintenance/" not in path else 200
+                return call(old,path,payload,status)
+            capture=recover.guarded_capture(capture_call,["kiwix"],job_timeout=240)
+            assert call(old,"/api/admin/recovery-maintenance")["phase"]=="sealed"
+            assert call(old,"/api/admin/households",{"name":"Must be blocked"},409)["detail"]
+            assert call(old,"/api/admin/modules/kiwix/stop",{},409)["detail"]
             recover.prep.private_write(inventory,json.dumps(capture).encode())
             assert capture["atomic"] is False
             assert recover.core_records(inventory)["worker"]["verification_job"]>recover.core_records(inventory)["worker"]["snapshot_job"]
             # Stop the original services but retain container image identities.
-            for ident in ("kiwix","kopia"):post_job(old,"/api/admin/modules/"+ident+"/stop")
+            for ident in ("kiwix","kopia"):
+                ids=assets.docker("ps","--quiet","--filter","label=com.docker.compose.project=aftergrid-"+ident).splitlines()
+                assert len(ids)==1 and re.fullmatch(r"[a-f0-9]{12,64}",ids[0])
+                run(["docker"],"stop","--time","60",ids[0])
             run(cmd,"stop")
             repository=original/"backups"
             before=repository_digest(repository)
             assert before
             package=tmp/"package"
-            packed=recover.pack(original,inventory,package,["kiwix"],password)
+            packed=recover.pack(original,inventory,package,["kiwix"],password,require_sealed=True)
             assert recover.verify_package(package)==packed and packed["omitted_captured"]==[]
             # A modified inventory must be rejected before any replacement actions.
             packaged_inventory=package/"inventory.json"
