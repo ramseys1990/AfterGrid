@@ -1,5 +1,8 @@
 """Private, bounded SQLite recovery export. Invoked only by the reviewed worker."""
 import os
+import base64
+import json
+import tempfile
 import re
 import sqlite3
 import stat
@@ -7,7 +10,67 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    from .content_backup_guard import content_admission
+except ImportError:
+    from content_backup_guard import content_admission
+
 MAX_DB=64*1024*1024
+METADATA_DB_LIMIT=8*1024*1024
+METADATA_LIMIT=12*1024*1024
+REGIONAL_RECORDS=("map-job.json","routing-download.json")
+
+def export_content_metadata(data,target):
+    """Capture only stable download metadata while admission is held."""
+    source=data/"downloads.sqlite3"
+    if not stat.S_ISREG(source.lstat().st_mode):raise RuntimeError("Download state unavailable")
+    deadline=time.monotonic()+15
+    with content_admission(data):
+        src=sqlite3.connect(source.absolute().as_uri()+"?mode=ro",uri=True,timeout=2)
+        try:
+            page=src.execute("PRAGMA page_size").fetchone()[0]
+            if src.execute("PRAGMA page_count").fetchone()[0]*page>METADATA_DB_LIMIT:
+                raise RuntimeError("Download database exceeds export limit")
+            if src.execute("SELECT 1 FROM downloads WHERE state IN ('queued','downloading','verifying','indexing') LIMIT 1").fetchone():
+                raise RuntimeError("Finish active downloads before core recovery capture")
+            with tempfile.TemporaryDirectory(prefix="aftergrid-download-export-") as tmp:
+                path=Path(tmp)/"downloads.sqlite3"
+                dst=sqlite3.connect(path,timeout=2)
+                try:
+                    def progress(status,remaining,total):
+                        if time.monotonic()>deadline or total*page>METADATA_DB_LIMIT:
+                            raise RuntimeError("Download export limit exceeded")
+                    src.backup(dst,pages=128,progress=progress,sleep=0.05)
+                    dst.execute("PRAGMA journal_mode=DELETE")
+                    dst.set_progress_handler(lambda: int(time.monotonic()>deadline),10000)
+                    if dst.execute("PRAGMA integrity_check").fetchmany(2)!=[("ok",)]:
+                        raise RuntimeError("Download export integrity failed")
+                    if dst.execute("SELECT 1 FROM downloads WHERE state IN ('queued','downloading','verifying','indexing') LIMIT 1").fetchone():
+                        raise RuntimeError("Active download in recovery export")
+                finally:dst.close()
+                if path.stat().st_size>METADATA_DB_LIMIT:raise RuntimeError("Download export exceeds limit")
+                payload=base64.b64encode(path.read_bytes()).decode("ascii")
+        finally:src.close()
+        records={}
+        for name in REGIONAL_RECORDS:
+            path=data/name
+            if not path.exists() and not path.is_symlink():continue
+            info=path.lstat()
+            if not stat.S_ISREG(info.st_mode) or not 0<info.st_size<=65536:
+                raise RuntimeError("Invalid regional metadata")
+            value=json.loads(path.read_text())
+            if not isinstance(value,dict) or value.get("state") not in {"idle","complete","failed","estimated"}:
+                raise RuntimeError("Finish active regional operations before core recovery capture")
+            if value["state"]=="estimated":
+                value={**value,"state":"failed","detail":"Recovered estimate; estimate again before downloading"}
+            records[name]=value
+        envelope=json.dumps({"format":1,"downloads_sqlite3":payload,"regional_records":records},separators=(",",":")).encode("utf-8")
+        if len(envelope)>METADATA_LIMIT:raise RuntimeError("Content metadata export exceeds limit")
+        fd=os.open(target/"content-metadata.json",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+        with os.fdopen(fd,"wb") as out:
+            out.write(envelope)
+            out.flush()
+            os.fsync(out.fileno())
 REQUIRED={"admin","sessions","first_run","households","inventory_locations",
           "inventory_connections","map_waypoints","map_routes","comm_devices","comm_plans"}
 
@@ -54,10 +117,11 @@ def export_database(data,job):
         finally:src.close()
         if dbpath.stat().st_size>MAX_DB:
             raise RuntimeError("Core database exceeds export limit")
+        export_content_metadata(data,target)
         return target
     except Exception:
         # Remove only files belonging to this newly created directory.
-        for name in ("core.sqlite3","core.sqlite3-journal","core.sqlite3-wal","core.sqlite3-shm","job-id"):
+        for name in ("core.sqlite3","core.sqlite3-journal","core.sqlite3-wal","core.sqlite3-shm","job-id","content-metadata.json"):
             (target/name).unlink(missing_ok=True)
         target.rmdir()
         raise
@@ -69,9 +133,10 @@ def clear_export(data,job):
     marker=target/"job-id"
     if not stat.S_ISREG(marker.lstat().st_mode) or marker.read_text(encoding="ascii")!=str(job):
         raise RuntimeError("Export ownership not confirmed")
-    if {p.name for p in target.iterdir()}!={"job-id","core.sqlite3"}:
+    if {p.name for p in target.iterdir()}!={"job-id","core.sqlite3","content-metadata.json"}:
         raise RuntimeError("Unexpected export contents; inspect manually")
     (target/"core.sqlite3").unlink()
+    (target/"content-metadata.json").unlink()
     marker.unlink()
     target.rmdir()
 

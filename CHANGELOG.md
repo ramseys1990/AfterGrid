@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.15-dev
+- Add stable download and regional metadata to core exports, guarded against active operations; invalidate stale estimates in the copy.
+- Verify metadata on isolated restoration, reconstruct it in offline preparation and record its inclusion in recovery inventory. Legacy exports remain supported. CI pending.
+
 ## 0.8.14-dev
 - Add native recovery inventory generation and administrator-only JSON download, with exact snapshot IDs, original job evidence, native manifest presence, file counts and sizes, and worker envelope digest.
 - Explicitly distinguish independent capture points, missing sources and read verification from a complete recovery package. CI pending.

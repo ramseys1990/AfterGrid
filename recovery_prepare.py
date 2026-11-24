@@ -51,6 +51,10 @@ def prepare(core_dir,worker_dir,destination,core_job,worker_job,worker_sha256):
     core=read_private(core_dir/"core.sqlite3",64*1024*1024)
     payload=read_private(worker_dir/"worker-recovery.json",worker.WORKER_EXPORT_LIMIT)
     worker.check_restored_core(core)
+    content_file=core_dir/"content-metadata.json"
+    content=None
+    if content_file.exists() or content_file.is_symlink():
+        content=worker.check_restored_content_metadata(read_private(content_file,12*1024*1024))
     count=worker.check_restored_worker(payload,worker_job,worker_sha256)
     envelope=json.loads(payload)
     worker_db=base64.b64decode(envelope["jobs_sqlite3"],validate=True)
@@ -66,12 +70,17 @@ def prepare(core_dir,worker_dir,destination,core_job,worker_job,worker_sha256):
         secret_out=worker_out/"secrets"
         for d in (core_out,worker_out,secret_out):d.mkdir(mode=0o700)
         private_write(core_out/"core.sqlite3",core)
+        if content is not None:
+            downloads,regional=content
+            private_write(core_out/"downloads.sqlite3",downloads)
+            for name,value in regional.items():
+                private_write(core_out/name,json.dumps(value,separators=(",",":")).encode("utf-8"))
         private_write(worker_out/"jobs.sqlite3",worker_db)
         for ident,fields in envelope["secrets"].items():
             private_write(secret_out/(ident+".json"),json.dumps(fields,separators=(",",":")).encode("utf-8"))
         metadata={"format":1,"core_source_job":core_job,"worker_source_job":worker_job,
                   "core_sha256":hashlib.sha256(core).hexdigest(),"worker_envelope_sha256":worker_sha256,
-                  "secret_set_count":count,"scope":"private staging only; not a complete system restore"}
+                  "secret_set_count":count,"content_metadata_included":content is not None,"scope":"private staging only; not a complete system restore"}
         private_write(destination/"recovery-metadata.json",json.dumps(metadata,indent=2).encode("utf-8"))
     except Exception:
         # This directory was created exclusively above. Never remove an existing tree.

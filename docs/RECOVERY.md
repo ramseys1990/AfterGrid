@@ -39,3 +39,5 @@ Do not use this tool as evidence that the entire server can be rebuilt. It valid
 ## Recovery inventory
 
 Generate and download the administrator recovery inventory after all intended snapshots and verification jobs finish. It lists the exact snapshot IDs, source jobs and worker envelope digest for the preparation command above, plus explicit missing sources. Preserve it off-server together with the repository password and independent repository copy. Do not infer that an uninstalled or missing source is safe to omit without reviewing the original application selection. The report does not pin snapshots or establish a coordinated system capture.
+
+New core exports also contain content-metadata.json. Preparation validates and reconstructs downloads.sqlite3 and reviewed regional records into the private core staging tree. Existing estimated downloads are reset to failed in the copy; new estimates are required. Rebuild place indexes after restoring routing content. Legacy core exports may lack metadata; recovery-metadata.json reports its inclusion. Capture points remain independent.

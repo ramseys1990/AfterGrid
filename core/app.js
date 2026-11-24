@@ -218,7 +218,7 @@ $("kopia-initialize").addEventListener("click",async()=>{
   }catch(e){if(status?.admin)$("kopia-repository-result").textContent=e.message;}
 });
 $("backup-core-snapshot").addEventListener("click",async()=>{
-  if(!confirm("Create a private SQLite export of AfterGrid accounts and configuration, then snapshot it using connected Kopia. Active sessions are removed from the copy only. This does not capture worker secrets, download state or full recovery. Continue?"))return;
+  if(!confirm("Create a private SQLite export of AfterGrid accounts and configuration, then snapshot it using connected Kopia. Active sessions are removed from the copy only. Finish all downloads and regional operations first; stable download metadata is included. This does not capture worker secrets or full recovery. Continue?"))return;
   const button=$("backup-core-snapshot"),root=$("backup-core-result");
   button.disabled=true;
   try{

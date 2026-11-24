@@ -135,7 +135,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.14-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.15-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -889,10 +889,10 @@ def create_app(data_dir=None):
     def core_backup_plan(request: Request):
         require_admin(request)
         return {"coverage":"planned only","snapshot_verified":False,
-                "sources":[{"path":"/source/data/core/recovery-export","guidance":"Managed online SQLite export of core.sqlite3; sessions removed from copy. Other core state is not included."},
+                "sources":[{"path":"/source/data/core/recovery-export","guidance":"Managed online SQLite export of core.sqlite3 and stable download metadata; sessions removed from copy. Rebuildable indexes are excluded."},
                            {"path":"/tmp/aftergrid-worker-export","guidance":"Managed private worker database and reviewed generated-secret export; restore not yet verified."},
                            {"path":"/source/modules","guidance":"Reviewed module definitions, not the complete core release."}],
-                "missing":["Download bookkeeping, regional job records and rebuildable place indexes","Worker state restoration and exact secret recovery","Core release and host .env configuration","Exact Docker images and recovery metadata"],
+                "missing":["Rebuildable place indexes and interrupted downloads","Worker state restoration and exact secret recovery","Core release and host .env configuration","Exact Docker images and recovery metadata"],
                 "repository_guidance":"Configure Kopia natively. Keep the repository password and an independent repository copy off the server."}
 
     @api.post("/api/admin/modules/{ident}/snapshot",status_code=202)

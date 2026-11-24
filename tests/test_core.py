@@ -319,6 +319,7 @@ def test_private_core_export_and_cleanup(tmp_path):
         target=export_database(tmp_path,7)
         assert target.stat().st_mode&0o777==0o700
         assert (target/"core.sqlite3").stat().st_mode&0o777==0o600
+        assert (target/"content-metadata.json").stat().st_mode&0o777==0o600
         with sqlite3.connect(target/"core.sqlite3") as db:
             assert db.execute("PRAGMA integrity_check").fetchone()==("ok",)
             assert db.execute("SELECT server_name FROM admin").fetchone()==("Recovery fixture",)

@@ -18,6 +18,9 @@ def test_recovery_preparation_new_private_tree(tmp_path,monkeypatch):
     with TestClient(create_app(core)) as client:
         response=client.post("/api/setup",json={"token":"fixture-token","username":"admin","password":"fixture test password","server_name":"Fixture"},headers={"Origin":"http://testserver"})
         assert response.status_code==201
+        (core/"map-job.json").write_text('{"state":"estimated","build":"20261101"}')
+        with sqlite3.connect(core/"downloads.sqlite3") as db:
+            db.execute("INSERT INTO downloads(key,name,state,updated) VALUES('fixture','fixture.zim','complete',1)")
         core_export=export_database(core,11)
     state=tmp_path/"live-worker"
     monkeypatch.setattr(worker,"STATE",state)
@@ -38,7 +41,10 @@ def test_recovery_preparation_new_private_tree(tmp_path,monkeypatch):
     with pytest.raises(RuntimeError):prepare(core_export,worker_export,output,11,job,"0"*64)
     assert not output.exists()
     result=prepare(core_export,worker_export,output,11,job,digest)
-    assert result["secret_set_count"]==2
+    assert result["secret_set_count"]==2 and result["content_metadata_included"]
+    assert json.loads((output/"core/map-job.json").read_text())["state"]=="failed"
+    with sqlite3.connect(output/"core/downloads.sqlite3") as db:
+        assert db.execute("SELECT name,state FROM downloads").fetchone()==("fixture.zim","complete")
     assert output.stat().st_mode&0o777==0o700
     assert (output/"core/core.sqlite3").read_bytes()==(core_export/"core.sqlite3").read_bytes()
     assert (output/"worker-state/jobs.sqlite3").stat().st_mode&0o777==0o600

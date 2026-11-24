@@ -520,6 +520,8 @@ def recovery_manifest_records():
                 if match:
                     sid=match.group(1)
                     record.update(snapshot_id=sid,snapshot_job=row["id"],captured_at=row["created"])
+                    if key=="core":
+                        record["content_metadata_included"]="Core export includes content metadata format 1." in row["log"]
                     if key=="worker":
                         digest=re.search(r"Worker recovery envelope SHA-256: ([a-f0-9]{64})",row["log"])
                         record["envelope_sha256"]=digest.group(1) if digest else None
@@ -546,7 +548,7 @@ def recovery_manifest(job):
     # Presence is not a new read verification. No secret values, arbitrary paths or logs are exported.
     result={"format":1,"manifest_job":job,"created":int(time.time()),"atomic":False,
             "complete_system_recovery":False,"records":records,
-            "missing_artifacts":["download bookkeeping and regional job metadata","host environment and exact release",
+            "missing_artifacts":["rebuildable place indexes; review core content metadata coverage","host environment and exact release",
                                  "Docker image archive","replacement installation and disconnected acceptance"],
             "guidance":"Independent capture points; retain exact snapshot IDs, worker envelope digest, repository and password separately. Missing snapshots can represent uninstalled apps. No automatic retention pinning."}
     change(job,completed=2,stage="Save private recovery inventory")
@@ -601,6 +603,7 @@ def core_snapshot(job):
     change(job,completed=1,stage="Create consistent private core database export")
     export("create")
     try:
+        log(job,"\nCore export includes content metadata format 1.\n")
         change(job,completed=2,stage="Snapshot core database export using Kopia")
         snapshot_id=native_snapshot_source("/source/data/core/recovery-export")
         log(job,"\nCore database export snapshot: "+snapshot_id+"; restore not verified.\n")
@@ -771,6 +774,40 @@ def check_restored_homebox(data):
 def check_restored_core(data):
     check_restored_database(data,CORE_TABLES,core=True)
 
+def check_restored_content_metadata(payload):
+    """Decode and validate stable recovery metadata; no paths are taken from records."""
+    try:
+        if not isinstance(payload,bytes) or not 0<len(payload)<=12*1024*1024:raise ValueError("Metadata size")
+        value=json.loads(payload)
+        if not isinstance(value,dict) or set(value)!={"format","downloads_sqlite3","regional_records"} or type(value["format"]) is not int or value["format"]!=1:
+            raise ValueError("Metadata format")
+        records=value["regional_records"]
+        if not isinstance(records,dict) or not set(records)<={"map-job.json","routing-download.json"}:
+            raise ValueError("Regional record names")
+        if any(not isinstance(r,dict) or r.get("state") not in {"idle","complete","failed"} or len(json.dumps(r).encode())>65536 for r in records.values()):
+            raise ValueError("Regional record state")
+        data=base64.b64decode(value["downloads_sqlite3"],validate=True)
+        if not 0<len(data)<=8*1024*1024 or not data.startswith(b"SQLite format 3\x00"):
+            raise ValueError("Download database format")
+        with tempfile.TemporaryDirectory(prefix="aftergrid-download-check-") as tmp:
+            path=Path(tmp)/"downloads.sqlite3"
+            path.write_bytes(data)
+            deadline=time.monotonic()+15
+            conn=sqlite3.connect(path.as_uri()+"?mode=ro&immutable=1",uri=True)
+            try:
+                conn.execute("PRAGMA trusted_schema=OFF")
+                conn.set_progress_handler(lambda: int(time.monotonic()>deadline),10000)
+                if conn.execute("PRAGMA integrity_check").fetchmany(2)!=[("ok",)]:raise ValueError("Download database integrity")
+                columns={r[1] for r in conn.execute("PRAGMA table_info(downloads)")}
+                if columns!={"key","name","state","size","digest","detail","updated"}:
+                    raise ValueError("Download database schema")
+                if conn.execute("SELECT 1 FROM downloads WHERE state IN ('queued','downloading','verifying','indexing') LIMIT 1").fetchone():
+                    raise ValueError("Active download in recovery export")
+            finally:conn.close()
+        return data,records
+    except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):
+        raise RuntimeError("Restored content metadata verification failed") from None
+
 def check_restored_worker(payload,source_job,expected_checksum):
     """Validate the captured envelope without printing or applying any secret."""
     try:
@@ -886,8 +923,18 @@ def verify_snapshot(job,ident):
                 if marker!=str(source_job).encode("ascii"):
                     raise RuntimeError("Restored core export job marker mismatch")
                 check_restored_core(data)
+                with db() as conn:
+                    row=conn.execute("SELECT log FROM jobs WHERE id=?",(source_job,)).fetchone()
+                has_metadata=row is not None and "Core export includes content metadata format 1." in row["log"]
+                if has_metadata:
+                    payload=execute("/bin/sh","-c",
+                        'f="$1/data/content-metadata.json"; test -f "$f" && test ! -L "$f" && test "$(stat -c %s "$f")" -le 12582912 && cat "$f"',
+                        "check-content-metadata",target,timeout=30)
+                    check_restored_content_metadata(payload)
             result="SQLite integrity and expected schema passed"
-            if ident=="core":result+="; administrator present and sessions absent"
+            if ident=="core":
+                result+="; administrator present and sessions absent"
+                result+="; content metadata verified" if has_metadata else "; legacy export without content metadata evidence"
     except (OSError,subprocess.SubprocessError,ValueError):
         raise RuntimeError("Isolated restore or application data check failed; inspect private restore directory") from None
     log(job,"\nSnapshot "+snapshot_id+" restored; "+result+". Native application startup not tested.\n")

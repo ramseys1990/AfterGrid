@@ -87,3 +87,5 @@ Preparedness: shared LAN landing-page indicators for indexed knowledge, local ma
 0.8.13: 0.8.11 CI passed (core/worker isolated recovery and offline preparation). Add managed snapshots for Kiwix, maps, routing and Jellyfin media, guarded portal content admission and exact native full-file read verification without duplicate restore staging. Expanded CI pending. Full content restore, download metadata and coordinated recovery set next.
 
 0.8.14: native recovery inventory of exact snapshot IDs, job and verification evidence, worker envelope digest and manifest presence. Admin-only JSON download. Expanded application CI passed 45494302655; offline content CI running. Inventory is not atomic or a complete package. Next preserve download state and host/release metadata, then exact images and replacement installation.
+
+0.8.15: extend core recovery export to stable download and regional metadata, validate on isolated restore, reconstruct during offline preparation, expose inclusion in inventory. Legacy snapshots remain supported and labeled. CI pending. Next host configuration, exact release/images and coordinated recovery sets.

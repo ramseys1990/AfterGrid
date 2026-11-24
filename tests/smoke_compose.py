@@ -144,7 +144,7 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         core_verify=api("/api/admin/backups/core/verify-snapshot",{"confirmed":True})["id"]
         wait_job(core_verify,"isolated core restore verification")
         core_restored=next(j for j in api("/api/admin/jobs") if j["id"]==core_verify)
-        assert "administrator present and sessions absent" in core_restored["log"]
+        assert "administrator present and sessions absent" in core_restored["log"] and "content metadata verified" in core_restored["log"]
         assert api("/api/admin/status")
         import re
         core_target=re.search(r"Isolated restore directory: (/restore/aftergrid-core-[0-9]+-[a-f0-9]{16})",core_restored["log"]).group(1)
@@ -589,6 +589,7 @@ assert manifest["manifest_job"]==manifest_job and not manifest["atomic"] and not
 records={x["key"]:x for x in manifest["records"]}
 assert len(records)==13 and all(x["repository_status"]=="present" for x in records.values())
 assert records["worker"]["envelope_sha256"] and records["worker"]["verification"]=="isolated"
+assert records["core"]["content_metadata_included"]
 assert records["application/notes"]["verification"]=="isolated" and records["content/maps"]["verification"]=="read-only"
 print("Native recovery inventory and exact snapshot verification evidence passed.",flush=True)
 action("uninstall","kopia")
