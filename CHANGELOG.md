@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.8.26-dev
+- Formalize unsupported MicroTAK 0.18.1 recovery scope after pinned-source review: block guided restore and require explicit omission acknowledgment for portable packages containing its image. Preserve strict diagnostic shutdown checks and native lifecycle. CI pending.
 - Add persistent portal recovery maintenance, capture-owner backup admission, verified inventory seal and optional required host package handoff. Explicit release; native writers and source shutdown remain operator-controlled. CI pending.
 - Add fresh capture coordinator using existing authenticated native snapshot/verification jobs; bind final inventory to exact new job IDs and refuse observed concurrent work. Operator-controlled maintenance and service stops remain required. CI pending.
 - Add portable recovery package creation, verification and guided restore commands. Require a quiescent source, captured image inventory, exact verified snapshot selection, native manifest presence on copied repository, and deterministic repository byte digest.
