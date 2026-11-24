@@ -50,3 +50,19 @@ def test_selected_graph_status(tmp_path):
     assert r["selected_slot"]=="tiles-next"
     (content/"active-slot").write_text("../bad")
     assert not manager.status()["graph_ready"]
+
+
+def test_alternating_source_slots(tmp_path):
+    content=tmp_path/"routing";content.mkdir()
+    manager=m.RoutingDownloads(tmp_path,content)
+    (content/"active-slot").write_text("tiles-next\n")
+    (content/"tiles-next").mkdir()
+    (content/"tiles-next/.aftergrid-ready").touch()
+    (content/"incoming.osm.pbf").write_bytes(b"active")
+    assert manager.slot()=="region.osm.pbf"
+    (content/"tiles").mkdir()
+    with pytest.raises(ValueError,match="occupied"):manager.slot()
+    (content/"tiles").rmdir()
+    (content/"region.osm.pbf").write_bytes(b"new")
+    with pytest.raises(ValueError,match="occupied"):manager.slot()
+    assert manager.status()["selected_slot"]=="tiles-next"

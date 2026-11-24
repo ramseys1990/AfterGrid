@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.10-dev
+- Alternate the two fixed routing graph/source slots across repeatable updates, with explicit inactive-slot archiving and no deletion.
+- Refuse occupied graph/source slots and selected-graph retirement; retained archive status and incomplete archive visibility.
+- Extend real Compose tests to archive, refill, rebuild and switch a second time. New CI pending.
+
+
 ## 0.5.9-dev
 - Local named-node and tagged-address search using native Osmium extraction and SQLite FTS5, no geocoding server or runtime internet dependency.
 - Explicit admin index build, bounded native extraction, selected-source identity checks and independent retained indexes. Search results can populate routing endpoints.

@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.5.9-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.5.10-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -68,3 +68,5 @@ The map planner also supports shared emergency waypoints, using saved points as 
 Regional routing downloads: choose an initial supported Geofabrik region, estimate the published PBF size and explicitly confirm. curl transfers the file, matching publisher MD5 checks integrity, and AfterGrid stages it without overwriting an existing source or graph. 2 GiB PBF development cap; graph construction requires additional resources. Existing installations need content/routing owned by UID 10001. Replacement graph preparation, activation and rollback UI implemented; live Geofabrik transfer and replacement acceptance not yet tested.
 
 Offline point search uses native Osmium and SQLite FTS5, with an explicit administrator build from the selected local PBF. Includes named nodes and nodes with street/house-number tags; not full address geocoding, polygon POIs, interpolation or street lookup. Indexes are separate by graph slot and checked against source file metadata. Native Valhalla alternatives (up to two requested) can be selected, viewed and saved; alternatives are not guaranteed. New native smoke coverage pending.
+
+Repeatable routing updates alternate the two graph slots. Archive the inactive slot through the portal to retain both its source and graph, then acquire another source and build the newly vacant slot. Archiving does not free disk space; no automatic deletion. The current graph stays selected during preparation. New lifecycle coverage pending.

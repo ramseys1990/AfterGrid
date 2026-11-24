@@ -123,3 +123,9 @@ def test_routing_switch_failure_restores_previous_selection(tmp_path,monkeypatch
     assert ("run","--rm","--no-deps","-T","--pull","never","--entrypoint","/bin/sh","routing","/aftergrid/switch.sh","select","tiles-next") in commands
     assert commands[-2][-2:]==("select","tiles")
     assert "Previous graph ready again" in worker.jobs()[0]["log"]
+
+
+def test_archive_is_routing_only():
+    with pytest.raises(ValueError):worker.enqueue("kiwix","archive-original")
+    assert worker.routing_steps("archive-original")[1][1][-2:]==("/aftergrid/archive.sh","tiles")
+    assert worker.routing_steps("archive-replacement")[1][1][-2:]==("/aftergrid/archive.sh","tiles-next")

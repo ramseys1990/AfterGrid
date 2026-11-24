@@ -75,12 +75,27 @@ class RoutingDownloads:
 
     def slot(self):
         if not self.content.is_dir() or not os.access(self.content,os.W_OK):raise ValueError("Routing data directory is not writable")
-        if (self.content/"region.osm.pbf").exists() or (self.content/"region.osm.pbf").is_symlink() or (self.content/"tiles").exists():
-            name="incoming.osm.pbf"
-        else:name="region.osm.pbf"
-        p=self.content/name
-        if p.exists() or p.is_symlink():raise ValueError("Staged routing dataset already exists; archive it before downloading another")
+        selected=self.selected()
+        if selected=="invalid":raise ValueError("Invalid routing selector")
+        def occupied(name):
+            p=self.content/name
+            return p.exists() or p.is_symlink()
+        if selected=="tiles-next":
+            target,name="tiles","region.osm.pbf"
+        elif occupied("region.osm.pbf") or occupied("tiles"):
+            target,name="tiles-next","incoming.osm.pbf"
+        else:
+            target,name="tiles","region.osm.pbf"
+        if occupied(name) or occupied(target):raise ValueError("Inactive graph or source slot occupied; archive it before downloading another")
         return name
+
+    def selected(self):
+        selector=self.content/"active-slot"
+        try:
+            value="invalid" if selector.is_symlink() else selector.read_text().strip() if selector.exists() else "tiles"
+        except OSError:
+            value="invalid"
+        return value if value in ("tiles","tiles-next") else "invalid"
 
     def check_space(self,size):
         # This is only the PBF requirement. Native graph preparation has its own much larger needs.
@@ -101,17 +116,20 @@ class RoutingDownloads:
                 path=self.content/name
                 marker=path/".aftergrid-ready"
                 return path.is_dir() and not path.is_symlink() and marker.is_file() and not marker.is_symlink()
-            selector=self.content/"active-slot"
-            try:
-                selected="invalid" if selector.is_symlink() else selector.read_text().strip() if selector.exists() else "tiles"
-            except OSError:
-                selected="invalid"
-            if selected not in ("tiles","tiles-next"):selected="invalid"
+            selected=self.selected()
+            archive_dir=self.content/"archives"
+            archives=[]
+            if archive_dir.is_dir() and not archive_dir.is_symlink():
+                for folder in sorted(archive_dir.iterdir(),reverse=True)[:100]:
+                    if folder.is_dir() and not folder.is_symlink():
+                        archives.append({"name":folder.name,"complete":any((folder/g/".aftergrid-ready").is_file() and (folder/p).is_file() for g,p in (("tiles","region.osm.pbf"),("tiles-next","incoming.osm.pbf")))})
             original=ready("tiles")
             candidate=ready("tiles-next")
             return {**job,"files":files,"free_bytes":free,"graph_ready":(original if selected=="tiles" else candidate if selected=="tiles-next" else False),
                     "selected_slot":selected,"original_ready":original,"candidate_ready":candidate,
                     "candidate_occupied":(self.content/"tiles-next").exists() or (self.content/"tiles-next").is_symlink(),
+                    "original_occupied":(self.content/"tiles").exists() or (self.content/"tiles").is_symlink(),
+                    "archives":archives,
                     "regions":[{"id":i,"name":v[0]} for i,v in REGIONS.items()]}
 
     def launch(self,job,phase):

@@ -129,7 +129,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.9-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.5.10-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -347,7 +347,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.9-dev"}
+                "version": "0.5.10-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -645,7 +645,7 @@ def create_app(data_dir=None):
     def module_action(ident: str, action: str, request: Request):
         require_admin(request)
         same_origin(request)
-        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", ident) or action not in {"install","start","stop","restart","update","uninstall","share","unshare","prepare-graph","activate-graph","rollback-graph"} or (action in {"prepare-graph","activate-graph","rollback-graph"} and ident!="routing"):
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", ident) or action not in {"install","start","stop","restart","update","uninstall","share","unshare","prepare-graph","activate-graph","rollback-graph","archive-original","archive-replacement"} or (action in {"prepare-graph","activate-graph","rollback-graph","archive-original","archive-replacement"} and ident!="routing"):
             raise HTTPException(400, "Unsupported module or action")
         try:
             code, result = call("/jobs", {"module": ident, "action": action})

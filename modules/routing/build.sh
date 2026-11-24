@@ -9,9 +9,12 @@ case "${1:-initial}" in
     source=/routing/region.osm.pbf
     target=tiles ;;
   candidate)
-    test "$(selected_slot)" = tiles && ready_slot tiles || { echo "Select and retain original graph before preparing candidate"; exit 1; }
-    source=/routing/incoming.osm.pbf
-    target=tiles-next ;;
+    active=$(selected_slot)
+    ready_slot "$active" || { echo "Current graph must be prepared"; exit 1; }
+    case "$active" in
+      tiles) source=/routing/incoming.osm.pbf; target=tiles-next ;;
+      tiles-next) source=/routing/region.osm.pbf; target=tiles ;;
+    esac ;;
   *) exit 1 ;;
 esac
 test ! -e "/routing/$target" && test ! -L "/routing/$target" || { echo "Graph slot occupied; never overwrite a retained graph"; exit 1; }

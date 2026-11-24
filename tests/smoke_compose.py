@@ -192,6 +192,18 @@ action("rollback-graph","routing")
 assert api("/api/admin/routing-data")["selected_slot"]=="tiles"
 assert api("/api/maps/route",{"start":[9.5209,47.1394],"end":[9.5238,47.1417],"mode":"auto"})["distance_km"]>0
 assert api("/api/admin/routing-data")["candidate_ready"]
+# Retain the old inactive slot, refill it, and build another replacement.
+action("activate-graph","routing")
+action("archive-original","routing")
+r=api("/api/admin/routing-data")
+assert r["selected_slot"]=="tiles-next" and r["candidate_ready"] and not r["original_occupied"]
+assert any(a["complete"] for a in r["archives"])
+subprocess.run(["sudo","cp","content/routing/incoming.osm.pbf","content/routing/region.osm.pbf"],check=True)
+action("prepare-graph","routing")
+assert api("/api/admin/routing-data")["original_ready"]
+action("rollback-graph","routing")
+assert api("/api/admin/routing-data")["selected_slot"]=="tiles"
+assert api("/api/maps/route",{"start":[9.5209,47.1394],"end":[9.5238,47.1417],"mode":"auto"})["distance_km"]>0
 action("stop","routing")
 assert module("routing")["status"]=="stopped"
 action("start","routing")

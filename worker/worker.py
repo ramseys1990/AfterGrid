@@ -18,7 +18,7 @@ from pathlib import Path
 MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
-ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph"}
+ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
 ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
@@ -297,6 +297,9 @@ def routing_steps(action):
     validate=("Validate Compose",("config","-q"))
     if action=="prepare-graph":
         return [validate,("Build separate replacement graph",routing_command("build.sh","candidate"))]
+    if action in {"archive-original","archive-replacement"}:
+        target="tiles" if action=="archive-original" else "tiles-next"
+        return [validate,("Archive inactive graph and source",routing_command("archive.sh",target))]
     target="tiles-next" if action=="activate-graph" else "tiles"
     return [validate,("Check both graph slots",routing_command("switch.sh","check",target)),
             ("Stop routing",("stop",)),("Select prepared graph",routing_command("switch.sh","select",target)),
@@ -309,7 +312,7 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
-        if action in {"activate-graph","rollback-graph"} and state(ident)!="running":
+        if action in {"activate-graph","rollback-graph","archive-original","archive-replacement"} and state(ident)!="running":
             raise ValueError("Start the currently selected routing graph before switching")
         steps = routing_steps(action) if action in ROUTING_ACTIONS else stages(action)
         if ident == "routing" and action in {"install","update"}:

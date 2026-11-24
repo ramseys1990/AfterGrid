@@ -420,19 +420,25 @@ async function refreshRoutingData(){
   for(const file of r.files)line(file.name+" — "+bytes(file.size_bytes));
   if(r.state==="downloading"&&r.size_bytes){const p=document.createElement("progress");p.max=r.size_bytes;p.value=r.bytes||0;root.append(p);line(bytes(r.bytes||0)+" downloaded");}
   line("Selected on disk: "+r.selected_slot+" · "+(r.graph_ready?"prepared":"not prepared")+" (see application status for actual availability)");
-  line("Original graph: "+(r.original_ready?"ready":"not prepared")+" · Replacement graph: "+(r.candidate_ready?"ready":"not prepared"));
+  line("Slot A: "+(r.original_ready?"ready":"not prepared")+" · Slot B: "+(r.candidate_ready?"ready":"not prepared"));
+  for(const archived of r.archives||[])line("Retained archive: "+archived.name+(archived.complete?"":" (incomplete; inspect storage)"));
   const controls=$("routing-graph-controls");controls.replaceChildren();
   const busy=pending.has("routing")||["estimating","downloading","verifying"].includes(r.state);
   function graphButton(label,action,question){
     const b=document.createElement("button");b.type="button";b.textContent=label;b.disabled=busy;
     b.addEventListener("click",async()=>{if(!confirm(question))return;b.disabled=true;try{await api("/api/admin/modules/routing/"+action,{});await renderJobs();await renderModules();await refreshRoutingData();}catch(e){error(e.message);b.disabled=false;}});controls.append(b);
   }
-  if(r.original_ready&&r.selected_slot==="tiles"&&!r.candidate_occupied&&r.files.some(f=>f.name==="incoming.osm.pbf"))
-    graphButton("Prepare replacement graph","prepare-graph","Build a separate graph? This uses substantial CPU, RAM and disk. Existing routing remains selected.");
-  if(r.original_ready&&r.candidate_ready&&r.selected_slot==="tiles")
-    graphButton("Activate replacement","activate-graph","Switch to the replacement graph? Routing will briefly stop. The original will be retained.");
-  if(r.original_ready&&r.candidate_ready&&r.selected_slot==="tiles-next")
-    graphButton("Roll back to original","rollback-graph","Restore the original graph? Routing will briefly stop. Both graphs will be retained.");
+  const a=r.selected_slot==="tiles", b=r.selected_slot==="tiles-next";
+  if((a&&r.original_ready&&!r.candidate_occupied&&r.files.some(f=>f.name==="incoming.osm.pbf"))||(b&&r.candidate_ready&&!r.original_occupied&&r.files.some(f=>f.name==="region.osm.pbf")))
+    graphButton("Prepare inactive graph slot","prepare-graph","Build a separate graph? This uses substantial CPU, RAM and disk. Existing routing remains selected.");
+  if(r.original_ready&&r.candidate_ready&&a){
+    graphButton("Switch to slot B","activate-graph","Switch routing to slot B? Routing briefly stops. Slot A is retained.");
+    graphButton("Archive inactive slot B","archive-replacement","Move inactive slot B and its source into retained archives? This frees the slot, not disk space. Slot B will no longer be available for immediate rollback.");
+  }
+  if(r.original_ready&&r.candidate_ready&&b){
+    graphButton("Switch to slot A","rollback-graph","Switch routing to slot A? Routing briefly stops. Slot B is retained.");
+    graphButton("Archive inactive slot A","archive-original","Move inactive slot A and its source into retained archives? This frees the slot, not disk space. Slot A will no longer be available for immediate rollback.");
+  }
   $("routing-download").hidden=r.state!=="estimated";
 }
 $("routing-estimate").addEventListener("submit",async event=>{
