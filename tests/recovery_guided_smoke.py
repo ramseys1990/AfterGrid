@@ -141,7 +141,7 @@ def main(fixture):
                     assets.docker("image","tag",row["image_id"],row["recovery_tag"])
                 return rows
             with patch.object(assets,"import_images",reuse_exact_images):
-                report=recover.recover(root,bundle,package/"repository",inventory,["kiwix"],password)
+                report=recover.restore_package(root,package,password)
             assert report["guarded"] and not report["complete_recovery"] and report["repository_readonly"]
             assert report["omitted_captured"]==[]
             assert not call(old,"/api/status")["admin"]
@@ -171,7 +171,7 @@ def main(fixture):
             post_job(fresh,"/api/admin/backups/core/verify-snapshot",{"confirmed":True})
             assert repository_digest(repository)==before
             assert recover.verify_package(package)==packed
-            print("Coordinated portable package verified before and after recovery.",flush=True)
+            print("Portable package verified before and after recovery; snapshot capture points remain independent.",flush=True)
             print("Recovered writable copy: new managed core snapshot and isolated restore passed.",flush=True)
             print("Guided recovery passed: real native snapshots, exact local images, original login, household, Kiwix bytes and catalog, read-only Kopia reconnect, offline activation and lifecycle, original repository unchanged.",flush=True)
         finally:
