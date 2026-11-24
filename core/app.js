@@ -112,6 +112,18 @@ async function renderModules(){
             catch(e){error(e.message);verify.disabled=false;}
           });backup.append(verify);
         }
+        if(["kiwix","maps","routing","media"].includes(mod.id)){
+          for(const [action,label] of [["snapshot","Snapshot offline content"],["verify","Read-verify latest content snapshot"]]){
+            const b=document.createElement("button");b.type="button";b.textContent=label;b.disabled=pending.has(mod.id);
+            b.addEventListener("click",async()=>{
+              const message=action==="snapshot"?"Finish all downloads, graph operations and external imports. AfterGrid pauses new managed content changes during snapshot, but external writes are not blocked. Large snapshots can take hours. Continue?":"Read every file from the latest managed content snapshot using Kopia. This may take hours and does not restore files or prove native startup. Continue?";
+              if(!confirm(message))return;
+              b.disabled=true;
+              try{await api("/api/admin/backups/content/"+mod.id+"/"+action,{confirmed:true});await renderJobs();await renderModules();}
+              catch(e){error(e.message);b.disabled=false;}
+            });backup.append(b);
+          }
+        }
         card.append(backup);
         const versions=document.createElement("details");
         const summary=document.createElement("summary");summary.textContent="Image versions and update history";

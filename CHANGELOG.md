@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.13-dev
+- Add managed native snapshots and full-file read verification for Kiwix, maps, routing and Jellyfin media without a second content copy.
+- Guard portal content admission during snapshots; refuse queued/active download operations and require external writers to be stopped.
+- Add API, worker, maintenance guard and disposable native fixture coverage. CI pending; large content restoration is not yet automated.
+
 ## 0.8.12-dev
 - Expand managed snapshots and isolated data checks to MeshMonitor, MicroTAK, Kolibri and Jellyfin configuration; preserve native CA and node identity fixture comparisons.
 - Keep Kopia online through disposable smoke acceptance to avoid redundant registry pulls; retain final uninstall and persistence checks.

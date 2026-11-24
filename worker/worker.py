@@ -25,7 +25,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot", "worker-verify-snapshot"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot", "worker-verify-snapshot", "content-snapshot", "content-verify"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -171,6 +171,8 @@ def enqueue(ident, action, backup_confirmed=False):
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
+    if action in ("content-snapshot","content-verify") and ident not in CONTENT_SOURCES:
+        raise ValueError("Unsupported content snapshot source")
     if action in ("snapshot","verify-snapshot") and ident not in SNAPSHOT_SOURCES:
         raise ValueError("Application snapshot not yet supported")
     if action in ("initialize-repository","core-snapshot","core-verify-snapshot","worker-snapshot","worker-verify-snapshot") and ident!="kopia":
@@ -390,7 +392,7 @@ def snapshot_statistics(value,source):
 def native_snapshot(ident):
     return native_snapshot_source(SNAPSHOT_SOURCES[ident])
 
-def native_snapshot_source(source):
+def native_snapshot_source(source,seconds=300):
     try:
         subprocess.run(command("kopia","exec","-T","kopia","/bin/sh","-c",
             'test -d "$1" && test ! -L "$1"',"check-source",source),
@@ -398,9 +400,9 @@ def native_snapshot_source(source):
     except (OSError,subprocess.SubprocessError,ValueError):
         raise RuntimeError("Reviewed source directory unavailable in Kopia") from None
     try:
-        raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","--kill-after=10s","300s",
+        raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","--kill-after=10s",str(seconds)+"s",
             "/bin/kopia","snapshot","create","--json","--json-verbose","--fail-fast","--force-disable-actions","--no-send-snapshot-report",source),
-            env=compose_env("kopia"),capture_output=True,text=True,timeout=330,check=True).stdout
+            env=compose_env("kopia"),capture_output=True,text=True,timeout=seconds+30,check=True).stdout
     except subprocess.TimeoutExpired:
         raise RuntimeError("Native Kopia snapshot timed out; inspect native tasks before retrying") from None
     except subprocess.CalledProcessError as exc:
@@ -441,6 +443,60 @@ def snapshot_application(job,ident):
             except Exception:
                 raise RuntimeError("Application restart not confirmed; inspect and start manually") from None
     change(job,completed=4,state="succeeded",stage="Snapshot reported complete; restore not verified")
+
+CONTENT_SOURCES={"kiwix":"/source/content/kiwix","maps":"/source/content/maps",
+                 "routing":"/source/content/routing","media":"/source/content/media"}
+CONTENT_TIMEOUT=6*60*60
+
+def content_guard(action,job):
+    try:
+        subprocess.run(["docker","exec","--user","10001:10001",core_container(),"python","/app/content_backup_guard.py",action,str(job)],
+                       capture_output=True,timeout=20,check=True)
+    except (OSError,subprocess.SubprocessError):
+        raise RuntimeError("Content maintenance guard refused; finish downloads or inspect interrupted maintenance") from None
+
+def content_snapshot(job,ident):
+    if ident not in CONTENT_SOURCES:raise ValueError("Unsupported content source")
+    change(job,state="running",total=3,completed=0,stage="Check repository and content maintenance")
+    if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
+    content_guard("begin",job)
+    try:
+        change(job,completed=1,stage="Create native content snapshot")
+        snapshot_id=native_snapshot_source(CONTENT_SOURCES[ident],seconds=CONTENT_TIMEOUT)
+        log(job,"\nNative content snapshot: "+snapshot_id+"; restore not verified.\n")
+        change(job,completed=2)
+    finally:
+        change(job,stage="Release content maintenance guard")
+        content_guard("end",job)
+    change(job,completed=3,state="succeeded",stage="Content snapshot complete; repository verification pending")
+
+def latest_content_snapshot(ident):
+    with db() as conn:
+        row=conn.execute("SELECT log FROM jobs WHERE module=? AND action='content-snapshot' AND state='succeeded' ORDER BY id DESC LIMIT 1",(ident,)).fetchone()
+    match=re.search(r"Native content snapshot: ([a-f0-9]{32,64});",row["log"]) if row else None
+    if not match:raise RuntimeError("No successful managed content snapshot recorded")
+    return match.group(1)
+
+def verify_content(job,ident):
+    if ident not in CONTENT_SOURCES:raise ValueError("Unsupported content source")
+    change(job,state="running",total=2,completed=0,stage="Locate exact content snapshot")
+    if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
+    snapshot_id=latest_content_snapshot(ident)
+    _,stats=read_snapshot_manifest(CONTENT_SOURCES[ident],snapshot_id)
+    change(job,completed=1,stage="Read every file in native snapshot")
+    try:
+        raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","--kill-after=10s",str(CONTENT_TIMEOUT)+"s",
+            "/bin/kopia","snapshot","verify","--json","--verify-files-percent=100","--parallel=2","--file-parallelism=2",snapshot_id),
+            env=compose_env("kopia"),capture_output=True,text=True,timeout=CONTENT_TIMEOUT+30,check=True).stdout
+        if len(raw)>1024*1024:raise ValueError("Oversized verification output")
+        value=json.loads(raw)
+        result=value["stats"]
+        if type(value["errorCount"]) is not int or value["errorCount"]!=0 or type(result["readFileCount"]) is not int or result["readFileCount"]!=stats["fileCount"]:
+            raise ValueError("Verification incomplete")
+    except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError):
+        raise RuntimeError("Native content verification failed or incomplete; inspect Kopia") from None
+    log(job,"\nContent snapshot "+snapshot_id+" verified: "+str(result["readFileCount"])+" files read; zero reported errors. No files restored.\n")
+    change(job,completed=2,state="succeeded",stage="Native content read verification passed; restore not tested")
 
 def core_container():
     try:
@@ -577,6 +633,12 @@ def latest_managed_snapshot(ident):
 
 def restore_manifest(ident,snapshot_id):
     source=CORE_SNAPSHOT_SOURCE if ident=="core" else WORKER_EXPORT_SOURCE if ident=="worker" else SNAPSHOT_SOURCES[ident]
+    root,stats=read_snapshot_manifest(source,snapshot_id)
+    if stats["totalSize"]>512*1024*1024:
+        raise RuntimeError("Snapshot exceeds 512 MiB isolated restore limit")
+    return root
+
+def read_snapshot_manifest(source,snapshot_id):
     try:
         raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","30s","/bin/kopia",
             "snapshot","list","--json","--json-verbose","--manifest-id","--max-results=50",source),
@@ -589,9 +651,9 @@ def restore_manifest(ident,snapshot_id):
         stats=snapshot_statistics(row,source)
         root=row["rootEntry"]["obj"]
         if (not isinstance(root,str) or not re.fullmatch(r"[IZD]{0,8}[a-z]?[a-f0-9]{32,128}",root)
-                or type(stats.get("totalSize")) is not int or not 0<stats["totalSize"]<=512*1024*1024):
-            raise ValueError("Snapshot incomplete or exceeds 512 MiB verification limit")
-        return root
+                or type(stats.get("totalSize")) is not int or stats["totalSize"]<0):
+            raise ValueError("Snapshot size unavailable")
+        return root,stats
     except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
         raise RuntimeError("Managed snapshot missing, invalid or exceeds isolated restore limit") from None
 
@@ -991,6 +1053,12 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="content-snapshot":
+            content_snapshot(job,ident)
+            return
+        if action=="content-verify":
+            verify_content(job,ident)
+            return
         if action=="worker-verify-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
             verify_snapshot(job,"worker")

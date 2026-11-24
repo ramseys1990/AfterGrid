@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 try:
     from .worker_client import call, WorkerUnavailable
     from .content import search_catalog, local_inventory, CatalogUnavailable
+    from .content_backup_guard import content_admission
     from .downloads import Downloads
     from .households import Households
     from .inventory import Inventory, InventoryError
@@ -35,6 +36,7 @@ try:
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
+    from content_backup_guard import content_admission
     from downloads import Downloads
     from households import Households
     from inventory import Inventory, InventoryError
@@ -133,7 +135,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.12-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.13-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -587,7 +589,8 @@ def create_app(data_dir=None):
         require_admin(request)
         same_origin(request)
         try:
-            routing_data.estimate(payload.region)
+            with content_admission(data):
+                routing_data.estimate(payload.region)
         except (ValueError,OSError) as exc:
             raise HTTPException(400,str(exc))
         return {"queued":True}
@@ -597,7 +600,8 @@ def create_app(data_dir=None):
         require_admin(request)
         same_origin(request)
         try:
-            routing_data.download()
+            with content_admission(data):
+                routing_data.download()
         except (ValueError,OSError) as exc:
             raise HTTPException(409,str(exc))
         return {"queued":True}
@@ -617,7 +621,8 @@ def create_app(data_dir=None):
         require_admin(request)
         same_origin(request)
         try:
-            maps.estimate(payload.build,payload.bbox,payload.zoom)
+            with content_admission(data):
+                maps.estimate(payload.build,payload.bbox,payload.zoom)
         except (ValueError,OSError) as exc:
             raise HTTPException(400,str(exc))
         return {"queued":True}
@@ -627,7 +632,8 @@ def create_app(data_dir=None):
         require_admin(request)
         same_origin(request)
         try:
-            maps.download()
+            with content_admission(data):
+                maps.download()
         except (ValueError,OSError) as exc:
             raise HTTPException(409,str(exc))
         return {"queued":True}
@@ -645,7 +651,8 @@ def create_app(data_dir=None):
         require_admin(request)
         same_origin(request)
         try:
-            downloads.enqueue(payload.key)
+            with content_admission(data):
+                downloads.enqueue(payload.key)
         except (ValueError,sqlite3.IntegrityError) as exc:
             raise HTTPException(400,str(exc))
         return {"queued":True}
@@ -659,7 +666,8 @@ def create_app(data_dir=None):
         require_admin(request)
         same_origin(request)
         try:
-            return downloads.local_action(payload.name,payload.action)
+            with content_admission(data):
+                return downloads.local_action(payload.name,payload.action)
         except ValueError as exc:
             raise HTTPException(409,str(exc))
         except (OSError,sqlite3.Error):
@@ -892,6 +900,22 @@ def create_app(data_dir=None):
             raise HTTPException(503,"Module manager unavailable")
         if code!=202:
             raise HTTPException(code if code in (400,409) else 502,result.get("detail","Restore verification unavailable"))
+        return result
+
+    @api.post("/api/admin/backups/content/{ident}/{action}",status_code=202)
+    def content_backup(ident: str,action: str,payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if ident not in {"kiwix","maps","routing","media"} or action not in {"snapshot","verify"}:
+            raise HTTPException(400,"Unsupported content backup action")
+        if not payload.confirmed:
+            raise HTTPException(409,"Confirm content maintenance and native repository access")
+        try:
+            code,result=call("/jobs",{"module":ident,"action":"content-"+action})
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=202:
+            raise HTTPException(code if code in (400,409) else 502,result.get("detail","Content backup unavailable"))
         return result
 
     @api.get("/api/admin/modules/{ident}/backup-plan")

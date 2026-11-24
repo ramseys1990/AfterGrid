@@ -549,3 +549,37 @@ def test_worker_restore_envelope_exact_and_safe(tmp_path,monkeypatch):
     worker.log(j,"Worker recovery envelope SHA-256: "+digest)
     assert worker.worker_export_checksum(j)==digest
     with pytest.raises(ValueError):worker.enqueue("grocy","worker-verify-snapshot")
+
+
+def test_content_snapshot_and_native_verification(tmp_path,monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected"})
+    calls=[]
+    monkeypatch.setattr(worker,"content_guard",lambda action,job:calls.append(action))
+    def fail(source,seconds):
+        assert source=="/source/content/maps"
+        raise RuntimeError("fixture failure")
+    monkeypatch.setattr(worker,"native_snapshot_source",fail)
+    worker.enqueue("maps","content-snapshot")
+    worker.execute(worker.jobs()[0])
+    assert calls==["begin","end"] and worker.jobs()[0]["state"]=="failed"
+    monkeypatch.setattr(worker,"native_snapshot_source",lambda source,seconds:"a"*32)
+    worker.enqueue("maps","content-snapshot")
+    worker.execute(worker.jobs()[0])
+    assert worker.latest_content_snapshot("maps")=="a"*32
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda source,ident:("root",{"fileCount":2}))
+    monkeypatch.setattr(worker,"compose_env",lambda ident:{})
+    def native(argv,**kwargs):
+        assert "--verify-files-percent=100" in argv and argv[-1]=="a"*32
+        return SimpleNamespace(stdout=json.dumps({"errorCount":0,"stats":{"readFileCount":2}}))
+    monkeypatch.setattr(worker.subprocess,"run",native)
+    worker.enqueue("maps","content-verify")
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="succeeded"
+    assert "No files restored" in worker.jobs()[0]["log"]
+    with pytest.raises(ValueError):worker.enqueue("grocy","content-snapshot")

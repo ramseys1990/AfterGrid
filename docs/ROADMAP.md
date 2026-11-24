@@ -83,3 +83,5 @@ Preparedness: shared LAN landing-page indicators for indexed knowledge, local ma
 0.8.11: standalone offline recovery preparation from validated core and worker exports; private reconstructed files, no live Docker writes, no overwrite. Unit tests pending. Remaining: application coverage, exact release/image capture, coordinated backup set and actual clean-machine startup.
 
 0.8.12: expand managed maintenance-stop snapshots/isolated verification to MeshMonitor, MicroTAK, Kolibri and Jellyfin configuration. CI pending; avoid redundant Kopia registry pull in disposable integration. Core restore passed; worker export smoke milestone passed, full workflow blocked by Docker Hub rate limit. Worker restore and recovery preparation still require validation. Remaining content datasets and clean-machine recovery.
+
+0.8.13: 0.8.11 CI passed (core/worker isolated recovery and offline preparation). Add managed snapshots for Kiwix, maps, routing and Jellyfin media, guarded portal content admission and exact native full-file read verification without duplicate restore staging. Expanded CI pending. Full content restore, download metadata and coordinated recovery set next.

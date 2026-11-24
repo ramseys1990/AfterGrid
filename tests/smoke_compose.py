@@ -234,6 +234,16 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
     assert Path("data",ident).is_dir()
     print(ident+" lifecycle passed; data directory retained.")
 
+def verify_content_backup(ident):
+    snap=api("/api/admin/backups/content/"+ident+"/snapshot",{"confirmed":True})["id"]
+    wait_job(snap,"managed "+ident+" content snapshot")
+    verify=api("/api/admin/backups/content/"+ident+"/verify",{"confirmed":True})["id"]
+    wait_job(verify,"native "+ident+" content read verification")
+    record=next(j for j in api("/api/admin/jobs") if j["id"]==verify)
+    assert "zero reported errors. No files restored." in record["log"]
+    print(ident+" native content snapshot and full read verification passed.",flush=True)
+
+verify_content_backup("kiwix")
 # Maps starts without downloading any demo data, then serves a local fixture.
 assert module("maps")["status"]=="not installed"
 action("install","maps")
@@ -270,6 +280,7 @@ action("uninstall","maps")
 assert module("maps")["status"]=="not installed"
 assert Path("content/maps/region.pmtiles").is_file()
 print("Maps empty startup, local tile serving and lifecycle passed; map archive retained.")
+verify_content_backup("maps")
 
 # Native graph build and route calculation using the small pinned OSM fixture.
 action("install","routing")
@@ -325,6 +336,7 @@ assert module("routing")["status"]=="not installed"
 assert api("/api/admin/routing-data")["graph_ready"]
 assert any(x["name"]=="region.osm.pbf" for x in api("/api/admin/routing-data")["files"])
 print("Native routing graph, three costing modes and lifecycle passed.")
+verify_content_backup("routing")
 
 assert api("/api/maps/places?q=Vaduz")["results"]
 print("Place index remains accessible with routing uninstalled.")
@@ -515,6 +527,7 @@ assert module("media")["status"]=="not installed"
 assert fixture.is_file()
 assert subprocess.run(["sudo","test","-f","data/media/config/config/system.xml"]).returncode==0 or subprocess.run(["sudo","test","-f","data/media/config/system.xml"]).returncode==0
 print("Jellyfin native setup, library, authentication, read-only media, sharing and lifecycle passed.")
+verify_content_backup("media")
 
 # Native DokuWiki installer and edit flow, using disposable credentials.
 from playwright.sync_api import sync_playwright, expect
