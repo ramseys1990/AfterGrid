@@ -18,3 +18,6 @@ Basic data preservation and security start now. Full offline recovery and AI mus
 
 ## Immediate next test
 Install the core in a clean Debian/Ubuntu guest. Open setup, create admin, log out/in, restart core, confirm account persists and only core is installed. Check multi-module selection, job progress and independent retries. Next: guided native setup and stable local URLs, then offline content and maps.
+
+## Content manager
+Initial admin catalog search and local storage inventory implemented. Next: native downloader with verified metadata/checksums and disk checks, safe removal, and Kiwix native library indexing. Then validate actual downloaded ZIMs with internet disconnected.

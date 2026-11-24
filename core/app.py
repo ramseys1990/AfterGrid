@@ -20,8 +20,10 @@ from pydantic import BaseModel, Field
 
 try:
     from .worker_client import call, WorkerUnavailable
+    from .content import search_catalog, local_inventory, CatalogUnavailable
 except ImportError:
     from worker_client import call, WorkerUnavailable
+    from content import search_catalog, local_inventory, CatalogUnavailable
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -91,7 +93,7 @@ def create_app(data_dir=None):
             con.execute("INSERT OR IGNORE INTO first_run(id,token) VALUES (1,?)", (secrets.token_hex(24),))
         yield
 
-    api = FastAPI(title="AfterGrid", version="0.3.3-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.3.4-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -161,7 +163,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.3.3-dev"}
+                "version": "0.3.4-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -184,6 +186,26 @@ def create_app(data_dir=None):
     def require_admin(request):
         if not admin_session(request):
             raise HTTPException(401, "Administrator login required")
+
+    @api.get("/api/admin/content/local")
+    def content_local(request: Request):
+        require_admin(request)
+        try:
+            return local_inventory(os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
+        except OSError:
+            raise HTTPException(503,"Local content storage unavailable")
+
+    @api.get("/api/admin/content/catalog")
+    def content_catalog(request: Request, q: str = "", lang: str = "eng", start: int = 0):
+        require_admin(request)
+        if len(q)>100 or not 0<=start<=10000:
+            raise HTTPException(400,"Invalid catalog query")
+        try:
+            return search_catalog(q,lang,start)
+        except ValueError as exc:
+            raise HTTPException(400,str(exc))
+        except CatalogUnavailable as exc:
+            raise HTTPException(503,str(exc))
 
     @api.post("/api/admin/first-run", status_code=202)
     def first_run(payload: Selection, request: Request):

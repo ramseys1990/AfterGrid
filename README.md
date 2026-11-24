@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.3.3-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.3.4-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -40,3 +40,5 @@ After creating the administrator, choose optional apps in the first-run browser 
 For optional inventory sharing on a trusted network, see [LAN access and stable QR URLs](docs/LAN_ACCESS.md). Homebox and Grocy are local-only until explicitly shared; Kopia can also be explicitly shared using native administrator credentials.
 
 The normal deployment is LAN-first. No local DNS is required for IP-based access. Set AFTERGRID_LAN_DOMAIN at install if you want stable separate hostnames for the portal and shared apps. See the LAN guide for HTTP risks and first-time native account setup.
+
+The administrator content panel now shows local ZIM files and disk space and searches the upstream Kiwix OPDS catalog on demand. No background internet requests or server-side downloads are enabled. Download queue, checksums and automatic library indexing remain planned.

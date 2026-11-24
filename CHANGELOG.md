@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4-dev
+- Read-only content inventory with available disk space, plus on-demand official Kiwix OPDS search, language filter and pagination.
+- Keep local content inventory independent of internet availability. No automatic downloads or indexing yet.
+- Add catalog parser, access-control and local inventory tests; live upstream feed and actual content handling pending.
+
+
 ## 0.3.3-dev
 - Installer prefers the detected private LAN IP, with explicit address override and loopback fallback.
 - Optional DNS; stable IP URLs work without a DNS server. Configure separate hostnames for stronger cookie isolation and stable QR labels.

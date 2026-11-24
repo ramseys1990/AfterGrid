@@ -118,3 +118,16 @@ def test_lan_kopia_credentials_require_origin(tmp_path, monkeypatch):
         assert client.post("/api/setup",json=setup,headers={"Origin":origin}).status_code==201
         assert client.post("/api/admin/kopia/credentials",json={}).status_code==403
         assert client.post("/api/admin/kopia/credentials",json={},headers={"Origin":origin}).status_code==200
+
+
+def test_content_catalog_admin_only(tmp_path,monkeypatch):
+    from core import app as core_app
+    monkeypatch.setattr(core_app,"search_catalog",lambda q,lang,start: {"entries":[],"total":0})
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.get("/api/admin/content/catalog").status_code==401
+        setup={"username":"admin","password":"long test password","token":"test-token"}
+        assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
+        assert client.get("/api/admin/content/catalog?q=medicine").json()=={"entries":[],"total":0}
+        assert client.get("/api/admin/content/catalog?start=-1").status_code==400
+        assert client.get("/api/admin/content/local").status_code==200

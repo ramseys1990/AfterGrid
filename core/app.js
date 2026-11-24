@@ -18,10 +18,10 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();}
+  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
-    if(status.admin)await renderJobs();
+    if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
     await renderModules();
   }
 }
@@ -118,6 +118,52 @@ $("wizard-form").addEventListener("submit",event=>{
   submitWizard(chosen);
 });
 $("skip-wizard").addEventListener("click",()=>submitWizard([]));
+
+function bytes(value){
+  if(value===null||value===undefined)return "Size unavailable";
+  if(value<1024)return value+" B";
+  const units=["KiB","MiB","GiB","TiB"];
+  let n=value/1024,i=0;while(n>=1024&&i<units.length-1){n/=1024;i++;}
+  return n.toFixed(1)+" "+units[i];
+}
+async function refreshLocalContent(){
+  const info=await api("/api/admin/content/local");
+  if(!status?.admin)return;
+  const root=$("local-inventory");root.replaceChildren();
+  const p=document.createElement("p");p.textContent=bytes(info.free_bytes)+" free on content storage";root.append(p);
+  for(const file of info.files){const line=document.createElement("p");line.textContent=file.name+" — "+bytes(file.size_bytes);root.append(line);}
+  if(!info.files.length){const p=document.createElement("p");p.textContent="No local ZIM files found.";root.append(p);}
+}
+$("local-content").addEventListener("click",()=>refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;}));
+let contentQuery=null, contentOffset=0, contentBusy=false;
+async function searchContent(offset){
+  if(contentBusy||!contentQuery||!status?.admin)return;
+  contentBusy=true;$("content-prev").disabled=true;$("content-next").disabled=true;
+  $("content-message").textContent="Searching official Kiwix catalog…";
+  try{
+    const params=new URLSearchParams({...contentQuery,start:String(offset)});
+    const data=await api("/api/admin/content/catalog?"+params);
+    if(!status?.admin)return;
+    contentOffset=offset;
+    const root=$("content-results");root.replaceChildren();
+    for(const entry of data.entries){
+      const card=document.createElement("article");
+      const h=document.createElement("h4");h.textContent=entry.title;
+      const p=document.createElement("p");p.textContent=entry.description;
+      const meta=document.createElement("small");meta.textContent=bytes(entry.size_bytes)+" · "+entry.language+" · "+entry.updated.slice(0,10);
+      card.append(h,p,meta);root.append(card);
+    }
+    $("content-message").textContent=data.entries.length?"Showing "+(offset+1)+"–"+(offset+data.entries.length)+(data.total!==null?" of "+data.total:""):"No catalog results.";
+    $("content-prev").disabled=offset===0;
+    $("content-next").disabled=data.entries.length<20||(data.total!==null&&offset+data.entries.length>=data.total);
+  }catch(e){$("content-message").textContent=e.message;}
+  finally{contentBusy=false;}
+}
+$("content-search").addEventListener("submit",event=>{
+  event.preventDefault();if(contentBusy)return;contentQuery=Object.fromEntries(new FormData(event.currentTarget));searchContent(0);
+});
+$("content-prev").addEventListener("click",()=>searchContent(Math.max(0,contentOffset-20)));
+$("content-next").addEventListener("click",()=>searchContent(contentOffset+20));
 
 async function renderJobs(){
   const jobs=await api("/api/admin/jobs");

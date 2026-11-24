@@ -3,3 +3,5 @@
 .controls{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.8rem}.controls button{padding:.45rem;text-transform:capitalize;font-size:.85rem} a{display:block;color:#b4d68f;margin-top:.7rem} progress{width:100%;accent-color:#b4d68f} pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:.8rem} #jobs{display:grid;gap:.6rem}
 
 #wizard{border-top:1px solid #3d5144;padding-top:1rem;margin-top:1rem}#wizard-form{max-width:none}#wizard-options{display:grid;gap:.6rem}.wizard-option{display:flex;align-items:flex-start;gap:.7rem;padding:.55rem;background:#141c19;border-radius:6px}.wizard-option input{width:1.15rem;height:1.15rem;flex:none;accent-color:#b4d68f}.wizard-option span{line-height:1.4}
+
+#content-manager{border-top:1px solid #3d5144;padding-top:1rem;margin-top:1rem}#content-results{display:grid;gap:.5rem}#content-results h4{margin:.3rem 0}#local-inventory{overflow-wrap:anywhere}
