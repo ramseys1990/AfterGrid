@@ -1,0 +1,13 @@
+{
+  "id": "tak",
+  "name": "MicroTAK server",
+  "category": "Communications",
+  "description": "Local certificate-authenticated TAK service for compatible clients. Native enrollment, CoT relay and Marti API; no web dashboard.",
+  "port": 8446,
+  "dependencies": [],
+  "readiness_url": "http://aftergrid-tak:9090/metrics",
+  "upstream": "https://github.com/microtak/microtak-server",
+  "loopback_only": true,
+  "lan_shareable": true,
+  "setup_note": "Use the native MicroTAK administrator CLI to enroll your administrator device. Retrieve the one-time token and CA certificate securely on the server; see modules/tak/README.md. Share on the trusted LAN after setup. TLS enrollment 8446, mTLS Marti 8443, mTLS CoT 8089. No unauthenticated CoT port."
+}

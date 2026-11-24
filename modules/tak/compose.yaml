@@ -1,0 +1,43 @@
+services:
+  tak:
+    image: ghcr.io/microtak/microtak-server:0.18.1
+    entrypoint: ["/bin/sh", "/aftergrid/start.sh"]
+    user: "10001:10001"
+    restart: unless-stopped
+    environment:
+      AFTERGRID_TAK_LAN_IP: "${AFTERGRID_TAK_LAN_IP:-127.0.0.1}"
+      AFTERGRID_TAK_HOST: "${AFTERGRID_TAK_HOST:-localhost}"
+      MICROTAK_CONFIG: /tmp/microtak.toml
+    ports:
+      - "${AFTERGRID_MODULE_BIND:-127.0.0.1}:8446:8446"
+      - "${AFTERGRID_MODULE_BIND:-127.0.0.1}:8443:8443"
+      - "${AFTERGRID_MODULE_BIND:-127.0.0.1}:8089:8089"
+    volumes:
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/data/tak/data
+        target: /var/lib/microtak-server/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/data/tak/backup
+        target: /var/lib/microtak-server/backup
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AFTERGRID_ROOT:-/opt/aftergrid}/modules/tak/start.sh
+        target: /aftergrid/start.sh
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      apps:
+        aliases: [aftergrid-tak]
+networks:
+  apps:
+    external: true
+    name: aftergrid-apps

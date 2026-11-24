@@ -36,15 +36,20 @@ async function renderModules(){
         const node=document.createElement(tag);node.textContent=value;card.append(node);
       }
       if(mod.installable && mod.status==="running" && (!mod.admin_only||status.admin) && (!mod.loopback_only||(mod.shared&&mod.lan_url)||["127.0.0.1","localhost"].includes(location.hostname))){
-        const link=document.createElement("a");
-        const url=new URL(mod.shared&&mod.lan_url?mod.lan_url:location.href);if(mod.loopback_only)url.protocol="http:";url.port=mod.port;url.pathname="/";url.search="";url.hash="";
-        link.href=mod.id==="routing"?"/maps":url.href;link.textContent=mod.id==="routing"?"Open route planner":mod.id==="maps"?"Open native tile viewer":"Open application";link.target="_blank";link.rel="noopener noreferrer";card.append(link);
+        if(mod.id==="tak"){
+          const host=mod.shared&&mod.lan_url?new URL(mod.lan_url).hostname:"127.0.0.1";
+          const note=document.createElement("p");note.textContent="Native TAK client endpoints: "+host+":8446 (enrollment TLS), "+host+":8443 (Marti mTLS), "+host+":8089 (CoT mTLS). Import the trusted CA and enroll a client first.";card.append(note);
+        }else{
+          const link=document.createElement("a");
+          const url=new URL(mod.shared&&mod.lan_url?mod.lan_url:location.href);if(mod.loopback_only)url.protocol="http:";url.port=mod.port;url.pathname="/";url.search="";url.hash="";
+          link.href=mod.id==="routing"?"/maps":url.href;link.textContent=mod.id==="routing"?"Open route planner":mod.id==="maps"?"Open native tile viewer":"Open application";link.target="_blank";link.rel="noopener noreferrer";card.append(link);
+        }
         if(mod.id==="maps"){const styled=document.createElement("a");styled.href="/maps";styled.textContent="Open styled offline map";card.append(styled);}
       }
       if(status.admin && mod.installable){
         if(mod.setup_note){const note=document.createElement("p");note.textContent=mod.setup_note;card.append(note);}
         if(mod.loopback_only && !mod.shared && !["127.0.0.1","localhost"].includes(location.hostname)){
-          const note=document.createElement("small");note.textContent="Local setup only. SSH forward port "+mod.port+" and open http://127.0.0.1:"+mod.port;card.append(note);
+          const note=document.createElement("small");note.textContent=mod.id==="tak"?"Local setup only. Use the native admin CLI over SSH forwards for 8446 and 8443, with the trusted CA.":"Local setup only. SSH forward port "+mod.port+" and open http://127.0.0.1:"+mod.port;card.append(note);
         }
         if(mod.id==="meshmonitor" && mod.status==="running"){
           const reveal=document.createElement("button");reveal.textContent="Show initial MeshMonitor credentials";
@@ -67,10 +72,10 @@ async function renderModules(){
         }
         const actions=mod.status==="not installed"?["install"]:mod.status==="running"?["stop","restart","update","uninstall"]:["start","install","stop","uninstall"];
         if(mod.shared && mod.lan_url){
-          const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+" HTTP is unencrypted.";card.append(note);
+          const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+(mod.id==="tak"?" TLS; enroll with the trusted CA.":" HTTP is unencrypted.");card.append(note);
         }else if(mod.share_available){
           const note=document.createElement("p");note.textContent=(mod.lan_dns?"Add a local DNS record for "+new URL(mod.lan_url).hostname+". ":"")+"Complete native account setup before sharing. LAN URL: "+mod.lan_url;card.append(note);
-        }else if(["homebox","grocy","kopia","meshmonitor"].includes(mod.id)){
+        }else if(["homebox","grocy","kopia","meshmonitor","tak"].includes(mod.id)){
           const note=document.createElement("small");note.textContent="LAN sharing needs a private LAN bind configured on the server; see the LAN setup guide.";card.append(note);
         }
         if(mod.shared && mod.status!=="not installed")actions.push("unshare");
@@ -79,8 +84,8 @@ async function renderModules(){
         for(const action of actions){
           const b=document.createElement("button");b.textContent=action==="share"?"Share on LAN":action==="unshare"?"Return to local-only":action;b.addEventListener("click",async()=>{
             if(action==="share"){
-              const warning=mod.id==="homebox"?"Confirm you created your Homebox account. Sharing closes public registration.":mod.id==="grocy"?"Confirm you changed Grocy's default administrator password.":mod.id==="meshmonitor"?"MeshMonitor requires native login. Confirm native account setup and permissions. Keep the initial password private.":"Kopia uses its generated native administrator password. Keep it private.";
-              if(!confirm(warning+" "+(mod.lan_dns?"Confirm local DNS is configured. ":"")+"LAN HTTP is unencrypted. Continue only on a trusted LAN?"))return;
+              const warning=mod.id==="homebox"?"Confirm you created your Homebox account. Sharing closes public registration.":mod.id==="grocy"?"Confirm you changed Grocy's default administrator password.":mod.id==="meshmonitor"?"MeshMonitor requires native login. Confirm native account setup and permissions. Keep the initial password private.":mod.id==="tak"?"Confirm native administrator enrollment and secure storage of the CA and credentials. Only authenticated TLS endpoints will be shared.":"Kopia uses its generated native administrator password. Keep it private.";
+              if(!confirm(warning+" "+(mod.lan_dns?"Confirm local DNS is configured. ":"")+(mod.id==="tak"?"Continue only on a trusted LAN?":"LAN HTTP is unencrypted. Continue only on a trusted LAN?")))return;
             }
             if(action==="unshare"&&!confirm("Return to loopback-only access? This recreates and starts the application while keeping its data."))return;
             if(action==="uninstall"&&!confirm("Remove this application's containers? Its data will be retained."))return;

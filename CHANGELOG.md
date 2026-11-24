@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1-dev
+- Add optional MicroTAK native TLS server, locked enrollment, private initial bindings and explicit trusted LAN sharing. Disable unencrypted CoT and native automatic backups; keep native data and CA in private persistent directories.
+- Portal displays native client endpoints rather than a nonexistent web interface. Native admin CLI for bootstrap; no token reveal through portal.
+- Add disposable native CA/enrollment/TLS and lifecycle smoke coverage; client compatibility and CI pending.
+
+
 ## 0.6.0-dev
 - Add optional native MeshMonitor module for Meshtastic and MeshCore, generated initial credentials, disabled anonymous access, explicit LAN sharing and preserved native data.
 - No automatic source or hardware connection; native messaging/monitoring acceptance pending.

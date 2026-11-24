@@ -52,7 +52,7 @@ CATALOG = [
     ("kopia", "Kopia", "Encrypted backups", "System"),
     ("maps", "Offline maps and routing", "Regional maps and navigation", "Navigation"),
     ("meshmonitor", "MeshMonitor (Meshtastic / MeshCore)", "Local mesh communications", "Communications"),
-    ("tak", "TAK", "Shared situational awareness", "Communications"),
+    ("tak", "MicroTAK server", "Local certificate-authenticated TAK", "Communications"),
     ("kolibri", "Kolibri", "Offline education", "Knowledge"),
     ("media", "Media library", "Offline videos and manuals", "Knowledge"),
     ("notes", "Notes and PACE", "Shared emergency plans", "Preparedness"),
@@ -128,7 +128,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.6.0-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.6.1-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -346,7 +346,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.6.0-dev"}
+                "version": "0.6.1-dev"}
 
     @api.get("/api/modules")
     def modules():

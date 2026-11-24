@@ -265,3 +265,59 @@ action("uninstall","meshmonitor")
 assert module("meshmonitor")["status"]=="not installed"
 assert Path("data/meshmonitor").is_dir()
 print("MeshMonitor native login, sharing and lifecycle passed; no radio hardware tested.")
+
+# Native MicroTAK enrollment with a disposable CA, one-time bootstrap and TLS.
+import ssl
+import tempfile
+import base64
+import urllib.error
+action("install","tak")
+assert module("tak")["status"]=="running"
+with tempfile.TemporaryDirectory() as tmp:
+    folder=Path(tmp)
+    ca=folder/"ca.pem"
+    ca.write_bytes(subprocess.check_output(["sudo","cat","data/tak/data/ca-cert.pem"]))
+    token=subprocess.check_output(["sudo","cat","data/tak/data/bootstrap-token"],text=True).strip()
+    assert token
+    tls=ssl.create_default_context(cafile=str(ca))
+    opener=urllib.request.build_opener(urllib.request.HTTPSHandler(context=tls))
+    endpoint="https://127.0.0.1:8446/Marti/api/tls/signClient/v2"
+    key=folder/"client.key";csr=folder/"client.csr";cert=folder/"client.pem"
+    subprocess.run(["openssl","req","-new","-newkey","rsa:2048","-nodes","-subj","/CN=admin","-keyout",str(key),"-out",str(csr)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    def enroll(secret=None):
+        headers={"Content-Type":"application/pkcs10","Accept":"application/json"}
+        if secret:headers["Authorization"]="Basic "+base64.b64encode(("admin:"+secret).encode()).decode()
+        return opener.open(urllib.request.Request(endpoint,data=csr.read_bytes(),headers=headers),timeout=15)
+    try:
+        enroll()
+        raise AssertionError("Unauthenticated enrollment unexpectedly succeeded")
+    except urllib.error.HTTPError as exc:assert exc.code==403
+    with enroll(token) as response:
+        result=json.load(response)
+        cert.write_text("-----BEGIN CERTIFICATE-----\n"+result["signedCert"]+"\n-----END CERTIFICATE-----\n")
+    subprocess.run(["openssl","verify","-CAfile",str(ca),str(cert)],check=True)
+    try:
+        enroll(token)
+        raise AssertionError("Bootstrap token unexpectedly reusable")
+    except urllib.error.HTTPError as exc:assert exc.code in (403,409)
+    # Native certificate-authenticated CoT TLS handshake; no live radio/client data.
+    tls.load_cert_chain(str(cert),str(key))
+    import socket
+    with socket.create_connection(("127.0.0.1",8089),timeout=10) as sock:
+        with tls.wrap_socket(sock,server_hostname="127.0.0.1") as secure:
+            assert secure.version()
+    action("share","tak")
+    assert module("tak")["shared"]
+    with urllib.request.urlopen("https://192.168.254.253:8446/Marti/api/tls/ca.pem",context=ssl.create_default_context(cafile=str(ca)),timeout=10) as response:
+        assert response.read()==ca.read_bytes()
+    action("unshare","tak")
+    action("stop","tak")
+    assert module("tak")["status"]=="stopped"
+    action("start","tak")
+    assert module("tak")["status"]=="running"
+    with socket.create_connection(("127.0.0.1",8089),timeout=10) as sock:
+        with tls.wrap_socket(sock,server_hostname="127.0.0.1") as secure:assert secure.version()
+    action("uninstall","tak")
+    assert module("tak")["status"]=="not installed"
+    assert subprocess.check_output(["sudo","cat","data/tak/data/ca-cert.pem"])==ca.read_bytes()
+print("MicroTAK TLS enrollment, bootstrap rejection/reuse, certificate handshake, sharing and retained CA passed.")

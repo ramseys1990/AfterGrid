@@ -108,7 +108,8 @@ def set_sharing(ident, enabled):
 
 def lan_url(ident, manifest):
     host = f"{ident}.{LAN_DOMAIN}" if LAN_DOMAIN else LAN_BIND
-    return f"http://{host}:{manifest['port']}"
+    scheme="https" if ident=="tak" else "http"
+    return f"{scheme}://{host}:{manifest['port']}"
 
 def sharing_env(ident):
     manifest = catalog()[ident]
@@ -120,6 +121,8 @@ def sharing_env(ident):
         "AFTERGRID_MODULE_BIND": LAN_BIND if enabled else "127.0.0.1",
         "AFTERGRID_HOMEBOX_REGISTRATION": "false" if closed or enabled else "true",
         "AFTERGRID_MODULE_URL": lan_url(ident,manifest) if enabled else "",
+        **({"AFTERGRID_TAK_LAN_IP":LAN_BIND if lan_available() else "127.0.0.1",
+            "AFTERGRID_TAK_HOST":f"tak.{LAN_DOMAIN}" if lan_available() and LAN_DOMAIN else LAN_BIND if lan_available() else "localhost"} if ident=="tak" else {}),
         **({"AFTERGRID_MESHMONITOR_ORIGINS":",".join(["http://localhost:8085","http://127.0.0.1:8085"]+([lan_url(ident,manifest)] if enabled else []))} if ident=="meshmonitor" else {}),
     }
 

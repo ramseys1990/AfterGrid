@@ -1,0 +1,15 @@
+# Optional TAK server
+
+MicroTAK 0.18.1 is the initial lightweight native TAK backend. This is intended for trusted household/emergency coordination; it is not the official TAK Server distribution or a replacement for validated client deployments. No federation, video relay, external authentication, unencrypted CoT or internet services configured. No web UI; use the upstream native administrator CLI and supported clients. Initial enrollment is locked with a one-time token. AfterGrid does not expose the token or CA private key through the portal.
+
+## Installation
+Fresh installs create private data/tak/data and data/tak/backup directories. For existing development installations, create them as UID/GID 10001 (mode 0700), without changing existing CA data:
+```sh
+sudo install -d -m 0700 -o 10001 -g 10001 /opt/aftergrid/data/tak/data /opt/aftergrid/data/tak/backup
+```
+Install MicroTAK in the portal. Default endpoints are loopback-only, enrollment HTTPS 8446, Marti mTLS 8443, CoT mTLS 8089. The internal metrics endpoint is not published. Reserve a private LAN IP; if local DNS is configured, create tak.<local domain> pointing at that IP. The native server certificate includes both configured addresses and localhost. Native TLS uses its own CA.
+
+## Native setup
+Use the server console or a trusted SSH session. Read the one-time bootstrap token in /opt/aftergrid/data/tak/data/bootstrap-token privately (sudo cat). Securely copy only the public CA at /opt/aftergrid/data/tak/data/ca-cert.pem to your administrator machine. Verify the CA fingerprint using openssl x509 -in ca.pem -noout -fingerprint -sha256 on both machines. Never distribute the CA key or token. Forward enrollment and Marti ports over SSH for first setup, or enable LAN sharing only after confirming the trusted network and secure bootstrap access. Use the upstream [native admin CLI](https://github.com/microtak/microtak-admin-cli) with the trusted CA and one-time token to enroll the reserved admin identity. Create separate device credentials and appropriate permissions via native tools. Do not reuse administrator credentials. Follow the pinned upstream server [enrollment documentation](https://github.com/microtak/microtak-server/tree/v0.18.1#enrollment--access-control) for supported client methods. Actual ATAK/iTAK/WinTAK enrollment compatibility must be validated; do not disable TLS checks or enable open enrollment to bypass issues.
+
+Use AfterGrid Share on LAN to bind the three TLS ports to the private address. Never forward them to the public internet. Use only authorized devices and voluntarily shared locations. Native data, CA and identity state persist through stop/restart/uninstall; protect backups. The internal metrics endpoint is only accessible on the application Docker network. No client enrollment credentials appear in portal logs. Native backup is disabled; use Kopia with appropriate application quiescing and recovery verification. CI exercises a disposable native CA, locked bootstrap, certificate issuance and TLS handshake; results pending. Actual device interoperability and disconnected LAN acceptance remain outstanding.
