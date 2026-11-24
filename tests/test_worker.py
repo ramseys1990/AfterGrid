@@ -281,3 +281,62 @@ def test_native_kopia_status_filters_response(monkeypatch):
     assert client.status()["connection"]=="initializing"
     monkeypatch.setattr(client,"read",lambda path:b'{"connected":"true"}')
     with pytest.raises(RuntimeError):client.status()
+
+
+def test_snapshot_quiesces_and_restores_running_application(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    with pytest.raises(ValueError):worker.enqueue("homebox","snapshot")
+    commands=[]
+    monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected"})
+    monkeypatch.setattr(worker,"state",lambda ident:"running")
+    monkeypatch.setattr(worker,"cleanly_stopped",lambda ident:True)
+    monkeypatch.setattr(worker,"run",lambda job,ident,*args:commands.append(args))
+    monkeypatch.setattr(worker,"wait_ready",lambda ident:commands.append(("ready",)))
+    def snap(ident):
+        commands.append(("snapshot",))
+        return "a"*32
+    monkeypatch.setattr(worker,"native_snapshot",snap)
+    worker.enqueue("grocy","snapshot")
+    worker.execute(worker.jobs()[0])
+    assert commands==[("stop","--timeout","60"),("snapshot",),("start",),("ready",)]
+    assert worker.jobs()[0]["state"]=="succeeded" and "a"*32 in worker.jobs()[0]["log"]
+    assert "restore not verified" in worker.jobs()[0]["stage"]
+    commands.clear()
+    def fail(ident):raise RuntimeError("fixture failure")
+    monkeypatch.setattr(worker,"native_snapshot",fail)
+    worker.enqueue("grocy","snapshot")
+    worker.execute(worker.jobs()[0])
+    assert commands==[("stop","--timeout","60"),("start",),("ready",)]
+    assert worker.jobs()[0]["state"]=="failed"
+    commands.clear()
+    monkeypatch.setattr(worker,"cleanly_stopped",lambda ident:False)
+    worker.enqueue("grocy","snapshot")
+    worker.execute(worker.jobs()[0])
+    assert commands==[("stop","--timeout","60"),("start",),("ready",)]
+    assert worker.jobs()[0]["state"]=="failed"
+    commands.clear()
+    monkeypatch.setattr(worker,"state",lambda ident:"stopped")
+    monkeypatch.setattr(worker,"cleanly_stopped",lambda ident:True)
+    monkeypatch.setattr(worker,"native_snapshot",snap)
+    worker.enqueue("grocy","snapshot")
+    worker.execute(worker.jobs()[0])
+    assert commands==[("snapshot",)] and worker.jobs()[0]["state"]=="succeeded"
+
+def test_snapshot_rejects_partial_or_excluded_manifest(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"compose_env",lambda ident:{})
+    monkeypatch.setattr(worker,"command",lambda ident,*args:list(args))
+    value={"id":"a"*32,"source":{"path":"/source/data/grocy"},"rootEntry":{"obj":"fixture"},
+           "stats":{"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0,"fileCount":1}}
+    monkeypatch.setattr(worker.subprocess,"run",lambda *a,**k:SimpleNamespace(stdout=json.dumps(value)))
+    assert worker.native_snapshot("grocy")=="a"*32
+    for field in ("errorCount","ignoredErrorCount","excludedFileCount","excludedDirCount"):
+        value["stats"][field]=1
+        with pytest.raises(RuntimeError):worker.native_snapshot("grocy")
+        value["stats"][field]=0
+    value["incomplete"]="checkpoint"
+    with pytest.raises(RuntimeError):worker.native_snapshot("grocy")

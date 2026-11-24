@@ -133,7 +133,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.3-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.4-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -415,7 +415,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.8.3-dev"}
+                "version": "0.8.4-dev"}
 
     @api.get("/api/preparedness")
     def preparedness():
@@ -804,6 +804,22 @@ def create_app(data_dir=None):
                            {"path":"/source/modules","guidance":"Reviewed module definitions, not the complete core release."}],
                 "missing":["Worker state volume (jobs, sharing settings and generated secrets)","Core release and host .env configuration","Exact Docker images and recovery metadata"],
                 "repository_guidance":"Configure Kopia natively. Keep the repository password and an independent repository copy off the server."}
+
+    @api.post("/api/admin/modules/{ident}/snapshot",status_code=202)
+    def module_snapshot(ident: str,payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if ident!="grocy":
+            raise HTTPException(400,"Application snapshot not yet supported")
+        if not payload.confirmed:
+            raise HTTPException(409,"Confirm temporary service interruption and exclusive administration")
+        try:
+            code,result=call("/jobs",{"module":ident,"action":"snapshot"})
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable")
+        if code!=202:
+            raise HTTPException(code if code in (400,409) else 502,result.get("detail","Snapshot request unavailable"))
+        return result
 
     @api.get("/api/admin/modules/{ident}/backup-plan")
     def module_backup_plan(ident: str,request: Request):

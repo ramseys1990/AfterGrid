@@ -91,7 +91,18 @@ async function renderModules(){
           }catch(e){if(status?.admin&&card.isConnected)backupInfo.textContent=e.message;}
           finally{backupButton.disabled=false;}
         });
-        backup.append(backupTitle,backupButton,backupInfo);card.append(backup);
+        backup.append(backupTitle,backupButton,backupInfo);
+        if(mod.id==="grocy"&&["running","stopped"].includes(mod.status)){
+          const snapshot=document.createElement("button");snapshot.type="button";snapshot.textContent="Create consistent snapshot";
+          snapshot.disabled=pending.has(mod.id);
+          snapshot.addEventListener("click",async()=>{
+            if(!confirm("Temporarily stop Grocy if running, create a Kopia snapshot, then restore its prior state. Confirm Kopia is connected, no other backups or native administration are active and no one is editing application files. This does not verify a restore. Continue?"))return;
+            snapshot.disabled=true;
+            try{await api("/api/admin/modules/"+mod.id+"/snapshot",{confirmed:true});await renderJobs();await renderModules();}
+            catch(e){error(e.message);snapshot.disabled=false;}
+          });backup.append(snapshot);
+        }
+        card.append(backup);
         const versions=document.createElement("details");
         const summary=document.createElement("summary");summary.textContent="Image versions and update history";
         const info=document.createElement("div"),check=document.createElement("button");check.type="button";check.textContent="Read local versions";

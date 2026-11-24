@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.4-dev
+- Add initial administrator-confirmed Grocy snapshot workflow with clean stop, native Kopia CLI, bounded runtime, manifest completeness checks and prior-state restart on ordinary failures.
+- Record native snapshot ID without claiming restore verification; reject unsupported apps and partial/excluded snapshots.
+- Add unit/API and disposable integration tests. CI pending; previous repository setup unit/build passed but hosted browser dependency install failed before smoke, rerun requested.
+
 ## 0.8.3-dev
 - Add native authenticated Kopia repository connection status and explicit empty local repository initialization through the existing job queue.
 - Refuse connected/initializing servers and nonempty or unreadable destinations; preserve native existing-repository connection workflow.

@@ -130,6 +130,14 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         connected=api("/api/admin/kopia/status")
         assert connected=={"connection":"connected","storage_type":"filesystem","snapshot_verified":False},connected
         assert (Path("backups")/"kopia.repository").is_file()
+        action("install","grocy")
+        snapshot_job=api("/api/admin/modules/grocy/snapshot",{"confirmed":True})["id"]
+        wait_job(snapshot_job,"quiesced Grocy snapshot")
+        assert module("grocy")["status"]=="running"
+        record=next(j for j in api("/api/admin/jobs") if j["id"]==snapshot_job)
+        assert "Native snapshot reported complete:" in record["log"]
+        assert "restore not verified" in record["stage"]
+        action("uninstall","grocy")
     else:
         with urllib.request.urlopen("http://127.0.0.1:"+str(port)+"/",timeout=10) as response:
             assert response.status==200

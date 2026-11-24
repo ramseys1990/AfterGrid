@@ -267,3 +267,22 @@ def test_kopia_repository_admin_and_confirmation(tmp_path,monkeypatch):
         assert c.post("/api/admin/kopia/initialize",json={"confirmed":True}).status_code==403
         assert c.post("/api/admin/kopia/initialize",json={"confirmed":True},headers=ORIGIN).status_code==202
         assert calls==[("/kopia/status",None),("/jobs",{"module":"kopia","action":"initialize-repository"})]
+
+
+def test_snapshot_requires_admin_and_confirmation(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake(path,payload=None):
+        calls.append((path,payload))
+        return 202,{"id":5}
+    monkeypatch.setattr(core_app,"call",fake)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/modules/grocy/snapshot"
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==401
+        assert c.post("/api/setup",json={"token":"token","username":"admin","password":"long test password"},headers=ORIGIN).status_code==201
+        assert c.post(path,json={"confirmed":True}).status_code==403
+        assert c.post(path,json={"confirmed":False},headers=ORIGIN).status_code==409
+        assert c.post("/api/admin/modules/homebox/snapshot",json={"confirmed":True},headers=ORIGIN).status_code==400
+        assert c.post(path,json={"confirmed":True},headers=ORIGIN).status_code==202
+        assert calls==[("/jobs",{"module":"grocy","action":"snapshot"})]

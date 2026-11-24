@@ -63,3 +63,5 @@ Preparedness: shared LAN landing-page indicators for indexed knowledge, local ma
 0.8.2: core and module backup coverage plans, normalized Compose mount classification, consistency guidance and explicit missing worker state/image coverage implemented. No snapshots scheduled or verified. CI pending. Next: native Kopia repository and application-consistent snapshot workflow.
 
 0.8.3: native Kopia authenticated connection status and explicit empty-local-repository creation via the serialized worker queue. CI pending, including disposable native initialization. Next: consistent snapshot execution and restore verification.
+
+0.8.4: initial managed Grocy snapshot with clean shutdown check, bounded native Kopia CLI, completeness checks and prior-state restoration on ordinary failures. CI pending; actual restore verification and expansion to other apps remain next. Prior repository setup CI unit/build checks passed but browser dependency installation failed before smoke; rerun requested.

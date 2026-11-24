@@ -21,7 +21,7 @@ MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -167,6 +167,8 @@ def enqueue(ident, action, backup_confirmed=False):
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
+    if action=="snapshot" and ident not in SNAPSHOT_SOURCES:
+        raise ValueError("Application snapshot not yet supported")
     if action == "initialize-repository" and ident!="kopia":
         raise ValueError("Kopia-only action")
     if action == "update" and (backup_confirmed is not True or ident == "routing"):
@@ -345,6 +347,68 @@ def initialize_repository(job):
     if result["connection"]!="connected" or result["storage_type"]!="filesystem":
         raise RuntimeError("Creation outcome unconfirmed; inspect native Kopia before retrying")
     change(job,completed=3,state="succeeded",stage="Repository connected; snapshots not verified")
+
+# Initial reviewed application with one persistent data directory.
+SNAPSHOT_SOURCES={"grocy":"/source/data/grocy"}
+
+def cleanly_stopped(ident):
+    try:
+        output=subprocess.run(command(ident,"ps","--all","--format","json"),env=compose_env(ident),
+                              capture_output=True,text=True,timeout=8,check=True).stdout.strip()
+        rows=json.loads(output) if output.startswith("[") else [json.loads(line) for line in output.splitlines() if line]
+        return bool(rows) and all(r.get("State","").lower()=="exited" and type(r.get("ExitCode")) is int and r["ExitCode"]==0 for r in rows)
+    except (OSError,subprocess.SubprocessError,ValueError,TypeError):
+        return False
+
+def native_snapshot(ident):
+    source=SNAPSHOT_SOURCES[ident]
+    try:
+        subprocess.run(command("kopia","exec","-T","kopia","/bin/sh","-c",
+            'test -d "$1" && test ! -L "$1"',"check-source",source),
+            env=compose_env("kopia"),capture_output=True,text=True,timeout=8,check=True)
+        raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","--kill-after=10s","300s",
+            "/bin/kopia","snapshot","create","--json","--fail-fast","--force-disable-actions","--no-send-snapshot-report",source),
+            env=compose_env("kopia"),capture_output=True,text=True,timeout=330,check=True).stdout
+        if len(raw)>1024*1024:raise ValueError("Oversized snapshot response")
+        value=json.loads(raw)
+        stats=value["stats"]
+        if (value.get("incomplete") or value["source"]["path"]!=source
+                or not re.fullmatch(r"[a-f0-9]{32,64}",value["id"])
+                or not value["rootEntry"].get("obj")
+                or any(type(stats.get(k)) is not int or stats[k]!=0 for k in
+                       ("errorCount","ignoredErrorCount","excludedFileCount","excludedDirCount"))
+                or type(stats.get("fileCount")) is not int or stats["fileCount"]<1):
+            raise ValueError("Incomplete, excluded or empty snapshot")
+        return value["id"]
+    except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
+        raise RuntimeError("Snapshot not confirmed complete; inspect native Kopia (partial snapshots may remain)") from None
+
+def snapshot_application(job,ident):
+    if ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported snapshot application")
+    change(job,state="running",total=4,completed=0,stage="Check repository and application")
+    if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
+    original=state(ident)
+    if original not in ("running","stopped"):raise RuntimeError("Application must be installed and healthy or stopped")
+    change(job,completed=1,stage="Quiesce application")
+    restart=original=="running"
+    try:
+        if restart:run(job,ident,"stop","--timeout","60")
+        if not cleanly_stopped(ident):raise RuntimeError("Clean application shutdown not confirmed; snapshot refused")
+        change(job,completed=2,stage="Create native Kopia snapshot")
+        snapshot_id=native_snapshot(ident)
+        if not cleanly_stopped(ident):raise RuntimeError("Application state changed during snapshot; consistency unconfirmed")
+        log(job,"\nNative snapshot reported complete: "+snapshot_id+"; restore not verified.\n")
+        change(job,completed=3)
+    finally:
+        if restart:
+            change(job,stage="Restore prior running state")
+            try:
+                run(job,ident,"start")
+                wait_ready(ident)
+                log(job,"\nApplication running again.\n")
+            except Exception:
+                raise RuntimeError("Application restart not confirmed; inspect and start manually") from None
+    change(job,completed=4,state="succeeded",stage="Snapshot reported complete; restore not verified")
 
 def backup_sources(config, root):
     """Classify normalized Compose mounts; no host directory traversal."""
@@ -582,6 +646,9 @@ def execute(row):
     try:
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
+        if action=="snapshot":
+            snapshot_application(job,ident)
+            return
         if action=="initialize-repository":
             if ident!="kopia":raise ValueError("Kopia-only action")
             initialize_repository(job)
