@@ -76,12 +76,15 @@ def pack(root,inventory,destination,modules,password):
     destination=install.validate_root(destination)
     if root in destination.parents or destination in root.parents:raise ValueError("Package must be outside installation")
     inventory=Path(inventory).absolute()
-    records=core_records(inventory)
+    inventory_bytes=prep.read_private(inventory,65536)
     if not password or len(password)>1024:raise ValueError("Repository password required")
     require_quiescent()
     repository=assets.real_directory(root/"backups")
     destination.mkdir(mode=0o700)
     try:
+        # Parse exactly the bytes being packaged, not a second read of a mutable input.
+        prep.private_write(destination/"inventory.json",inventory_bytes)
+        records=core_records(destination/"inventory.json")
         value=assets.capture(root,destination/"assets")
         rows=assets.recovery_image_rows(value)
         captured={r["service"] for r in rows if r["project"]!="aftergrid-core"}
@@ -91,19 +94,20 @@ def pack(root,inventory,destination,modules,password):
         checks=[(key,source,records[key]["snapshot_id"]) for key,source in (("core",CORE_SOURCE),("worker",WORKER_SOURCE))]
         for m in modules:
             checks.extend((key,source,sid) for key,source,_,sid in data.required_records(records,m))
-        prep.private_write(destination/"inventory.json",prep.read_private(inventory,65536))
         before=repository_digest(repository)
         target=destination/"repository"
         target.mkdir(mode=0o700)
         subprocess.run(["cp","-a","--reflink=auto",str(repository)+"/.",str(target)],check=True,capture_output=True,timeout=6*60*60)
         require_quiescent()
-        if repository_digest(target)!=before or repository_digest(repository)!=before:
-            raise ValueError("Repository changed during copy")
         kopia=next(r for r in rows if r["project"]=="aftergrid-kopia")
         with tempfile.TemporaryDirectory(prefix=".verify-package-",dir=destination) as tmp:
             run=data.native_repository_command(kopia["image_id"],target,Path(tmp),password)
             native=data.native_manifest_rows(run)
             for _,source,sid in checks:data.exact_native_manifest(native,source,sid)
+        require_quiescent()
+        # Check both copies after native manifest inspection, immediately before publishing.
+        if repository_digest(target)!=before or repository_digest(repository)!=before:
+            raise ValueError("Repository changed during package assembly")
         require_quiescent()
         report={"format":1,"selected":sorted(modules),"omitted_captured":omitted,
                 "assets_manifest_sha256":assets.sha256_file(destination/"assets/assets-manifest.json"),
@@ -139,6 +143,15 @@ def verify_package(directory):
     for m in selected:checks.update({k:sid for k,_,_,sid in data.required_records(records,m)})
     if checks!=report["checked_snapshots"]:raise ValueError("Package snapshot selection mismatch")
     return report
+
+def restore_package(root,directory,password):
+    directory=assets.real_directory(directory)
+    root=install.validate_root(root)
+    if root==directory or directory in root.parents or root in directory.parents:
+        raise ValueError("Replacement root must be outside the recovery package")
+    report=verify_package(directory)
+    return recover(root,directory/"assets",directory/"repository",directory/"inventory.json",report["selected"],password)
+
 
 def copy_and_connect_kopia(root,assets_dir,repository,inventory):
     """Use a separate working copy; no mutation of original repository."""
@@ -443,8 +456,7 @@ def main():
             print("Recovery package file checksums and selected inventory verified; native recovery remains separate.")
         elif args.action=="restore-package":
             if not args.confirm_empty_replacement:raise ValueError("Replacement-only confirmation required")
-            report=verify_package(args.package)
-            recover(args.root,args.package/"assets",args.package/"repository",args.package/"inventory.json",report["selected"],getpass.getpass("Original Kopia repository password: "))
+            restore_package(args.root,args.package,getpass.getpass("Original Kopia repository password: "))
             print("Guarded package recovery started. Native acceptance and activation remain separate.")
         elif args.action=="restore":
             if not args.confirm_empty_replacement:raise ValueError("Replacement-only confirmation required")
