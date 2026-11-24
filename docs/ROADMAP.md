@@ -5,8 +5,8 @@ Keep milestones functional, not paperwork-heavy.
 | Milestone | Scope | State |
 |---|---|---|
 | 0.1 | Core bootstrap, browser setup, local administrator and shared landing page | Initial implementation; runtime validation pending |
-| 0.2 | Generic Compose worker, catalog, live job progress and lifecycle | Initial implementation; dependency checks and runtime validation pending |
-| 0.3 | Kiwix, Homebox, Grocy, Kopia independently installable | Definitions implemented; Kiwix CI validated, others pending |
+| 0.2 | Generic Compose worker, catalog, live job progress and lifecycle | Kiwix lifecycle CI passed; batch wizard added, shared dependency handling pending |
+| 0.3 | Kiwix, Homebox, Grocy, Kopia independently installable | Four module lifecycles passed hosted CI; native setup and backup restoration remain pending |
 | 0.4 | Household organization, ownership/location mapping, inventory reporting, stable QR links | Planned |
 | 0.5 | Regional maps, downloads, offline routing | Planned |
 | 0.6 | Meshtastic, MeshCore, TAK, hardware/client setup | Planned |
@@ -17,4 +17,4 @@ Keep milestones functional, not paperwork-heavy.
 Basic data preservation and security start now. Full offline recovery and AI must not block functional module development. Additional candidates: file sharing, documents, power monitoring, weather stations, offline translation, local AI and optional inter-household synchronization.
 
 ## Immediate next test
-Install the core in a clean Debian/Ubuntu guest. Open setup, create admin, log out/in, restart core, confirm account persists and only core is installed. Then implement the worker with Kiwix as the first end-to-end module.
+Install the core in a clean Debian/Ubuntu guest. Open setup, create admin, log out/in, restart core, confirm account persists and only core is installed. Check multi-module selection, job progress and independent retries. Next: guided native setup and stable local URLs, then offline content and maps.

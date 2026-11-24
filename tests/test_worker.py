@@ -48,3 +48,22 @@ def test_generated_secrets(tmp_path, monkeypatch):
     b=worker.module_secrets("kopia",create=True)
     assert b["KOPIA_PASSWORD"]!=b["KOPIA_UI_PASSWORD"]
     assert worker.compose_env("kopia")["KOPIA_PASSWORD"]==b["KOPIA_PASSWORD"]
+
+
+def test_batch_atomic_and_idempotent(tmp_path, monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    token="a"*48
+    with pytest.raises(ValueError):
+        worker.enqueue_batch(token,["kiwix","unknown"])
+    assert worker.jobs()==[]
+    first=worker.enqueue_batch(token,["homebox","kiwix"])
+    assert len(first)==2
+    assert worker.enqueue_batch(token,["kiwix","homebox"])==first
+    with pytest.raises(sqlite3.IntegrityError):
+        worker.enqueue_batch("b"*48,["grocy","kiwix"])
+    assert len(worker.jobs())==2
+    with pytest.raises(sqlite3.IntegrityError):
+        worker.enqueue_batch(token,["grocy"])

@@ -96,6 +96,8 @@ def init():
             action TEXT NOT NULL, state TEXT NOT NULL, stage TEXT NOT NULL,
             completed INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0,
             log TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL);
+          CREATE TABLE IF NOT EXISTS batches (
+            token TEXT PRIMARY KEY, selection TEXT NOT NULL, job_ids TEXT NOT NULL);
           CREATE UNIQUE INDEX IF NOT EXISTS one_pending_per_module
             ON jobs(module) WHERE state IN ('queued','running');
         """)
@@ -108,6 +110,33 @@ def enqueue(ident, action):
         cursor = conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES (?,?,'queued','Queued',?)",
                               (ident, action, int(time.time())))
         return cursor.lastrowid
+
+def enqueue_batch(token, selection):
+    manifests = catalog()
+    if (not isinstance(token,str) or not re.fullmatch(r"[a-f0-9]{48}",token)
+            or not isinstance(selection,list) or not 1 <= len(selection) <= 12
+            or not all(isinstance(i,str) and i in manifests for i in selection)
+            or len(set(selection)) != len(selection)):
+        raise ValueError("Invalid module selection")
+    # Shared module dependencies are not implemented yet. Fail closed rather
+    # than silently start a future dependent module out of order.
+    if any(manifests[i].get("dependencies") for i in selection):
+        raise ValueError("Selected module requires dependency support")
+    canonical = json.dumps(sorted(selection))
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        previous = conn.execute("SELECT selection,job_ids FROM batches WHERE token=?", (token,)).fetchone()
+        if previous:
+            if previous["selection"] != canonical:
+                raise sqlite3.IntegrityError("Batch selection changed")
+            return json.loads(previous["job_ids"])
+        ids = []
+        for ident in selection:
+            cursor = conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES (?,'install','queued','Queued',?)",
+                                  (ident, int(time.time())))
+            ids.append(cursor.lastrowid)
+        conn.execute("INSERT INTO batches VALUES (?,?,?)", (token,canonical,json.dumps(ids)))
+        return ids
 
 def jobs():
     with db() as conn:
@@ -255,13 +284,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_json(404, {"detail": "Unknown endpoint"})
 
     def do_POST(self):
-        if self.path != "/jobs":
+        if self.path not in {"/jobs", "/jobs/batch"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 1024:
+            if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
+            if self.path == "/jobs/batch":
+                if not isinstance(body,dict) or set(body) != {"token","modules"}:
+                    raise ValueError("Invalid batch")
+                return self.send_json(202, {"ids": enqueue_batch(body["token"],body["modules"])})
             if not isinstance(body, dict) or set(body) != {"module", "action"} or not all(isinstance(v,str) for v in body.values()):
                 raise ValueError("Invalid request")
             job = enqueue(body["module"], body["action"])

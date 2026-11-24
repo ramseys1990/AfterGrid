@@ -1,6 +1,7 @@
 """Small local portal. No Docker access or external identity dependencies."""
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -45,6 +46,9 @@ class Setup(Credentials):
     token: str = Field(min_length=1, max_length=128)
     server_name: str = Field(default="AfterGrid", min_length=1, max_length=80)
 
+class Selection(BaseModel):
+    modules: list[str] = Field(default_factory=list, max_length=12)
+
 def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -78,10 +82,14 @@ def create_app(data_dir=None):
                     salt TEXT NOT NULL, password_hash TEXT NOT NULL, server_name TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions (
                     token_hash TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS first_run (
+                    id INTEGER PRIMARY KEY CHECK(id=1), token TEXT NOT NULL,
+                    selection TEXT, result TEXT);
             """)
+            con.execute("INSERT OR IGNORE INTO first_run(id,token) VALUES (1,?)", (secrets.token_hex(24),))
         yield
 
-    api = FastAPI(title="AfterGrid", version="0.3.0-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.3.1-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @api.middleware("http")
@@ -146,9 +154,12 @@ def create_app(data_dir=None):
     def status(request: Request):
         with db() as con:
             row = con.execute("SELECT server_name FROM admin WHERE id=1").fetchone()
-        return {"setup_required": row is None, "admin": admin_session(request),
+            first = con.execute("SELECT result FROM first_run WHERE id=1").fetchone()
+        is_admin = admin_session(request)
+        return {"setup_required": row is None, "admin": is_admin,
+                "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.3.0-dev"}
+                "version": "0.3.1-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -171,6 +182,33 @@ def create_app(data_dir=None):
     def require_admin(request):
         if not admin_session(request):
             raise HTTPException(401, "Administrator login required")
+
+    @api.post("/api/admin/first-run", status_code=202)
+    def first_run(payload: Selection, request: Request):
+        require_admin(request)
+        same_origin(request)
+        selected = payload.modules
+        if len(set(selected)) != len(selected) or any(not re.fullmatch(r"[a-z][a-z0-9-]{0,39}",i) for i in selected):
+            raise HTTPException(400, "Invalid module selection")
+        canonical = json.dumps(sorted(selected))
+        with db() as con:
+            con.execute("BEGIN IMMEDIATE")
+            saved = con.execute("SELECT * FROM first_run WHERE id=1").fetchone()
+            if saved["result"] is not None:
+                if saved["selection"] != canonical:
+                    raise HTTPException(409, "Initial selection already saved; use the application catalog")
+                return json.loads(saved["result"])
+            if selected:
+                try:
+                    code, result = call("/jobs/batch", {"token":saved["token"],"modules":selected})
+                except WorkerUnavailable:
+                    raise HTTPException(503, "Module manager unavailable; retry the same selection")
+                if code != 202:
+                    raise HTTPException(code if code in {400,409} else 502, result.get("detail","Module manager request failed"))
+            else:
+                result = {"ids":[]}
+            con.execute("UPDATE first_run SET selection=?,result=? WHERE id=1", (canonical,json.dumps(result)))
+            return result
 
     @api.get("/api/admin/jobs")
     def list_jobs(request: Request):

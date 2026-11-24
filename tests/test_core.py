@@ -62,3 +62,34 @@ def test_kopia_credentials_are_admin_only(tmp_path, monkeypatch):
         setup={"username":"admin","password":"long test password","token":"test-token","server_name":"Test"}
         assert client.post("/api/setup",json=setup,headers={"Origin":"http://127.0.0.1:8080"}).status_code==201
         assert client.get("/api/admin/kopia/credentials").json()["username"]=="aftergrid"
+
+
+def test_first_run_selection(tmp_path, monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake_call(path,payload=None):
+        calls.append((path,payload))
+        assert path=="/jobs/batch"
+        return 202,{"ids":[1,2]}
+    monkeypatch.setattr(core_app,"call",fake_call)
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.post("/api/admin/first-run",json={"modules":[]},headers=ORIGIN).status_code==401
+        setup={"username":"admin","password":"long test password","token":"test-token"}
+        assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
+        assert client.get("/api/status").json()["selection_pending"]
+        assert client.post("/api/admin/first-run",json={"modules":[]}).status_code==403
+        assert client.post("/api/admin/first-run",json={"modules":["kiwix","kiwix"]},headers=ORIGIN).status_code==400
+        assert client.post("/api/admin/first-run",json={"modules":["kiwix","grocy"]},headers=ORIGIN).json()=={"ids":[1,2]}
+        assert not client.get("/api/status").json()["selection_pending"]
+        assert client.post("/api/admin/first-run",json={"modules":["grocy","kiwix"]},headers=ORIGIN).json()=={"ids":[1,2]}
+        assert client.post("/api/admin/first-run",json={"modules":[]},headers=ORIGIN).status_code==409
+        assert len(calls)==1
+
+def test_first_run_skip_without_worker(tmp_path):
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        setup={"username":"admin","password":"long test password","token":"test-token"}
+        assert client.post("/api/setup",json=setup,headers=ORIGIN).status_code==201
+        assert client.post("/api/admin/first-run",json={"modules":[]},headers=ORIGIN).json()=={"ids":[]}
+        assert not client.get("/api/status").json()["selection_pending"]

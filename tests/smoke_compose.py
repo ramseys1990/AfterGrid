@@ -20,6 +20,9 @@ def module(ident="kiwix"):
 
 def action(name, ident="kiwix"):
     job_id=api("/api/admin/modules/"+ident+"/"+name,{})["id"]
+    wait_job(job_id,name)
+
+def wait_job(job_id,name):
     deadline=time.monotonic()+240
     while time.monotonic()<deadline:
         job=next(j for j in api("/api/admin/jobs") if j["id"]==job_id)
@@ -34,7 +37,11 @@ def action(name, ident="kiwix"):
 assert api("/api/status")["setup_required"]
 api("/api/setup",{"token":os.environ["SMOKE_TOKEN"],"username":"admin","password":"a disposable test password","server_name":"CI"})
 assert module()["status"]=="not installed"
-action("install")
+batch=api("/api/admin/first-run",{"modules":["kiwix","homebox"]})
+assert len(batch["ids"])==2
+assert not api("/api/status")["selection_pending"]
+assert api("/api/admin/first-run",{"modules":["homebox","kiwix"]})==batch
+wait_job(batch["ids"][0],"kiwix initial install")
 assert module()["status"]=="running"
 with urllib.request.urlopen("http://127.0.0.1:8081/",timeout=10) as response:
     assert response.status==200
@@ -51,8 +58,11 @@ print("Kiwix Compose lifecycle passed; content preserved.")
 
 # Exercise the same lifecycle for the new inventory and backup services.
 for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
-    assert module(ident)["status"]=="not installed"
-    action("install",ident)
+    if ident=="homebox":
+        wait_job(batch["ids"][1],"homebox initial install")
+    else:
+        assert module(ident)["status"]=="not installed"
+        action("install",ident)
     assert module(ident)["status"]=="running"
     if ident=="kopia":
         import base64

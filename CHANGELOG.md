@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1-dev
+- First-run browser application selection with no default selection, explicit skip, and optional essentials preset.
+- Atomically queue selected modules; replay the same selection without duplicating jobs. Worker runs one job at a time.
+- Add tests for authentication, origin checks, skip, invalid selections and batch replay. Extend hosted lifecycle smoke test to exercise batch install.
+- Record prior successful hosted CI of all four module lifecycles. Native QR and backup restoration are not validated.
+
+
 ## 0.3.0-dev
 - Add Homebox, Grocy and Kopia as independent optional Compose modules.
 - Generate persistent module secrets and expose only Kopia's setup credentials to an authenticated local administrator.

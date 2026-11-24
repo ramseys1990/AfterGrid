@@ -17,6 +17,7 @@ async function refresh(){
   $("server-name").textContent=status.server_name;
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
+  $("wizard").hidden=!(status.admin && status.selection_pending);
   if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
@@ -26,6 +27,7 @@ async function refresh(){
 }
 async function renderModules(){
     const modules=await api("/api/modules");
+    if(status.admin && status.selection_pending)renderWizard(modules);
     $("catalog").replaceChildren();
     for(const mod of modules){
       const card=document.createElement("article");
@@ -67,6 +69,41 @@ async function renderModules(){
       $("catalog").append(card);
     }
 }
+function renderWizard(modules){
+  const root=$("wizard-options");
+  const checked=new Set([...root.querySelectorAll("input:checked")].map(i=>i.value));
+  root.replaceChildren();
+  for(const mod of modules.filter(m=>m.installable&&m.status==="not installed"&&!pending.has(m.id))){
+    const label=document.createElement("label");label.className="wizard-option";
+    const input=document.createElement("input");input.type="checkbox";input.value=mod.id;input.checked=checked.has(mod.id);
+    const description=document.createElement("span");description.textContent=mod.name+" — "+mod.description;
+    label.append(input,description);root.append(label);
+  }
+  if(!root.children.length)root.textContent="No uninstalled applications currently available. You can skip and add applications later.";
+}
+let submittingWizard=false;
+async function submitWizard(modules){
+  if(submittingWizard)return;
+  submittingWizard=true;error("");
+  const controls=$("wizard-form").querySelectorAll("button,input");
+  for(const el of controls)el.disabled=true;
+  try{
+    await api("/api/admin/first-run",{modules});
+    await refresh();
+  }catch(e){error(e.message);}
+  finally{submittingWizard=false;for(const el of controls)el.disabled=false;}
+}
+$("essentials").addEventListener("click",()=>{
+  for(const input of $("wizard-options").querySelectorAll("input"))input.checked=["kiwix","homebox","grocy","kopia"].includes(input.value);
+});
+$("wizard-form").addEventListener("submit",event=>{
+  event.preventDefault();
+  const chosen=[...$("wizard-options").querySelectorAll("input:checked")].map(i=>i.value);
+  if(!chosen.length){$("wizard-message").textContent="Select an application or use Skip for now.";return;}
+  submitWizard(chosen);
+});
+$("skip-wizard").addEventListener("click",()=>submitWizard([]));
+
 async function renderJobs(){
   const jobs=await api("/api/admin/jobs");
   const parent=$("jobs");
