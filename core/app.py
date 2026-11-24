@@ -28,6 +28,7 @@ try:
     from .map_downloads import MapDownloads
     from .routing import route, RouteError
     from .waypoints import MapPlans
+    from .routing_downloads import RoutingDownloads
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
@@ -37,6 +38,7 @@ except ImportError:
     from map_downloads import MapDownloads
     from routing import route, RouteError
     from waypoints import MapPlans
+    from routing_downloads import RoutingDownloads
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -80,6 +82,7 @@ def create_app(data_dir=None):
     households = Households(data)
     inventory = Inventory(data)
     plans = MapPlans(data)
+    routing_data = RoutingDownloads(data,os.environ.get('AFTERGRID_ROUTING_CONTENT','/content/routing'))
     maps = MapDownloads(data,os.environ.get('AFTERGRID_MAP_CONTENT','/content/maps'))
     attempts = deque()
     lock = threading.Lock()
@@ -114,13 +117,15 @@ def create_app(data_dir=None):
         downloads.start()
         plans.init()
         maps.start()
+        routing_data.start()
         try:
             yield
         finally:
+            routing_data.close()
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.6-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.5.7-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -314,7 +319,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.6-dev"}
+                "version": "0.5.7-dev"}
 
     @api.get("/api/modules")
     def modules():
@@ -427,6 +432,34 @@ def create_app(data_dir=None):
         location=next((r for r in households.view()["locations"] if r["id"]==ident),None)
         if location is None: raise HTTPException(404,"Location mapping not found")
         return inventory_result(lambda: inventory.report(location))
+
+    class RoutingEstimate(BaseModel):
+        region: str = Field(max_length=40)
+
+    @api.get("/api/admin/routing-data")
+    def routing_data_status(request: Request):
+        require_admin(request)
+        return routing_data.status()
+
+    @api.post("/api/admin/routing-data/estimate",status_code=202)
+    def routing_data_estimate(payload: RoutingEstimate,request: Request):
+        require_admin(request)
+        same_origin(request)
+        try:
+            routing_data.estimate(payload.region)
+        except (ValueError,OSError) as exc:
+            raise HTTPException(400,str(exc))
+        return {"queued":True}
+
+    @api.post("/api/admin/routing-data/download",status_code=202)
+    def routing_data_download(request: Request):
+        require_admin(request)
+        same_origin(request)
+        try:
+            routing_data.download()
+        except (ValueError,OSError) as exc:
+            raise HTTPException(409,str(exc))
+        return {"queued":True}
 
     class MapEstimate(BaseModel):
         build: str = Field(min_length=8,max_length=8)

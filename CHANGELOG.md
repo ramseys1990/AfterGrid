@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.7-dev
+- Regional Geofabrik PBF acquisition with metadata estimate, explicit confirmation, actual byte progress, storage checks and publisher MD5 verification.
+- New source published atomically; existing region and graph retained; replacement staged separately as incoming.osm.pbf. No automatic rebuild or activation.
+- Correct routing lifecycle smoke test to use administrator status rather than inaccessible graph directory. Previous smoke reached all three native route modes and uninstall successfully.
+- Add staging, checksum and API tests. Live Geofabrik transfer and update activation pending.
+
+
 ## 0.5.6-dev
 - Administrator-only GPX/KML import of local waypoints, routes and tracks, with separate track segments preserved.
 - UTF-8, 1 MB limit, bounded records/coordinates, no XML entities or external KML links. Atomic SQLite insert; imported geometry is static and shared on LAN.

@@ -14,6 +14,7 @@ services:
       - ./data/core:/data
       - ./content/kiwix:/content/kiwix
       - ./content/maps:/content/maps
+      - ./content/routing:/content/routing
       - worker_socket:/run/aftergrid:ro
     networks:
       - default

@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -237,7 +237,7 @@ const refreshModules=document.createElement("button");refreshModules.textContent
 setInterval(async()=>{
   if(polling||!status?.admin||$("dashboard").hidden)return;
   polling=true;
-  try{if(await renderJobs())await renderModules();await renderDownloads();await refreshMaps();}catch(e){error(e.message);}finally{polling=false;}
+  try{if(await renderJobs())await renderModules();await renderDownloads();await refreshMaps();await refreshRoutingData();}catch(e){error(e.message);}finally{polling=false;}
 },2000);
 
 for(const [id,path] of [["setup-form","/api/setup"],["login-form","/api/login"]]){
@@ -407,5 +407,26 @@ $("map-estimate").addEventListener("submit",async event=>{
 $("map-download").addEventListener("click",async()=>{
   if(!confirm("Download this regional archive? Internet and free storage are required."))return;
   try{await api("/api/admin/maps/download",{});await refreshMaps();}catch(e){error(e.message);}
+});
+async function refreshRoutingData(){
+  const r=await api("/api/admin/routing-data");if(!status?.admin)return;
+  const select=$("routing-estimate").elements.region;
+  if(!select.options.length)for(const item of r.regions)option(select,item.id,item.name);
+  const root=$("routing-status");root.replaceChildren();
+  function line(value){const p=document.createElement("p");p.textContent=value;root.append(p);}
+  line("Routing data: "+r.state+" — "+(r.detail||""));
+  line("Available storage: "+bytes(r.free_bytes));
+  if(r.size_bytes!==undefined)line("PBF size: "+bytes(r.size_bytes)+" (graph requires additional space)");
+  for(const file of r.files)line(file.name+" — "+bytes(file.size_bytes));
+  if(r.state==="downloading"&&r.size_bytes){const p=document.createElement("progress");p.max=r.size_bytes;p.value=r.bytes||0;root.append(p);line(bytes(r.bytes||0)+" downloaded");}
+  line(r.graph_ready?"Existing graph retained":"No prepared routing graph");
+  $("routing-download").hidden=r.state!=="estimated";
+}
+$("routing-estimate").addEventListener("submit",async event=>{
+  event.preventDefault();try{await api("/api/admin/routing-data/estimate",{region:event.currentTarget.elements.region.value});await refreshRoutingData();}catch(e){error(e.message);}
+});
+$("routing-download").addEventListener("click",async()=>{
+  if(!confirm("Download selected PBF? Existing routing graph will not be replaced."))return;
+  try{await api("/api/admin/routing-data/download",{});await refreshRoutingData();}catch(e){error(e.message);}
 });
 refresh().catch(e=>error(e.message));

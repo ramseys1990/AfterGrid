@@ -185,5 +185,6 @@ action("start","routing")
 assert module("routing")["status"]=="running"
 action("uninstall","routing")
 assert module("routing")["status"]=="not installed"
-assert Path("content/routing/tiles/.aftergrid-ready").is_file()
+assert api("/api/admin/routing-data")["graph_ready"]
+assert any(x["name"]=="region.osm.pbf" for x in api("/api/admin/routing-data")["files"])
 print("Native routing graph, three costing modes and lifecycle passed.")
