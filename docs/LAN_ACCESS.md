@@ -30,3 +30,5 @@ Do not set a public address or forward these ports on the router. This initial d
 5. Open the link on a family device and sign in with native credentials. Generate QR labels only after verifying the final URL.
 
 AfterGrid does not verify that native account setup was completed; the administrator explicitly confirms it. The app URL is persisted through the worker configuration. Return to local-only recreates and starts the application on loopback without reopening Homebox registration. Uninstall preserves data and sharing preferences. Kopia remains loopback-only. Kiwix uses the existing core bind behavior. QR scan, native credential changes, actual LAN/DNS and trusted HTTPS are still unverified. Recovery must preserve the worker state, server DNS and app data.
+
+The disposable hosted CI test exercises binding changes using a private IPv4 assigned to the runner loopback interface. It inspects Docker's published addresses and Homebox environment. This is not a physical LAN, DNS, login or QR scanning acceptance test.

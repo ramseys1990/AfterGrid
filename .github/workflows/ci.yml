@@ -41,7 +41,11 @@ jobs:
             done
             docker compose logs --tail 50 || true
             docker compose down -v || true
+            sudo ip address del "${AFTERGRID_LAN_BIND:-192.168.254.253}/32" dev lo || true
           }
           trap cleanup EXIT
+          # A disposable private address on runner loopback; no external LAN needed.
+          export AFTERGRID_LAN_BIND=192.168.254.253
+          sudo ip address add "$AFTERGRID_LAN_BIND/32" dev lo
           docker compose up -d --wait --wait-timeout 90
           python tests/smoke_compose.py

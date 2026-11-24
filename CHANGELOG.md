@@ -3,7 +3,7 @@
 ## 0.3.2-dev
 - Explicit LAN sharing and local-only reconfiguration for Homebox and Grocy; Kopia stays loopback-only.
 - Stable home.arpa application URLs, persistent sharing preferences and Homebox registration closure.
-- Document local DNS, native account setup and unencrypted HTTP limitations. Unit tests added; actual LAN and QR scan validation pending.
+- Document local DNS, native account setup and unencrypted HTTP limitations. Unit tests and disposable Docker bind/reconfigure tests added; actual LAN and QR scan validation pending.
 
 
 ## 0.3.1-dev

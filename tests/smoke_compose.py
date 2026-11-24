@@ -2,6 +2,7 @@
 import http.cookiejar
 import json
 import os
+import subprocess
 import time
 import urllib.request
 from pathlib import Path
@@ -74,6 +75,30 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
     else:
         with urllib.request.urlopen("http://127.0.0.1:"+str(port)+"/",timeout=10) as response:
             assert response.status==200
+    if ident in ("homebox","grocy"):
+        def inspect_container():
+            cid=subprocess.check_output(["docker","ps","-q","--filter","label=com.docker.compose.project=aftergrid-"+ident],text=True).strip()
+            return json.loads(subprocess.check_output(["docker","inspect",cid],text=True))[0]
+        def check_bind(host):
+            bindings=inspect_container()["HostConfig"]["PortBindings"]
+            published=[entry for entries in bindings.values() for entry in entries]
+            assert published and all(entry["HostIp"]==host for entry in published)
+        check_bind("127.0.0.1")
+        assert module(ident)["share_available"]
+        action("share",ident)
+        assert module(ident)["shared"]
+        assert module(ident)["lan_url"]=="http://"+ident+".aftergrid.home.arpa:"+str(port)
+        check_bind(os.environ["AFTERGRID_LAN_BIND"])
+        if ident=="homebox":
+            env=inspect_container()["Config"]["Env"]
+            assert "HBOX_OPTIONS_ALLOW_REGISTRATION=false" in env
+            assert "HBOX_OPTIONS_HOSTNAME=http://homebox.aftergrid.home.arpa:8082" in env
+        action("unshare",ident)
+        assert not module(ident)["shared"]
+        check_bind("127.0.0.1")
+        if ident=="homebox":
+            assert "HBOX_OPTIONS_ALLOW_REGISTRATION=false" in inspect_container()["Config"]["Env"]
+        print(ident+" LAN binding and local-only reconfiguration passed.")
     action("stop",ident)
     assert module(ident)["status"]=="stopped"
     action("start",ident)
