@@ -68,6 +68,7 @@ def test_pack_pins_inventory_and_detects_late_repository_change(tmp_path, monkey
         return {}
     monkeypatch.setattr(recover.assets,"capture",capture)
     monkeypatch.setattr(recover.assets,"recovery_image_rows",lambda value:[{"project":"aftergrid-kopia","service":"kopia","image_id":"fixture"}])
+    monkeypatch.setattr(recover.assets,"image_inventory",lambda:[{"project":"aftergrid-kopia","service":"kopia","image_id":"fixture"}])
     monkeypatch.setattr(recover.data,"native_repository_command",lambda *args:None)
     def manifests(run):
         if change_repository:
@@ -182,3 +183,19 @@ def test_guarded_capture_refuses_mismatched_seal(monkeypatch):
     with pytest.raises(ValueError,match="seal"):
         recover.guarded_capture(call,["kiwix"])
     assert calls==["/api/admin/recovery-maintenance/begin","/api/admin/recovery-maintenance/seal"]
+
+
+def test_microtak_omission_requires_explicit_acknowledgment():
+    captured={"kopia","kiwix","tak"}
+    with pytest.raises(ValueError,match="acknowledge"):
+        recover.validate_package_scope(captured,["kiwix"])
+    assert recover.validate_package_scope(captured,["kiwix"],True)=={"tak":recover.data.BLOCKED_RECOVERY["tak"]}
+    with pytest.raises(ValueError,match="unaccepted"):
+        recover.validate_package_scope(captured,["tak"],True)
+    assert recover.validate_package_scope({"kopia","kiwix"},["kiwix"])=={}
+
+
+def test_microtak_historical_inventory_cannot_enable_restore():
+    with pytest.raises(ValueError,match="MicroTAK"):
+        recover.data.required_records({"application/tak":{"verification":"isolated",
+            "repository_status":"present","snapshot_id":"a"*32,"source":"/source/data/tak"}},"tak")
