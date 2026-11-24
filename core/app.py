@@ -30,6 +30,7 @@ try:
     from .waypoints import MapPlans
     from .routing_downloads import RoutingDownloads
     from .place_search import PlaceSearch
+    from .communications import Communications
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
@@ -41,6 +42,7 @@ except ImportError:
     from waypoints import MapPlans
     from routing_downloads import RoutingDownloads
     from place_search import PlaceSearch
+    from communications import Communications
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -83,6 +85,7 @@ def create_app(data_dir=None):
     households = Households(data)
     inventory = Inventory(data)
     plans = MapPlans(data)
+    comms = Communications(data)
     routing_data = RoutingDownloads(data,os.environ.get('AFTERGRID_ROUTING_CONTENT','/content/routing'))
     maps = MapDownloads(data,os.environ.get('AFTERGRID_MAP_CONTENT','/content/maps'))
     places = PlaceSearch(data,routing_data.content)
@@ -118,6 +121,7 @@ def create_app(data_dir=None):
         inventory.init()
         downloads.start()
         plans.init()
+        comms.init()
         maps.start()
         routing_data.start()
         try:
@@ -128,7 +132,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.6.1-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.6.2-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -253,6 +257,67 @@ def create_app(data_dir=None):
             raise HTTPException(409,str(exc))
         return {"queued":True}
 
+    class CommDevice(BaseModel):
+        id: int | None = Field(default=None,gt=0)
+        label: str = Field(max_length=100)
+        method: str = Field(max_length=20)
+        assigned: str = Field(default="",max_length=100)
+        callsign: str = Field(default="",max_length=60)
+        notes: str = Field(default="",max_length=500)
+
+    class CommPlan(BaseModel):
+        id: int | None = Field(default=None,gt=0)
+        name: str = Field(max_length=100)
+        scope: str = Field(default="",max_length=100)
+        primary: str = Field(max_length=500)
+        alternate: str = Field(max_length=500)
+        contingency: str = Field(max_length=500)
+        emergency: str = Field(max_length=500)
+
+    class CommDelete(BaseModel):
+        id: int = Field(gt=0)
+        kind: str = Field(max_length=10)
+
+    @api.get("/api/communications")
+    def communications_directory():
+        require_setup()
+        return comms.directory()
+
+    @api.post("/api/admin/communications/device")
+    def save_comm_device(payload: CommDevice,request: Request):
+        require_admin(request)
+        same_origin(request)
+        return {"id":plan_operation(lambda:comms.save("device",payload.model_dump(exclude={"id"}),payload.id))}
+
+    @api.post("/api/admin/communications/plan")
+    def save_comm_plan(payload: CommPlan,request: Request):
+        require_admin(request)
+        same_origin(request)
+        values={"name":payload.name,"scope":payload.scope,"steps":{k:getattr(payload,k) for k in ("primary","alternate","contingency","emergency")}}
+        return {"id":plan_operation(lambda:comms.save("plan",values,payload.id))}
+
+    @api.post("/api/admin/communications/checked")
+    def check_comm_device(payload: DeleteRequest,request: Request):
+        require_admin(request)
+        same_origin(request)
+        plan_operation(lambda:comms.checked(payload.id))
+        return {"ok":True}
+
+    @api.post("/api/admin/communications/delete")
+    def delete_comm_record(payload: CommDelete,request: Request):
+        require_admin(request)
+        same_origin(request)
+        plan_operation(lambda:comms.delete(payload.kind,payload.id))
+        return {"ok":True}
+
+    @api.get("/communications")
+    def comms_view():
+        return FileResponse(ROOT/"communications.html")
+
+    @api.get("/communications.js")
+    def comms_script():
+        return FileResponse(ROOT/"communications.js",media_type="text/javascript")
+
     @api.get("/api/maps/plans")
     def map_plans():
         require_setup()
@@ -346,7 +411,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.6.1-dev"}
+                "version": "0.6.2-dev"}
 
     @api.get("/api/modules")
     def modules():

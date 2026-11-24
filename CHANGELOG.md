@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2-dev
+- Local communications readiness page with service status, shared PACE plan CRUD, device directory and administrator-confirmed manual checks. No live radio status or credentials.
+- Fix native MeshMonitor login smoke test to acquire the upstream CSRF token without bypassing protection.
+- Prior CI reached successful repeated routing updates and Chromium offline-browser acceptance, then failed at MeshMonitor login. New communications tests pending.
+
+
 ## 0.6.1-dev
 - Add optional MicroTAK native TLS server, locked enrollment, private initial bindings and explicit trusted LAN sharing. Disable unencrypted CoT and native automatic backups; keep native data and CA in private persistent directories.
 - Portal displays native client endpoints rather than a nonexistent web interface. Native admin CLI for bootstrap; no token reveal through portal.

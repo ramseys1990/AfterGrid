@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.6.1-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.6.2-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -76,3 +76,5 @@ Browser acceptance uses a fresh Chromium context, blocks all off-server browser 
 Optional [MeshMonitor](modules/meshmonitor/README.md) provides one native local interface for Meshtastic and MeshCore. Generated initial login, explicit LAN sharing, persistent native data; no automatic radio connection, broker or USB bridge. Native radio and disconnected acceptance pending.
 
 Optional [MicroTAK](modules/tak/README.md) provides a lightweight native TLS TAK backend with locked certificate enrollment, local CA, explicit LAN sharing and retained data. Native admin CLI and compatible TAK clients required; no web dashboard or automatic device enrollment. Existing development installations must prepare private TAK directories. CI and client acceptance pending.
+
+The core communications page lists native service status, shared PACE plans and manually recorded device readiness. Administrators edit; LAN guests view. No credential storage, radio commands or claims of live device connectivity. Planning remains available with both optional communications services stopped.

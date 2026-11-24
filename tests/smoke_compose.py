@@ -249,7 +249,8 @@ assert len(creds["initial_password"])==64 and creds["username"]=="admin"
 meshbase="http://127.0.0.1:8085"
 native=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 def mesh_login(password):
-    req=urllib.request.Request(meshbase+"/api/auth/login",data=json.dumps({"username":"admin","password":password}).encode(),headers={"Origin":meshbase,"Content-Type":"application/json"})
+    with native.open(meshbase+"/api/csrf-token",timeout=20) as res:csrf=json.load(res)["csrfToken"]
+    req=urllib.request.Request(meshbase+"/api/auth/login",data=json.dumps({"username":"admin","password":password}).encode(),headers={"Origin":meshbase,"Content-Type":"application/json","X-CSRF-Token":csrf})
     with native.open(req,timeout=20) as res:return json.load(res)
 assert mesh_login(creds["initial_password"])["success"]
 action("share","meshmonitor")
