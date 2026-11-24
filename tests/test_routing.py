@@ -22,3 +22,12 @@ def test_route_api(tmp_path,monkeypatch):
         c.cookies.clear()
         assert c.post("/api/maps/route",json=body).status_code==403
         assert c.post("/api/maps/route",json=body,headers=origin).json()["distance_km"]==1
+
+
+def test_native_alternates():
+    from core.routing import parse_routes
+    trip={"trip":{"summary":{"length":1.5,"time":90},"legs":[{"shape":"??AA","maneuvers":[]}]}}
+    result=parse_routes({**trip,"alternates":[trip]})
+    assert result["alternatives"][0]["distance_km"]==1.5
+    assert parse_routes(trip)["alternatives"]==[]
+    with pytest.raises(RouteError):parse_routes({**trip,"alternates":[trip]*3})

@@ -38,20 +38,28 @@
   }
   function readPoint(value){const parts=value.split(",").map(s=>s.trim());if(parts.length!==2||parts.some(s=>!s||!Number.isFinite(Number(s))))throw Error("Use longitude, latitude");return parts.map(Number);}
   for(const field of ["start","end"])document.getElementById("route-"+field).addEventListener("click",()=>{if(!map){routeMessage.textContent="Map unavailable; enter coordinates manually.";return;}pick=field;routeMessage.textContent="Click the map to choose "+field;});
-  document.getElementById("route-clear").addEventListener("click",()=>{requestNumber++;lastRoute=null;routeMode=null;pick=null;form.reset();if(map?.getLayer("route")){map.removeLayer("route");map.removeSource("route");}document.getElementById("route-details").hidden=true;routeMessage.textContent="Route cleared";});
+  document.getElementById("route-clear").addEventListener("click",()=>{requestNumber++;lastRoute=null;routeMode=null;pick=null;form.reset();document.getElementById("route-choices").replaceChildren();if(map?.getLayer("route")){map.removeLayer("route");map.removeSource("route");}document.getElementById("route-details").hidden=true;routeMessage.textContent="Route cleared";});
   form.addEventListener("submit",async event=>{
     event.preventDefault();const sequence=++requestNumber;
     const mode=form.elements.mode.value;
     routeMessage.textContent="Calculating on local routing engine…";
     try{
-      const response=await fetch("/api/maps/route",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({start:readPoint(form.elements.start.value),end:readPoint(form.elements.end.value),mode})});
+      const response=await fetch("/api/maps/route",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({start:readPoint(form.elements.start.value),end:readPoint(form.elements.end.value),mode,alternatives:Number(form.elements.alternatives.value)})});
       const result=await response.json();if(sequence!==requestNumber)return;
       if(!response.ok)throw Error(typeof result.detail==="string"?result.detail:"Route request failed");
-      lastRoute=result;routeMode=mode;drawRoute(result);
-      routeMessage.textContent=result.distance_km.toFixed(2)+" km · "+Math.round(result.duration_seconds/60)+" min estimated. Verify current road conditions.";
-      const list=document.getElementById("route-directions");list.replaceChildren();
-      for(const step of result.instructions){const li=document.createElement("li");li.textContent=step;list.append(li);}
-      document.getElementById("route-details").hidden=false;
+      const choices=document.getElementById("route-choices");choices.replaceChildren();
+      const routes=[result,...(result.alternatives||[])];
+      function selectRoute(index){
+        const chosen=routes[index];lastRoute=chosen;routeMode=mode;drawRoute(chosen);
+        routeMessage.textContent=(index?"Alternative "+index:"Primary route")+": "+chosen.distance_km.toFixed(2)+" km · "+Math.round(chosen.duration_seconds/60)+" min estimated. Verify current road conditions.";
+        const list=document.getElementById("route-directions");list.replaceChildren();
+        for(const step of chosen.instructions){const li=document.createElement("li");li.textContent=step;list.append(li);}
+        document.getElementById("route-details").hidden=false;
+        for(const [i,b] of [...choices.children].entries())b.setAttribute("aria-pressed",String(i===index));
+      }
+      routes.forEach((r,i)=>button(choices,(i?"Alternative "+i:"Primary")+" · "+r.distance_km.toFixed(2)+" km",()=>selectRoute(i)));
+      selectRoute(0);
+      if(routes.length===1&&Number(form.elements.alternatives.value)>0)routeMessage.textContent+=" No alternate returned by Valhalla.";
     }catch(e){if(sequence===requestNumber)routeMessage.textContent=e.message;}
   });
   const planMessage=document.getElementById("plan-message");
@@ -72,6 +80,8 @@
   async function deletePlan(kind,id){if(confirm("Remove this shared "+kind+"?")){await planApi("/api/admin/maps/plans/delete",{kind,id});await refreshPlans();}}
   async function refreshPlans(){
     const status=await planApi("/api/status");canEdit=!!status.admin;
+    document.getElementById("place-admin").hidden=!canEdit;
+    if(canEdit)refreshPlaceIndex().catch(e=>{document.getElementById("place-index-status").textContent=e.message;});
     document.getElementById("plan-admin").hidden=!canEdit;
     mapPlans=await planApi("/api/maps/plans");drawWaypoints();
     const wl=document.getElementById("waypoints-list");wl.replaceChildren();
@@ -83,7 +93,7 @@
     const rl=document.getElementById("routes-list");rl.replaceChildren();
     for(const r of mapPlans.routes){
       const row=document.createElement("div");text(row,r.name+" · "+r.mode);
-      button(row,"View",async()=>{requestNumber++;lastRoute=await planApi("/api/maps/plans/routes/"+r.id);routeMode=r.mode;drawRoute(lastRoute);document.getElementById("route-details").hidden=true;routeMessage.textContent="Saved route snapshot: "+r.name+" — no current routing or closure checks.";});
+      button(row,"View",async()=>{requestNumber++;document.getElementById("route-choices").replaceChildren();lastRoute=await planApi("/api/maps/plans/routes/"+r.id);routeMode=r.mode;drawRoute(lastRoute);document.getElementById("route-details").hidden=true;routeMessage.textContent="Saved route snapshot: "+r.name+" — no current routing or closure checks.";});
       for(const fmt of ["gpx","kml"]){const link=document.createElement("a");link.href="/api/maps/export/"+fmt+"?route_id="+r.id;link.textContent=fmt.toUpperCase();row.append(link);}
       if(canEdit)button(row,"Delete",()=>deletePlan("route",r.id));rl.append(row);
     }
@@ -110,6 +120,28 @@
       const data=await response.json();if(!response.ok)throw Error(typeof data.detail==="string"?data.detail:"Import failed");
       await refreshPlans();f.reset();planMessage.textContent="Imported "+data.waypoints+" waypoints and "+data.routes+" route snapshots.";
     }catch(e){planMessage.textContent=e.message;}
+  });
+  async function refreshPlaceIndex(){
+    const r=await planApi("/api/admin/maps/places");
+    document.getElementById("place-index-status").textContent=r.state+" — "+(r.detail||"")+(r.ready?" · "+r.count+" indexed points":" · selected source not indexed");
+    document.getElementById("place-build").disabled=!r.source_available||r.state==="building";
+  }
+  document.getElementById("place-status-refresh").addEventListener("click",()=>refreshPlaceIndex().catch(e=>{document.getElementById("place-index-status").textContent=e.message;}));
+  document.getElementById("place-build").addEventListener("click",async()=>{
+    if(!confirm("Build an offline search index? This uses CPU, RAM and disk. The selected PBF is not changed."))return;
+    try{await planApi("/api/admin/maps/places/build",{});await refreshPlaceIndex();}catch(e){document.getElementById("place-index-status").textContent=e.message;}
+  });
+  document.getElementById("place-search").addEventListener("submit",async event=>{
+    event.preventDefault();const root=document.getElementById("place-results"),msg=document.getElementById("place-message");root.replaceChildren();msg.textContent="Searching local points…";
+    try{
+      const r=await planApi("/api/maps/places?q="+encodeURIComponent(event.currentTarget.elements.q.value));
+      msg.textContent=r.results.length?r.results.length+" matching points (up to 30)":"No matching indexed points";
+      for(const p of r.results){
+        const row=document.createElement("div");text(row,p.title+" · "+p.kind+(p.detail?" · "+p.detail:""));
+        for(const field of ["start","end"])button(row,"Use as "+field,()=>{form.elements[field].value=p.lon+","+p.lat;});
+        button(row,"Show on map",()=>{if(map)map.flyTo({center:[p.lon,p.lat],zoom:15});else msg.textContent=p.lon+", "+p.lat;});root.append(row);
+      }
+    }catch(e){msg.textContent=e.message;}
   });
   refreshPlans().catch(e=>{planMessage.textContent=e.message;});
 })();

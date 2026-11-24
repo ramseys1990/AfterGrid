@@ -54,7 +54,15 @@ def parse_route(data):
     except (KeyError,TypeError,ValueError,OverflowError):
         raise RouteError("Invalid native route response") from None
 
-def route(start,end,mode):
+def parse_routes(data):
+    result=parse_route(data)
+    alternatives=data.get("alternates",[])
+    if not isinstance(alternatives,list) or len(alternatives)>2:raise RouteError("Invalid native alternatives")
+    result["alternatives"]=[parse_route(alt) for alt in alternatives]
+    return result
+
+def route(start,end,mode,alternatives=0):
+    if not isinstance(alternatives,int) or not 0<=alternatives<=2:raise ValueError("Choose zero to two alternative routes")
     if mode not in ("auto","pedestrian","bicycle"):raise ValueError("Unsupported travel mode")
     for p in (start,end):
         if len(p)!=2 or not all(math.isfinite(v) for v in p) or not -180<=p[0]<=180 or not -85<=p[1]<=85:
@@ -62,14 +70,14 @@ def route(start,end,mode):
     if start==end:raise ValueError("Choose different start and destination")
     if not LOCK.acquire(blocking=False):raise RouteError("Routing busy; retry shortly")
     try:
-        payload={"locations":[{"lon":p[0],"lat":p[1],"radius":200,"search_cutoff":1000} for p in (start,end)],"costing":mode,"units":"kilometers"}
+        payload={"locations":[{"lon":p[0],"lat":p[1],"radius":200,"search_cutoff":1000} for p in (start,end)],"costing":mode,"units":"kilometers","alternates":alternatives}
         req=urllib.request.Request(URL,data=json.dumps(payload).encode(),headers={"Content-Type":"application/json","Accept":"application/json"},method="POST")
         opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
         try:
             with opener.open(req,timeout=35) as response:
                 raw=response.read(MAX_RESPONSE+1)
                 if len(raw)>MAX_RESPONSE:raise RouteError("Route exceeds response limit")
-                return parse_route(json.loads(raw))
+                return parse_routes(json.loads(raw))
         except urllib.error.HTTPError as exc:
             raise RouteError("No route returned (native HTTP "+str(exc.code)+"); check coverage and travel mode") from None
         except (OSError,ValueError):

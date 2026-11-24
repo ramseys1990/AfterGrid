@@ -7,7 +7,7 @@ RUN npm install --ignore-scripts --no-audit --no-fund --save-exact maplibre-gl@5
 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install -y --no-install-recommends curl kiwix-tools ca-certificates util-linux && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl kiwix-tools ca-certificates util-linux osmium-tool && rm -rf /var/lib/apt/lists/*
 # Pinned upstream release, verified against GitHub release asset SHA-256.
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
@@ -30,7 +30,7 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvkelso/natural-earth-vector/ca
     python -c 'import hashlib; p=open("/app/map-assets/land.geojson","rb").read(); assert hashlib.sha1(b"blob "+str(len(p)).encode()+b"\0"+p).hexdigest()=="04811d72fff2701ec67587e30ad8942675b511e3"'
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && groupadd -g 10001 aftergrid && useradd -u 10001 -g 10001 --no-create-home aftergrid
-COPY app.py worker_client.py content.py downloads.py households.py inventory.py map_downloads.py routing.py routing_downloads.py waypoints.py maps.html maps.js maps.css region.js index.html style.css app.js ./
+COPY app.py worker_client.py content.py downloads.py households.py inventory.py map_downloads.py routing.py routing_downloads.py place_search.py waypoints.py maps.html maps.js maps.css region.js index.html style.css app.js ./
 USER 10001:10001
 EXPOSE 8080
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--no-proxy-headers"]

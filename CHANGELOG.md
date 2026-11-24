@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.9-dev
+- Local named-node and tagged-address search using native Osmium extraction and SQLite FTS5, no geocoding server or runtime internet dependency.
+- Explicit admin index build, bounded native extraction, selected-source identity checks and independent retained indexes. Search results can populate routing endpoints.
+- Request up to two native Valhalla alternatives and choose the displayed/saved route; none may be returned. Tests for source changes, API access and native fixture search added.
+
+
 ## 0.5.8-dev
 - Prepare a second Valhalla graph from incoming.osm.pbf without changing the original graph; check minimum disk headroom and bound native build time.
 - Administrator graph activation and rollback through fixed Compose jobs and an atomic selected-slot marker; readiness failure triggers an attempted restoration of the previous slot.

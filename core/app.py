@@ -29,6 +29,7 @@ try:
     from .routing import route, RouteError
     from .waypoints import MapPlans
     from .routing_downloads import RoutingDownloads
+    from .place_search import PlaceSearch
 except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
@@ -39,6 +40,7 @@ except ImportError:
     from routing import route, RouteError
     from waypoints import MapPlans
     from routing_downloads import RoutingDownloads
+    from place_search import PlaceSearch
 
 ROOT = Path(__file__).parent
 COOKIE = "aftergrid_session"
@@ -84,6 +86,7 @@ def create_app(data_dir=None):
     plans = MapPlans(data)
     routing_data = RoutingDownloads(data,os.environ.get('AFTERGRID_ROUTING_CONTENT','/content/routing'))
     maps = MapDownloads(data,os.environ.get('AFTERGRID_MAP_CONTENT','/content/maps'))
+    places = PlaceSearch(data,routing_data.content)
     attempts = deque()
     lock = threading.Lock()
 
@@ -121,11 +124,12 @@ def create_app(data_dir=None):
         try:
             yield
         finally:
+            places.close()
             routing_data.close()
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.8-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.5.9-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -186,6 +190,7 @@ def create_app(data_dir=None):
         start: list[float] = Field(min_length=2,max_length=2)
         end: list[float] = Field(min_length=2,max_length=2)
         mode: str = Field(max_length=16)
+        alternatives: int = Field(default=0,ge=0,le=2)
 
     @api.post("/api/maps/route")
     def map_route(payload: RouteRequest,request: Request):
@@ -194,7 +199,7 @@ def create_app(data_dir=None):
             if not con.execute("SELECT 1 FROM admin WHERE id=1").fetchone():
                 raise HTTPException(403,"Complete initial setup first")
         try:
-            return route(payload.start,payload.end,payload.mode)
+            return route(payload.start,payload.end,payload.mode,payload.alternatives)
         except ValueError as exc:
             raise HTTPException(400,str(exc))
         except RouteError as exc:
@@ -225,6 +230,29 @@ def create_app(data_dir=None):
             return operation()
         except ValueError as exc:
             raise HTTPException(400,str(exc))
+
+    @api.get("/api/maps/places")
+    def search_places(q: str = ""):
+        require_setup()
+        try:
+            return {"results":places.search(q)}
+        except (ValueError,OSError,sqlite3.Error) as exc:
+            raise HTTPException(400,str(exc))
+
+    @api.get("/api/admin/maps/places")
+    def place_index_status(request: Request):
+        require_admin(request)
+        return places.status()
+
+    @api.post("/api/admin/maps/places/build",status_code=202)
+    def build_place_index(request: Request):
+        require_admin(request)
+        same_origin(request)
+        try:
+            places.launch()
+        except (ValueError,OSError) as exc:
+            raise HTTPException(409,str(exc))
+        return {"queued":True}
 
     @api.get("/api/maps/plans")
     def map_plans():
@@ -319,7 +347,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.8-dev"}
+                "version": "0.5.9-dev"}
 
     @api.get("/api/modules")
     def modules():
