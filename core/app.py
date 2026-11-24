@@ -114,7 +114,7 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.5.2-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.5.3-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
@@ -179,6 +179,10 @@ def create_app(data_dir=None):
     def map_script():
         return FileResponse(ROOT / "maps.js",media_type="text/javascript")
 
+    @api.get("/region.js")
+    def region_script():
+        return FileResponse(ROOT / "region.js",media_type="text/javascript")
+
     @api.get("/maps.css")
     def map_style():
         return FileResponse(ROOT / "maps.css",media_type="text/css")
@@ -209,7 +213,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": "0.5.2-dev"}
+                "version": "0.5.3-dev"}
 
     @api.get("/api/modules")
     def modules():

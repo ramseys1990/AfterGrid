@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.5.2-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.5.3-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -58,3 +58,5 @@ Install the optional [Maps module](modules/maps/README.md) for local PMTiles/MBT
 Regional map extracts: select a published Protomaps build date, bounding box and maximum zoom, run an estimate and explicitly confirm the download. Native pmtiles CLI performs range extraction and structural verification. Existing PMTiles never overwritten. Development limit 4 GiB per extract; logs show actual tool output, not file-size progress (the CLI preallocates). Existing installations must give UID 10001 ownership of content/maps directory before downloading. Live upstream extraction and styled vector rendering remain unverified.
 
 Styled offline map: open the Maps card's styled viewer. It uses local MapLibre, PMTiles and Protomaps styles, fonts and sprites, served by the core. Compatible Protomaps MVT and raster PMTiles supported; other vector schemas and MBTiles retain the native viewer. No browser CDN dependency. Local range serving and packaged assets are covered by tests; actual browser/WebGL and vector label rendering still need acceptance.
+
+Regional selection now includes a bundled Natural Earth overview, drag-to-select bounding boxes, geographic extent choices and approximate SC/NC/GA/Southeast presets. The existing numeric bounds remain editable and the same server validation/estimate/confirmation flow applies. No internet request is required for selection itself. This is an overview, not a navigation map or exact jurisdiction boundary.

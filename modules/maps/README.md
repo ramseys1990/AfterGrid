@@ -25,3 +25,5 @@ The admin portal can estimate and extract a selected bounding box from a publish
 ## Styled viewer
 
 Use the Maps card's styled viewer to render compatible Protomaps MVT and raster PMTiles in the browser. The core serves the same archive via byte ranges, not a second copy. All JS, CSS, glyphs and sprites are bundled at image build. English labels are the initial style; unsupported vector schemas and MBTiles use the native tile viewer. No runtime CDN requests are needed. The public map archive is accessible on the trusted LAN after initial setup. Only store maps intended for sharing. Preserve source attribution. Browser/WebGL and actual vector labels remain to be validated.
+
+The region picker uses a small bundled Natural Earth public-domain land outline, even with no map downloaded. Drag between two corners or choose an approximate regional preset; edit the coordinates for precision. The overview is not a road map. Keep the original download estimate and explicit confirmation steps.

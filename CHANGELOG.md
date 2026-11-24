@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3-dev
+- Fix styled map asset build by bundling pinned upstream license notices rather than assuming npm packages include their source licenses.
+- Add offline geographic overview, drag selection, numeric fields and initial regional presets using pinned Natural Earth land data.
+- Test asset availability and JS syntax; browser interaction and real regional extraction remain unverified. Prior regional extract CI passed.
+
+
 ## 0.5.2-dev
 - LAN styled offline map viewer with bundled MapLibre, PMTiles and Protomaps basemap assets; no CDN runtime requests.
 - Read-only range serving of the existing PMTiles slot; no duplicate archive, no Docker access. Map-only CSP allows local workers and styling.

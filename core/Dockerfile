@@ -3,11 +3,8 @@ WORKDIR /build
 RUN npm install --ignore-scripts --no-audit --no-fund --save-exact maplibre-gl@5.0.1 pmtiles@4.2.1 @protomaps/basemaps@5.7.2 && \
     mkdir -p /out/licenses && \
     cp node_modules/maplibre-gl/dist/maplibre-gl.js node_modules/maplibre-gl/dist/maplibre-gl.css /out/ && \
-    cp node_modules/pmtiles/dist/pmtiles.js node_modules/@protomaps/basemaps/dist/basemaps.js /out/ && \
-    for package in maplibre-gl pmtiles @protomaps/basemaps; do \
-      name=$(basename "$package"); find "node_modules/$package" -maxdepth 1 -iname 'license*' -type f -exec cp {} "/out/licenses/$name.txt" \; ; \
-      test -s "/out/licenses/$name.txt"; \
-    done
+    cp node_modules/pmtiles/dist/pmtiles.js node_modules/@protomaps/basemaps/dist/basemaps.js /out/
+
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y --no-install-recommends curl kiwix-tools ca-certificates util-linux && rm -rf /var/lib/apt/lists/*
@@ -24,12 +21,16 @@ RUN set -eux; \
     rm /tmp/pmtiles.tar.gz; pmtiles version
 WORKDIR /app
 COPY --from=map-assets /out/ ./map-assets/
+COPY map-licenses/ ./map-assets/licenses/
 RUN curl -fsSL https://codeload.github.com/protomaps/basemaps-assets/tar.gz/028c18f713baecad011301ff7a69acc39bcc2ae7 -o /tmp/map-assets.tar.gz && \
     tar -xzf /tmp/map-assets.tar.gz -C /app/map-assets --strip-components=1 --wildcards '*/fonts/*' '*/sprites/v4/light*' && \
     cp /app/map-assets/fonts/OFL.txt /app/map-assets/licenses/fonts.txt && rm /tmp/map-assets.tar.gz
+# Natural Earth public-domain geographic overview (pinned source).
+RUN curl -fsSL https://raw.githubusercontent.com/nvkelso/natural-earth-vector/ca96624a56bd078437bca8184e78163e5039ad19/geojson/ne_110m_land.geojson -o /app/map-assets/land.geojson && \
+    python -c 'import hashlib; p=open("/app/map-assets/land.geojson","rb").read(); assert hashlib.sha1(b"blob "+str(len(p)).encode()+b"\0"+p).hexdigest()=="04811d72fff2701ec67587e30ad8942675b511e3"'
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && groupadd -g 10001 aftergrid && useradd -u 10001 -g 10001 --no-create-home aftergrid
-COPY app.py worker_client.py content.py downloads.py households.py inventory.py map_downloads.py maps.html maps.js maps.css index.html style.css app.js ./
+COPY app.py worker_client.py content.py downloads.py households.py inventory.py map_downloads.py maps.html maps.js maps.css region.js index.html style.css app.js ./
 USER 10001:10001
 EXPOSE 8080
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--no-proxy-headers"]
