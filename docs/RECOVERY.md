@@ -174,3 +174,24 @@ sudo python3 recover.py restore-package --root /opt/aftergrid \
 ```
 
 This verifies package files and uses the selected snapshot set recorded in package.json. After native account/content checks, use enable-backups and activate-offline with the package's assets/ and inventory.json if desired. Do not modify the package's repository. The working copy is separate. Checksums do not authenticate a maliciously substituted package. Full disconnected acceptance and MicroTAK consistent backup remain outstanding. CI pending.
+
+
+## Recovery closeout acceptance (0.8.26 development)
+
+The supported package path deliberately preserves independent source snapshots. The pack command pins the exact inventory bytes it validates, checks source and copied repository digests after native manifest inspection, and refuses replacement roots inside the portable package. These are integrity safeguards, not a lock against external writers or proof of simultaneous capture.
+
+| Gate | Evidence required | Current status |
+| --- | --- | --- |
+| Guided recovery baseline | Real core/worker/Kiwix snapshots, recovered original login and content, exact local images and read-only Kopia reconnect | Passed in Core checks run 45503443558 |
+| Writable working copy | Explicit opt-in, native writable status, fresh managed snapshot and isolated restore, unchanged original repository | New fixture; result must be verified |
+| Portable package | Successful pack, checksum verification, actual package restore entry point, tamper refusal, unchanged package after activation and fresh backup | New regression and native fixture coverage; result must be verified |
+| Coordinated capture | Defined maintenance boundary covering source changes, all selected snapshot jobs and verification, explicit omissions, final inventory and asset capture | Open; existing snapshots remain independent |
+| MicroTAK | Native supported consistent capture and certificate/data verification after restoration | Blocked on clean shutdown (exit 143); do not waive consistency |
+| Disconnected replacement | Clean same-architecture Linux host with preinstalled Docker/Compose and Python, WAN absent, actual archive import, restore, native login/content, local lifecycle and fresh backup on working copy | Not accepted |
+| Target-host acceptance | Disposable Proxmox guest and/or bare Linux with trusted LAN client; confirm host networking, approved LAN access and recovery from separate media | Not accepted |
+
+### Disconnected replacement drill
+
+Use a disposable host with no production mounts or Docker socket access to other hosts. Prepare its compatible OS, Python and Docker/Compose beforehand; packaging the OS or Docker installer is outside the current scope. Keep a second independent copy of the package and original password. Disconnect WAN at the lab network or virtual NIC boundary while preserving a private test LAN if needed; do not merely block browser requests. Record a failed external connectivity probe and successful local access before and after recovery. Use the trusted matching recovery utilities and a completely empty replacement Docker daemon. Verify the package, perform the actual native archive import via restore-package (no image-reuse shortcut), check original accounts and selected native data, optionally enable backups, activate restricted offline administration, exercise a mapped module restart and verify a fresh snapshot on the independent copy. Verify package checksums again. Review loopback/LAN restrictions rather than exposing old addresses or altering production networking. Record exact versions, selected and omitted applications, observed checks, failures and source/package digests without recording credentials.
+
+Do not mark complete recovery or all-application consistency as passed based on a no-pull Compose run, separate archive fixture, checksum-only verification, or a subset of restored modules. Keep MicroTAK excluded from a supported recovery claim until its separate acceptance gate passes.
