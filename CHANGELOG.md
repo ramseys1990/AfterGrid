@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.23-dev
+- Add guided replacement recovery command, exact native core/worker restore, independent read-only Kopia working copy, selected application startup and explicit restricted offline lifecycle activation.
+- Correct native Kiwix recovery fixture after earlier intentional purge. Keep MicroTAK clean-stop blocker and full disconnected acceptance explicit. CI pending.
+
 ## 0.8.22-dev
 - Prepare exact offline worker image policy from selected started module receipts. Add worker-side fail-closed local image mapping, credential and no-build/no-pull checks, restrict lifecycle operations and registry access in future offline mode.
 - Do not activate offline mode or lift core-only guard yet. CI pending.

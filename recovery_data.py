@@ -50,6 +50,8 @@ def inventory_records(path,plan,metadata):
     return records
 
 def required_records(records,module):
+    # Kopia uses an independently copied native repository, not a snapshot of itself.
+    if module=="kopia":return []
     if module not in SOURCES:raise ValueError("Unsupported recovery module")
     result=[]
     for key,source,destination in SOURCES[module]:
@@ -237,6 +239,9 @@ def start_module(root,assets_dir,inventory,module):
         or record.get("snapshots")!={key:sid for key,_,_,sid in required}):
         raise ValueError("Matching unused restoration receipt required")
     for _,_,relative,_ in required:safe_tree(root/relative)
+    if module=="kopia":
+        if record.get("repository_copy_connected_readonly") is not True:raise ValueError("Kopia read-only working copy required")
+        for relative in ("backups","data/kopia/config","data/kopia/cache","data/kopia/logs","restore"):assets.real_directory(root/relative)
     row=next((r for r in rows if r["project"]=="aftergrid-"+module),None)
     if row is None or json.loads(assets.docker("image","inspect","--format","{{json .Id}}",row["recovery_tag"]))!=row["image_id"]:
         raise ValueError("Exact imported module image missing")
@@ -285,6 +290,9 @@ def start_module(root,assets_dir,inventory,module):
         raise ValueError("Recovered module container image mismatch")
     run(["docker","exec",core_ids["worker"],"python3","-c",
          "import worker,sys; worker.wait_ready(sys.argv[1])",module],timeout=110)
+    if module=="kopia":
+        run(["docker","exec",core_ids["worker"],"python3","-c",
+             "import worker; s=worker.kopia_status(); assert s['connection']=='connected' and s['storage_type']=='filesystem'"],timeout=30)
     record.update(application_started=True,image_id=row["image_id"],readiness="native readiness probe passed")
     fd,tmp=tempfile.mkstemp(prefix=".receipt-",dir=receipt.parent)
     try:
@@ -317,6 +325,7 @@ def prepare_offline_policy(root,assets_dir,inventory,modules):
             or receipt.get("inventory_sha256")!=assets.sha256_file(inventory)
             or receipt.get("snapshots")!={key:sid for key,_,_,sid in required}):
             raise ValueError("Matching restored and started module required")
+        if module=="kopia" and receipt.get("repository_copy_connected_readonly") is not True:raise ValueError("Read-only repository receipt required")
         if json.loads(assets.docker("image","inspect","--format","{{json .Id}}",row["recovery_tag"]))!=row["image_id"]:
             raise ValueError("Recovered image changed")
         mapping[module]={"image_id":row["image_id"],"recovery_tag":row["recovery_tag"]}

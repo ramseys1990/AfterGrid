@@ -12,7 +12,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r core/requirements-dev.txt
       - run: python -m pytest -q
-      - run: python recovery_prepare.py --help && python recovery_assets.py --help && python recovery_install.py --help && python recovery_data.py --help
+      - run: python recovery_prepare.py --help && python recovery_assets.py --help && python recovery_install.py --help && python recovery_data.py --help && python recover.py --help
       - name: Native Docker image archive fixture
         shell: bash
         run: |
@@ -56,6 +56,8 @@ jobs:
           # Small, pinned OpenZIM upstream fixture; no live catalog dependency.
           curl --fail --silent --show-error --location --max-time 60 https://raw.githubusercontent.com/openzim/zim-testing-suite/2edf72096208e60c82b6ebbe313baa552cc6af52/data/withns/wikibooks_be_all_nopic_2017-02.zim -o content/kiwix/fixture.zim
           test "$(git hash-object content/kiwix/fixture.zim)" = 6706e9b279753c759ea77c8bd0250ce950bc819c
+          cp content/kiwix/fixture.zim "$RUNNER_TEMP/aftergrid-recovery-fixture.zim"
+          export RECOVERY_ZIM_FIXTURE="$RUNNER_TEMP/aftergrid-recovery-fixture.zim"
           # Stage a small raster PMTiles fixture outside the map content directory.
           curl --fail --silent --show-error --location --max-time 60 "https://raw.githubusercontent.com/protomaps/PMTiles/aec8fa1341222fdddb3318e9ffa8e18e19b312f7/spec/v3/stamen_toner(raster)CC-BY%2BODbL_z3.pmtiles" -o "$RUNNER_TEMP/aftergrid-map-fixture.pmtiles"
           test "$(git hash-object "$RUNNER_TEMP/aftergrid-map-fixture.pmtiles")" = 8d170ca89ecf3197d14366db63679f198a198101

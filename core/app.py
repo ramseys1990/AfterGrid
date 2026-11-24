@@ -85,6 +85,7 @@ def create_app(data_dir=None):
     secure_cookie = os.environ.get("AFTERGRID_SECURE_COOKIE", "false").lower() == "true"
     configured_origin = os.environ.get("AFTERGRID_ORIGIN", "").rstrip("/")
     recovery_core_only = os.environ.get("AFTERGRID_RECOVERY_CORE_ONLY") == "1"
+    recovery_offline = os.environ.get("AFTERGRID_RECOVERY_OFFLINE") == "1"
     downloads = Downloads(data, os.environ.get("AFTERGRID_KIWIX_CONTENT","/content/kiwix"))
     households = Households(data)
     inventory = Inventory(data)
@@ -136,15 +137,22 @@ def create_app(data_dir=None):
             maps.close()
             downloads.close()
 
-    api = FastAPI(title="AfterGrid", version="0.8.22-dev", lifespan=lifespan,
+    api = FastAPI(title="AfterGrid", version="0.8.23-dev", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     api.mount("/map-assets", StaticFiles(directory=ROOT / "map-assets", check_dir=False), name="map-assets")
 
     @api.middleware("http")
     async def security(request, call_next):
-        if recovery_core_only and request.method not in {"GET","HEAD","OPTIONS"} and request.url.path not in {"/api/login","/api/logout"}:
-            response = JSONResponse({"detail":"Core-only recovery: application and configuration writes are disabled"},status_code=409)
+        path=request.url.path
+        lifecycle=bool(re.fullmatch(r"/api/admin/modules/[a-z][a-z0-9-]{0,39}/(?:start|stop|restart|uninstall|share|unshare)",path))
+        safe_posts={"/api/login","/api/logout","/api/maps/route","/api/admin/kopia/credentials","/api/admin/meshmonitor/credentials"}
+        restricted=(recovery_core_only or recovery_offline)
+        denied=(request.method not in {"GET","HEAD","OPTIONS"} and
+                path not in ({"/api/login","/api/logout"} if recovery_core_only else safe_posts) and
+                not (recovery_offline and not recovery_core_only and lifecycle))
+        if restricted and (denied or path=="/api/admin/content/catalog"):
+            response=JSONResponse({"detail":"Recovery mode: this operation is disabled"},status_code=409)
         else:
             response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
@@ -421,7 +429,7 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": api.version, "recovery_core_only": recovery_core_only}
+                "version": api.version, "recovery_core_only": recovery_core_only, "recovery_offline": recovery_offline}
 
     @api.get("/api/preparedness")
     def preparedness():

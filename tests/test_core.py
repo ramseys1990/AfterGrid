@@ -458,3 +458,13 @@ def test_core_only_recovery_login_and_write_guard(tmp_path,monkeypatch):
         assert c.post("/api/admin/content/downloads",json={"key":"test"},headers=ORIGIN).status_code==409
         assert c.post("/api/admin/households",json={"name":"New"},headers=ORIGIN).status_code==409
         assert c.post("/api/logout",headers=ORIGIN).status_code==200
+
+
+def test_offline_recovery_blocks_downloads_and_external_catalog(tmp_path,monkeypatch):
+    monkeypatch.setenv("AFTERGRID_RECOVERY_OFFLINE","1")
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.get("/api/status").json()["recovery_offline"] is True
+        assert c.get("/api/admin/content/catalog").status_code==409
+        assert c.post("/api/admin/content/downloads",json={},headers=ORIGIN).status_code==409
+        assert c.post("/api/admin/modules/kiwix/update",json={},headers=ORIGIN).status_code==409
+        assert c.post("/api/admin/modules/kiwix/start",json={},headers=ORIGIN).status_code==401

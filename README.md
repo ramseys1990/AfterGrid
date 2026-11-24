@@ -6,7 +6,7 @@ AfterGrid is an open-source, self-hosted, offline-first preparedness platform fo
 
 ## Development status
 
-Early development (0.8.22-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
+Early development (0.8.23-dev). The core contains local setup, administrator authentication, a shared dashboard and a private Compose worker. The Compose worker and Kiwix lifecycle passed disposable hosted CI. Homebox, Grocy and Kopia have module definitions and initial native setup; their basic lifecycle passed disposable hosted CI. Other catalog entries remain planned. No optional applications are installed by default. Do not expose the development build to the public internet.
 
 ## Try the core
 
@@ -124,3 +124,5 @@ The [offline installation asset capture](docs/RECOVERY.md) host command saves re
 The host-only recovery_install.py utility stages validated core and worker exports into a new root and provides an explicit core-only no-pull Compose startup. Optional data restoration and full disconnected acceptance remain outstanding.
 
 Native replacement application data restoration uses recovery_data.py with a copied read-only filesystem repository and exact verified snapshot IDs. Startup is separate.
+
+A guided replacement recovery entry point (`recover.py restore`) coordinates native Docker image import, exact snapshot restoration, read-only Kopia reconnection and guarded startup. Explicit restricted offline activation follows native checks; full recovery acceptance remains pending.

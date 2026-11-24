@@ -118,3 +118,27 @@ The host command requires a matching unused restoration receipt and exact import
 ## Prepare offline worker lifecycle policy (not activation)
 
 After optional module startup, `recovery_data.py --root /opt/aftergrid --assets /secure/aftergrid-assets --inventory /secure/recovery-inventory.json --prepare-offline-module kiwix --prepare-offline-module maps --confirm-replacement` stages exact per-module image mappings for the selected started modules. It does not change the core-only guard or restart anything. A future explicit completion command will enable AFTERGRID_RECOVERY_OFFLINE=1 only with the reviewed policy. In that mode the worker admits only start/stop/restart/uninstall/share/unshare of mapped modules, checks imported IDs and existing credentials, and adds no-build/no-pull Compose settings. Registry checks, new installs, updates, routing changes and backup jobs are blocked until separately reviewed. Do not enable the environment flag manually. Kopia reconnection and recovery completion remain outstanding. CI pending.
+
+
+## Guided replacement recovery (0.8.23 development)
+
+The preferred entry point is now recover.py from a trusted matching release. Use an empty replacement Docker daemon, a new installation root, the independently copied quiescent filesystem Kopia repository, verified assets and downloaded recovery inventory. Select only modules with captured images and verified snapshots. Omitted captured modules are explicitly reported; this is not a complete recovery assertion. The original repository password is prompted without echo.
+
+```sh
+sudo python3 recover.py restore --root /opt/aftergrid \
+  --assets /secure/aftergrid-assets --repository /secure/kopia-repository \
+  --inventory /secure/recovery-inventory.json \
+  --module kiwix --module maps --confirm-empty-replacement
+```
+
+The command imports images, restores the exact core and worker exports directly through native Kopia, stages the replacement, restores selected app data, creates an independent working repository copy (cp -a --reflink=auto; allow enough disk space), configures native Kopia read-only, starts the guarded core and selected modules, and prepares offline mappings. The input repository is never mounted writable. A failed operation can leave imported images or a partial root; inspect receipts and logs before continuing, do not automatically delete or rerun. Use the lower-level tools for diagnosis. The native copy and reconnection require CI acceptance.
+
+After checking original native accounts, content and repository access, explicitly enable restricted lifecycle mode:
+
+```sh
+sudo python3 recover.py activate-offline --root /opt/aftergrid \
+  --assets /secure/aftergrid-assets --inventory /secure/recovery-inventory.json \
+  --confirm-native-checks
+```
+
+This verifies the selected started-module receipts and exact image mappings and recreates only the recovered core and worker without builds or pulls. The portal allows authentication, local route requests, native credential retrieval and mapped lifecycle actions; downloads, external catalog, installs, updates and other configuration writes remain blocked. Kopia is initially connected read-only; normal writable backup scheduling, LAN changes, native full application acceptance, and coordinated capture are separate. This is not an air-gap firewall: third-party applications may attempt network access if the host is online. MicroTAK consistent capture remains blocked (SIGTERM exit 143). Do not claim full recovery until disconnected acceptance is completed.

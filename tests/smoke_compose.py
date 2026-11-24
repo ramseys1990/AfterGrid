@@ -244,6 +244,8 @@ def verify_content_backup(ident):
     print(ident+" native content snapshot and full read verification passed.",flush=True)
     return next(j for j in api("/api/admin/jobs") if j["id"]==snap)
 
+subprocess.run(["sudo","cp",os.environ["RECOVERY_ZIM_FIXTURE"],"content/kiwix/fixture.zim"],check=True)
+subprocess.run(["sudo","chown","10001:10001","content/kiwix/fixture.zim"],check=True)
 kiwix_snapshot=verify_content_backup("kiwix")
 # Use the existing disposable native repository and image to test the new
 # read-only, network-isolated restore helper without another image pull.
