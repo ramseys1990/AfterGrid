@@ -1,5 +1,8 @@
 """Small local portal. No Docker access or external identity dependencies."""
+import asyncio
 import hashlib
+import stat
+import tempfile
 import hmac
 import json
 import ipaddress
@@ -96,6 +99,33 @@ def create_app(data_dir=None):
     places = PlaceSearch(data,routing_data.content)
     attempts = deque()
     lock = threading.Lock()
+    mutation_lock = asyncio.Lock()
+    maintenance_path = data / "recovery-maintenance.json"
+
+    def maintenance():
+        try:
+            info=maintenance_path.lstat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(info.st_mode) or not 0<info.st_size<=8192:
+            raise ValueError("Invalid maintenance marker")
+        value=json.loads(maintenance_path.read_text())
+        if value.get("format")!=1 or value.get("phase") not in {"capturing","sealed"}:
+            raise ValueError("Invalid maintenance marker")
+        return value
+
+    def save_maintenance(value):
+        fd,tmp=tempfile.mkstemp(prefix=".recovery-maintenance-",dir=data)
+        try:
+            with os.fdopen(fd,"w") as out:
+                json.dump(value,out,sort_keys=True)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(tmp,maintenance_path)
+        finally:Path(tmp).unlink(missing_ok=True)
+
+    def maintenance_owner(request,value):
+        return hmac.compare_digest(digest(request.cookies.get(COOKIE,"")),value.get("owner","")) and admin_session(request)
 
     @contextmanager
     def db():
@@ -154,6 +184,22 @@ def create_app(data_dir=None):
                 not (recovery_offline and not recovery_core_only and (lifecycle or backup_post)))
         if restricted and (denied or path=="/api/admin/content/catalog"):
             response=JSONResponse({"detail":"Recovery mode: this operation is disabled"},status_code=409)
+        elif request.method not in {"GET","HEAD","OPTIONS"}:
+            # The supported deployment runs one Uvicorn process. Serialize
+            # mutation admission and completion with begin/seal/release.
+            async with mutation_lock:
+                try:active=maintenance()
+                except (OSError,ValueError,TypeError):
+                    active={"phase":"invalid"}
+                controls={"/api/admin/recovery-maintenance/begin","/api/admin/recovery-maintenance/seal","/api/admin/recovery-maintenance/release"}
+                auth=path in {"/api/login","/api/logout"}
+                permitted=not active or auth or path in controls
+                if active and active.get("phase")=="capturing" and backup_post:
+                    permitted=maintenance_owner(request,active)
+                if not permitted:
+                    response=JSONResponse({"detail":"Recovery maintenance active; operation disabled"},status_code=409)
+                else:
+                    response=await call_next(request)
         else:
             response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
@@ -430,7 +476,8 @@ def create_app(data_dir=None):
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
                 "server_name": row["server_name"] if row else "AfterGrid",
-                "version": api.version, "recovery_core_only": recovery_core_only, "recovery_offline": recovery_offline}
+                "version": api.version, "recovery_core_only": recovery_core_only, "recovery_offline": recovery_offline,
+                "recovery_maintenance": maintenance_path.exists() or maintenance_path.is_symlink()}
 
     @api.get("/api/preparedness")
     def preparedness():
@@ -802,6 +849,90 @@ def create_app(data_dir=None):
 
     class RepositoryConfirmation(BaseModel):
         confirmed: bool = Field(strict=True)
+
+    class MaintenanceSelection(RepositoryConfirmation):
+        modules: list[str] = Field(default_factory=list,max_length=10)
+
+    def maintenance_idle():
+        try:
+            code,rows=call("/jobs")
+            if code!=200 or not isinstance(rows,list) or any(r["state"] in {"queued","running"} for r in rows):
+                raise ValueError("Worker jobs active or unavailable")
+            with content_admission(data):
+                with sqlite3.connect(data/"downloads.sqlite3",timeout=3) as con:
+                    if con.execute("SELECT 1 FROM downloads WHERE state IN ('queued','downloading','verifying','indexing') LIMIT 1").fetchone():
+                        raise ValueError("Knowledge download active")
+                for name in ("map-job.json","routing-download.json"):
+                    path=data/name
+                    if path.exists() and json.loads(path.read_text())["state"] in {"estimating","downloading","verifying"}:
+                        raise ValueError("Regional operation active")
+            if places.status()["state"]=="building":raise ValueError("Place index build active")
+            return rows
+        except (WorkerUnavailable,OSError,sqlite3.Error,ValueError,KeyError,TypeError):
+            raise HTTPException(409,"Finish active jobs and content operations; inspect interrupted maintenance") from None
+
+    @api.get("/api/admin/recovery-maintenance")
+    def recovery_maintenance_status(request: Request):
+        require_admin(request)
+        try:active=maintenance()
+        except (OSError,ValueError,TypeError):raise HTTPException(409,"Invalid maintenance marker; inspect host") from None
+        return {"active":bool(active),"phase":active["phase"] if active else None,
+                "modules":active.get("modules",[]) if active else []}
+
+    @api.post("/api/admin/recovery-maintenance/begin")
+    def begin_recovery_maintenance(payload: MaintenanceSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        modules=sorted(payload.modules)
+        allowed={"grocy","homebox","notes","meshmonitor","kolibri","media","kiwix","maps","routing"}
+        if not payload.confirmed or len(modules)!=len(set(modules)) or not set(modules)<=allowed:
+            raise HTTPException(409,"Confirm maintenance and supported recovery selection")
+        if maintenance() is not None:raise HTTPException(409,"Existing maintenance; inspect before releasing")
+        rows=maintenance_idle()
+        save_maintenance({"format":1,"phase":"capturing","owner":digest(request.cookies[COOKIE]),
+                          "modules":modules,"baseline_job":max((r["id"] for r in rows),default=0)})
+        return {"active":True,"phase":"capturing"}
+
+    @api.post("/api/admin/recovery-maintenance/seal")
+    def seal_recovery_maintenance(payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        active=maintenance()
+        if not payload.confirmed or not active or active["phase"]!="capturing" or not maintenance_owner(request,active):
+            raise HTTPException(409,"Active capture owner required")
+        rows=maintenance_idle()
+        try:code,value=call("/recovery-manifest")
+        except WorkerUnavailable:raise HTTPException(409,"Recovery inventory unavailable") from None
+        if code!=200 or value.get("manifest_job")!=max((r["id"] for r in rows),default=0):
+            raise HTTPException(409,"Fresh final recovery inventory required")
+        expected={"core","worker"}
+        for module in active["modules"]:
+            if module not in {"kiwix","maps","routing"}:expected.add("application/"+module)
+            if module in {"kiwix","maps","routing","media"}:expected.add("content/"+module)
+        records={r["key"]:r for r in value["records"]}
+        baseline=active["baseline_job"]
+        for key in expected:
+            r=records.get(key,{})
+            if (type(r.get("snapshot_job")) is not int or type(r.get("verification_job")) is not int
+                or not baseline<r["snapshot_job"]<r["verification_job"]<value["manifest_job"]
+                or r.get("repository_status")!="present"
+                or r.get("verification")!=("read-only" if key.startswith("content/") else "isolated")):
+                raise HTTPException(409,"Fresh verified recovery sources required")
+        # Canonical JSON is independent of key order in the HTTP response.
+        checksum=hashlib.sha256(json.dumps(value,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+        sealed={"format":1,"phase":"sealed","modules":active["modules"],"inventory_sha256":checksum,
+                "manifest_job":value["manifest_job"]}
+        save_maintenance(sealed)
+        return {"active":True,"phase":"sealed","inventory_sha256":checksum}
+
+    @api.post("/api/admin/recovery-maintenance/release")
+    def release_recovery_maintenance(payload: RepositoryConfirmation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed or not maintenance():raise HTTPException(409,"Confirm existing maintenance release")
+        maintenance_idle()
+        maintenance_path.unlink()
+        return {"active":False}
 
     @api.post("/api/admin/kopia/initialize",status_code=202)
     def kopia_initialize(payload: RepositoryConfirmation,request: Request):
