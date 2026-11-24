@@ -313,7 +313,7 @@ def source_containers(root):
     projects={"aftergrid-core":{"core","worker"},**{"aftergrid-"+m:{m} for m in assets.MODULES}}
     result={}
     raw=assets.docker("ps","--all","--no-trunc","--filter","label=com.docker.compose.project",
-                      "--format",'{{json .ID}} {{json .Label "com.docker.compose.project"}}')
+                      "--format",'{{json .ID}} {{json (.Label "com.docker.compose.project")}}')
     for line in raw.splitlines():
         decoder=json.JSONDecoder()
         cid,end=decoder.raw_decode(line)
@@ -410,6 +410,33 @@ def pack_and_resume(root,inventory,destination,modules,password,*,acknowledge_bl
         # still match. If restart fails, journal remains for explicit resume.
         # Maintenance remains sealed until the administrator releases it.
         resume_source(root)
+
+
+def create_package(call,root,destination,modules,password,*,acknowledge_blocked=False,job_timeout=7*60*60):
+    """Fresh guarded capture -> sealed host package -> prior running state."""
+    if os.geteuid()!=0:raise ValueError("Root required")
+    root=assets.real_directory(root)
+    destination=install.validate_root(destination)
+    if root in destination.parents or destination in root.parents:raise ValueError("Package must be outside installation")
+    if (root/"recovery-source-restart.json").exists() or (root/"recovery-source-restart.json").is_symlink():
+        raise ValueError("Existing restart journal; inspect before new capture")
+    capture_steps(modules)
+    rows=source_containers(root)
+    validate_package_scope(set(rows)-{"core","worker"},modules,acknowledge_blocked)
+    if any(rows[k]["state"]!="running" for k in ("core","worker","kopia")):
+        raise ValueError("Source core, worker and Kopia must be running")
+    if not password or len(password)>1024:raise ValueError("Repository password required")
+    # Use a private temporary inventory on the destination filesystem. The
+    # published package contains its exact bytes; on failure the persistent
+    # portal seal and native worker inventory remain available for inspection.
+    with tempfile.TemporaryDirectory(prefix=".aftergrid-capture-",dir=destination.parent) as tmp:
+        value=guarded_capture(call,modules,job_timeout=job_timeout)
+        inventory=Path(tmp)/"inventory.json"
+        payload=json.dumps(value,indent=2).encode()
+        if len(payload)>65536:raise ValueError("Recovery inventory too large")
+        prep.private_write(inventory,payload)
+        if source_containers(root)!=rows:raise ValueError("Source container state changed during capture")
+        return pack_and_resume(root,inventory,destination,modules,password,acknowledge_blocked=acknowledge_blocked)
 
 
 def verify_package(directory):
@@ -736,6 +763,15 @@ def main():
     bundle.add_argument("--confirm-quiescent",action="store_true")
     bundle.add_argument("--require-sealed",action="store_true")
     bundle.add_argument("--acknowledge-blocked",action="store_true",help="Acknowledge that captured MicroTAK data is excluded from recovery")
+    combined=sub.add_parser("create-package")
+    for name in ("root","destination"):combined.add_argument("--"+name,required=True,type=Path)
+    combined.add_argument("--url",required=True)
+    combined.add_argument("--origin")
+    combined.add_argument("--username",default="admin")
+    combined.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
+    combined.add_argument("--core-only",action="store_true")
+    combined.add_argument("--confirm-maintenance-downtime",action="store_true")
+    combined.add_argument("--acknowledge-blocked",action="store_true")
     handoff=sub.add_parser("pack-and-resume")
     for name in ("root","inventory","destination"):handoff.add_argument("--"+name,required=True,type=Path)
     handoff.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
@@ -788,6 +824,19 @@ def main():
                 try:call("/api/logout",{})
                 except Exception:print("Portal logout not confirmed; session will expire.",flush=True)
             print("Recovery maintenance released.")
+        elif args.action=="create-package":
+            if not args.confirm_maintenance_downtime or bool(args.module)==args.core_only:
+                raise ValueError("Confirm downtime and explicitly select modules or core-only")
+            capture_steps(args.module)
+            call=capture_client(args.url,args.origin)
+            call("/api/login",{"username":args.username,"password":getpass.getpass("AfterGrid administrator password: ")})
+            try:
+                report=create_package(call,args.root,args.destination,args.module,getpass.getpass("Original Kopia repository password: "),acknowledge_blocked=args.acknowledge_blocked)
+                print("Package verified; original container running state restored. Inspect native readiness and explicitly release maintenance.")
+                print("Omitted captured modules: "+(", ".join(report["omitted_captured"]) or "none"))
+            finally:
+                try:call("/api/logout",{})
+                except Exception:print("Portal logout not confirmed; session will expire.",flush=True)
         elif args.action=="pack-and-resume":
             if not args.confirm_maintenance_downtime:raise ValueError("Confirm source service downtime")
             report=pack_and_resume(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "),acknowledge_blocked=args.acknowledge_blocked)
