@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.24-dev
+- Add independent guided native recovery CI fixture: actual managed core, worker and Kiwix snapshots, generated inventory, replacement restore, read-only Kopia reconnect, native login and catalog comparison, offline activation and no-pull lifecycle, source repository digest comparison.
+- Reuse exact locally built/pulled images in the fixture; native archive import is exercised separately. Full disconnected and writable backup acceptance remain outstanding. CI pending.
+
 ## 0.8.23-dev
 - Add guided replacement recovery command, exact native core/worker restore, independent read-only Kopia working copy, selected application startup and explicit restricted offline lifecycle activation.
 - Correct native Kiwix recovery fixture after earlier intentional purge. Keep MicroTAK clean-stop blocker and full disconnected acceptance explicit. CI pending.

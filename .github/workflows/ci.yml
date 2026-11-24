@@ -33,6 +33,17 @@ jobs:
       - name: Disposable recovered-core startup acceptance
         timeout-minutes: 15
         run: sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 python3 tests/recovery_core_smoke.py
+      - name: Guided native recovery acceptance
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/aftergrid-guided-fixture.zim"
+          curl --fail --silent --show-error --location --max-time 60 https://raw.githubusercontent.com/openzim/zim-testing-suite/2edf72096208e60c82b6ebbe313baa552cc6af52/data/withns/wikibooks_be_all_nopic_2017-02.zim -o "$fixture"
+          test "$(git hash-object "$fixture")" = 6706e9b279753c759ea77c8bd0250ce950bc819c
+          docker pull ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:e478554a9920412eeb5ce1d73f24e4b28445ebed233187cdd03c623c32be46a5
+          docker pull kopia/kopia:0.23.1
+          sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 python3 tests/recovery_guided_smoke.py "$fixture"
       - name: Validate module Compose definitions
         run: |
           export MESHMONITOR_ADMIN_PASSWORD=disposable-ci-mesh-password MESHMONITOR_SESSION_SECRET=disposable-ci-session-secret

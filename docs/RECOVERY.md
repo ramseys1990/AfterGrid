@@ -142,3 +142,7 @@ sudo python3 recover.py activate-offline --root /opt/aftergrid \
 ```
 
 This verifies the selected started-module receipts and exact image mappings and recreates only the recovered core and worker without builds or pulls. The portal allows authentication, local route requests, native credential retrieval and mapped lifecycle actions; downloads, external catalog, installs, updates and other configuration writes remain blocked. Kopia is initially connected read-only; normal writable backup scheduling, LAN changes, native full application acceptance, and coordinated capture are separate. This is not an air-gap firewall: third-party applications may attempt network access if the host is online. MicroTAK consistent capture remains blocked (SIGTERM exit 143). Do not claim full recovery until disconnected acceptance is completed.
+
+### Guided recovery acceptance gate
+
+A dedicated disposable CI step now runs before broad lifecycle smoke. It creates real managed core, worker and Kiwix snapshots and inventory, quiesces the original installation, executes guided recovery, checks original login/household and byte-identical ZIM plus live reader catalog, reconnects native Kopia, activates restricted offline administration, exercises Kiwix stop/start, and checks that source repository file hashes are unchanged. The test reuses exact local image IDs rather than emptying the runner daemon; native Docker image archive save/load remains a separate gate. Network connectivity is still available to the runner; this is not disconnected acceptance. CI pending.
