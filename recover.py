@@ -26,7 +26,10 @@ CORE_SOURCE="/source/data/core/recovery-export"
 WORKER_SOURCE="/tmp/aftergrid-worker-export"
 
 def core_records(inventory):
-    value=json.loads(prep.read_private(inventory,65536))
+    return inventory_core_records(json.loads(prep.read_private(inventory,65536)))
+
+
+def inventory_core_records(value):
     if value.get("format")!=1 or value.get("atomic") is not False:raise ValueError("Unsupported recovery inventory")
     records={}
     for row in value["records"]:
@@ -41,6 +44,140 @@ def core_records(inventory):
     if not re.fullmatch(r"[a-f0-9]{64}",records["worker"].get("envelope_sha256") or ""):
         raise ValueError("Worker envelope digest required")
     return records
+
+def capture_steps(modules):
+    """Use existing reviewed API jobs; no new snapshot engine."""
+    if len(modules)!=len(set(modules)) or any(m not in data.SOURCES for m in modules):
+        raise ValueError("Choose distinct supported recovery modules")
+    if "tak" in modules:
+        raise ValueError("MicroTAK consistent capture is not yet supported")
+    steps=[]
+    for module in sorted(modules):
+        for key,_,_ in data.SOURCES[module]:
+            if key.startswith("application/"):
+                base="/api/admin/modules/"+module
+                steps.append((key,module,"snapshot","verify-snapshot",base+"/snapshot",base+"/verify-snapshot"))
+            else:
+                base="/api/admin/backups/content/"+module
+                steps.append((key,module,"content-snapshot","content-verify",base+"/snapshot",base+"/verify"))
+    # Capture worker state last so preceding application/core jobs are recorded.
+    for key in ("core","worker"):
+        base="/api/admin/backups/"+key
+        steps.append((key,"kopia",key+"-snapshot",key+"-verify-snapshot",base+"/snapshot",base+"/verify-snapshot"))
+    return steps
+
+
+def capture_inventory(call,modules,*,job_timeout=7*60*60,progress=print):
+    """Run fresh snapshot/verify pairs and pin their exact job IDs.
+
+    Operator-exclusive maintenance, not an atomic snapshot or a global lock.
+    Any observed unrelated worker activity refuses publication.
+    """
+    import time
+    steps=capture_steps(modules)
+    status=call("/api/status")
+    if not status.get("admin") or status.get("recovery_core_only") or status.get("recovery_offline"):
+        raise ValueError("Normal authenticated source installation required")
+    if call("/api/admin/kopia/status").get("connection")!="connected":
+        raise ValueError("Connect native Kopia before capture")
+    def jobs():
+        rows=call("/api/admin/jobs")
+        if not isinstance(rows,list) or any(type(r.get("id")) is not int for r in rows):
+            raise ValueError("Invalid job listing")
+        return rows
+    def idle(rows):
+        if any(r.get("state") in {"queued","running"} for r in rows):
+            raise ValueError("Worker is busy; exclusive maintenance required")
+    rows=jobs()
+    idle(rows)
+    last=max((r["id"] for r in rows),default=0)
+    def run(module,action,path):
+        nonlocal last
+        rows=jobs()
+        idle(rows)
+        if max((r["id"] for r in rows),default=0)!=last:
+            raise ValueError("Concurrent worker activity detected")
+        response=call(path,{"confirmed":True})
+        ident=response.get("id")
+        if type(ident) is not int or ident<=last:
+            raise ValueError("Fresh job ID required")
+        progress("Waiting for "+module+"/"+action+" (job "+str(ident)+")",flush=True)
+        deadline=time.monotonic()+job_timeout
+        while True:
+            rows=jobs()
+            new=[r for r in rows if r["id"]>last]
+            if len(new)!=1 or new[0]["id"]!=ident:
+                raise ValueError("Concurrent activity or missing capture job")
+            row=new[0]
+            if row.get("module")!=module or row.get("action")!=action:
+                raise ValueError("Unexpected capture job")
+            if any(r["id"]!=ident and r.get("state") in {"queued","running"} for r in rows):
+                raise ValueError("Concurrent worker activity detected")
+            if row.get("state")=="succeeded":
+                if row.get("completed")!=row.get("total"):
+                    raise ValueError("Incomplete capture job")
+                last=ident
+                return ident
+            if row.get("state") not in {"queued","running"}:
+                raise ValueError("Capture job failed or interrupted: "+module+"/"+action)
+            if time.monotonic()>=deadline:
+                raise ValueError("Capture job timed out; inspect existing job before retry")
+            time.sleep(2)
+    expected={}
+    for key,module,action,verify,snapshot_path,verify_path in steps:
+        expected[key]=(run(module,action,snapshot_path),run(module,verify,verify_path))
+    manifest=run("kopia","recovery-manifest","/api/admin/backups/recovery-manifest")
+    value=call("/api/admin/backups/recovery-manifest")
+    if value.get("manifest_job")!=manifest:
+        raise ValueError("Inventory is not from this capture")
+    records=inventory_core_records(value)
+    for module in modules:data.required_records(records,module)
+    for key,(snapshot,verify) in expected.items():
+        row=records.get(key,{})
+        if row.get("snapshot_job")!=snapshot or row.get("verification_job")!=verify:
+            raise ValueError("Inventory does not match fresh snapshot and verification jobs")
+    rows=jobs()
+    idle(rows)
+    if max((r["id"] for r in rows),default=0)!=last:
+        raise ValueError("Concurrent worker activity detected")
+    return value
+
+
+def capture_client(url,origin=None):
+    """Authenticate only over loopback HTTP or verified HTTPS; no redirects."""
+    import http.cookiejar
+    import urllib.error
+    import urllib.request
+    from urllib.parse import urlsplit
+    parsed=urlsplit(url)
+    if (parsed.scheme not in {"http","https"} or not parsed.hostname or parsed.username is not None
+        or parsed.password is not None or parsed.path not in ("","/") or parsed.query or parsed.fragment
+        or (parsed.scheme=="http" and parsed.hostname not in {"127.0.0.1","localhost","::1"})):
+        raise ValueError("Use a loopback HTTP or trusted HTTPS portal URL")
+    base=parsed.scheme+"://"+parsed.netloc
+    origin=origin or base
+    origin_parts=urlsplit(origin)
+    if (origin_parts.scheme not in {"http","https"} or not origin_parts.hostname
+        or origin_parts.username is not None or origin_parts.password is not None
+        or origin_parts.path or origin_parts.query or origin_parts.fragment):
+        raise ValueError("Use the exact configured portal origin")
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self,*args,**kwargs):
+            return None
+    client=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    def call(path,payload=None):
+        request=urllib.request.Request(base+path,data=None if payload is None else json.dumps(payload).encode(),
+            headers={"Origin":origin,"Content-Type":"application/json"})
+        try:
+            with client.open(request,timeout=30) as response:
+                raw=response.read(8*1024*1024+1)
+                if len(raw)>8*1024*1024:raise ValueError("Portal response too large")
+                return json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            raise ValueError("Portal refused "+path+" (HTTP "+str(exc.code)+")") from None
+    return call
+
 
 def repository_digest(path):
     """Stream a deterministic digest of all regular repository files."""
@@ -427,6 +564,14 @@ def main():
     run.add_argument("--repository",required=True,type=Path)
     run.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
     run.add_argument("--confirm-empty-replacement",action="store_true")
+    capture=sub.add_parser("capture-inventory")
+    capture.add_argument("--url",required=True)
+    capture.add_argument("--origin",help="Exact configured portal origin, if different from URL")
+    capture.add_argument("--username",default="admin")
+    capture.add_argument("--destination",required=True,type=Path)
+    capture.add_argument("--module",action="append",choices=sorted(data.SOURCES),default=[])
+    capture.add_argument("--core-only",action="store_true")
+    capture.add_argument("--confirm-maintenance",action="store_true")
     bundle=sub.add_parser("pack")
     bundle.add_argument("--root",required=True,type=Path)
     bundle.add_argument("--inventory",required=True,type=Path)
@@ -447,7 +592,23 @@ def main():
         for name in ("root","assets","inventory"):cmd.add_argument("--"+name,required=True,type=Path)
     args=parser.parse_args()
     try:
-        if args.action=="pack":
+        if args.action=="capture-inventory":
+            if not args.confirm_maintenance or bool(args.module)==args.core_only:
+                raise ValueError("Confirm exclusive maintenance and explicitly select modules or core-only")
+            capture_steps(args.module)
+            destination=install.validate_root(args.destination)
+            call=capture_client(args.url,args.origin)
+            call("/api/login",{"username":args.username,"password":getpass.getpass("AfterGrid administrator password: ")})
+            try:
+                value=capture_inventory(call,args.module)
+                payload=json.dumps(value,indent=2).encode()
+                if len(payload)>65536:raise ValueError("Recovery inventory too large")
+                prep.private_write(destination,payload)
+            finally:
+                try:call("/api/logout",{})
+                except Exception:print("Portal logout not confirmed; session will expire.",flush=True)
+            print("Fresh verified inventory saved. Keep maintenance active; stop source services before pack. Not an atomic capture.")
+        elif args.action=="pack":
             if not args.confirm_quiescent:raise ValueError("Confirm source maintenance and quiescent repository")
             report=pack(args.root,args.inventory,args.destination,args.module,getpass.getpass("Original Kopia repository password: "))
             print("Package created. Omitted captured modules: "+(", ".join(report["omitted_captured"]) or "none")+". Independent snapshots, not atomic recovery.")
