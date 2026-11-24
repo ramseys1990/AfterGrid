@@ -332,8 +332,16 @@ def test_snapshot_rejects_partial_or_excluded_manifest(monkeypatch):
     monkeypatch.setattr(worker,"command",lambda ident,*args:list(args))
     value={"id":"a"*32,"source":{"path":"/source/data/grocy"},"rootEntry":{"obj":"fixture"},
            "stats":{"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0,"fileCount":1}}
-    monkeypatch.setattr(worker.subprocess,"run",lambda *a,**k:SimpleNamespace(stdout=json.dumps(value)))
+    def native(argv,**kwargs):
+        if "snapshot" in argv:
+            assert "--json-verbose" in argv and "--json" in argv
+        return SimpleNamespace(stdout=json.dumps(value))
+    monkeypatch.setattr(worker.subprocess,"run",native)
     assert worker.native_snapshot("grocy")=="a"*32
+    stats=value.pop("stats")
+    with pytest.raises(RuntimeError,match="omitted required snapshot statistics"):
+        worker.native_snapshot("grocy")
+    value["stats"]=stats
     for field in ("errorCount","ignoredErrorCount","excludedFileCount","excludedDirCount"):
         value["stats"][field]=1
         with pytest.raises(RuntimeError):worker.native_snapshot("grocy")
@@ -366,3 +374,21 @@ def test_restore_uses_latest_successful_managed_snapshot(tmp_path,monkeypatch):
     assert worker.latest_managed_snapshot("grocy")=="a"*32
     with pytest.raises(ValueError):worker.enqueue("homebox","verify-snapshot")
     with pytest.raises(RuntimeError):worker.latest_managed_snapshot("homebox")
+
+
+def test_restore_manifest_requires_verbose_and_exact_id(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"compose_env",lambda ident:{})
+    monkeypatch.setattr(worker,"command",lambda ident,*args:list(args))
+    manifest={"id":"a"*32,"source":{"path":"/source/data/grocy"},"rootEntry":{"obj":"k"+"b"*32},
+              "stats":{"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0,
+                       "fileCount":1,"totalSize":100}}
+    def native(argv,**kwargs):
+        assert "--json-verbose" in argv and "--manifest-id" in argv
+        return SimpleNamespace(stdout=json.dumps([manifest]))
+    monkeypatch.setattr(worker.subprocess,"run",native)
+    assert worker.restore_manifest("grocy","a"*32)=="k"+"b"*32
+    with pytest.raises(RuntimeError):worker.restore_manifest("grocy","c"*32)
+    manifest["stats"]["ignoredErrorCount"]=1
+    with pytest.raises(RuntimeError,match="ignoredErrorCount=1"):worker.restore_manifest("grocy","a"*32)

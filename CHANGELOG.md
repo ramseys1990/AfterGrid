@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.5.1-dev
+- Request native Kopia verbose snapshot JSON so required statistics are available, and share strict validation between creation and restore lookup.
+- Distinguish missing statistics, command errors, invalid JSON and nonzero error/exclusion counters without exposing native output.
+- Add regression tests for verbose flag and missing counters; preserve complete integration test. CI pending.
+
 ## 0.8.5-dev
 - Add isolated latest managed Grocy snapshot restoration and SQLite integrity/schema checks, fixed private destinations and bounded native commands.
 - Replace Kopia host marker assertion with native restart/reconnection and extend disposable smoke test to restoration. Prior repository creation reached connected state; smoke stopped at marker assertion.

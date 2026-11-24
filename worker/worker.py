@@ -361,28 +361,54 @@ def cleanly_stopped(ident):
     except (OSError,subprocess.SubprocessError,ValueError,TypeError):
         return False
 
+def snapshot_statistics(value,source):
+    """Require verbose native evidence; never infer missing counters are zero."""
+    if not isinstance(value,dict) or not isinstance(value.get("stats"),dict):
+        raise RuntimeError("Kopia manifest omitted required snapshot statistics")
+    if value.get("incomplete"):
+        raise RuntimeError("Kopia reported an incomplete snapshot")
+    if not isinstance(value.get("source"),dict) or value["source"].get("path")!=source:
+        raise RuntimeError("Kopia snapshot source did not match")
+    if not isinstance(value.get("id"),str) or not re.fullmatch(r"[a-f0-9]{32,64}",value["id"]):
+        raise RuntimeError("Kopia snapshot ID missing or invalid")
+    if not isinstance(value.get("rootEntry"),dict) or not value["rootEntry"].get("obj"):
+        raise RuntimeError("Kopia snapshot root missing")
+    stats=value["stats"]
+    for key in ("errorCount","ignoredErrorCount","excludedFileCount","excludedDirCount"):
+        count=stats.get(key)
+        if type(count) is not int or count<0:
+            raise RuntimeError("Kopia snapshot counter unavailable: "+key)
+        if count:
+            raise RuntimeError("Kopia snapshot reports "+key+"="+str(count)+"; completeness not confirmed")
+    if type(stats.get("fileCount")) is not int or stats["fileCount"]<1:
+        raise RuntimeError("Kopia snapshot is empty or file count unavailable")
+    return stats
+
 def native_snapshot(ident):
     source=SNAPSHOT_SOURCES[ident]
     try:
         subprocess.run(command("kopia","exec","-T","kopia","/bin/sh","-c",
             'test -d "$1" && test ! -L "$1"',"check-source",source),
             env=compose_env("kopia"),capture_output=True,text=True,timeout=8,check=True)
+    except (OSError,subprocess.SubprocessError,ValueError):
+        raise RuntimeError("Reviewed source directory unavailable in Kopia") from None
+    try:
         raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","--kill-after=10s","300s",
-            "/bin/kopia","snapshot","create","--json","--fail-fast","--force-disable-actions","--no-send-snapshot-report",source),
+            "/bin/kopia","snapshot","create","--json","--json-verbose","--fail-fast","--force-disable-actions","--no-send-snapshot-report",source),
             env=compose_env("kopia"),capture_output=True,text=True,timeout=330,check=True).stdout
-        if len(raw)>1024*1024:raise ValueError("Oversized snapshot response")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Native Kopia snapshot timed out; inspect native tasks before retrying") from None
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError("Native Kopia snapshot exited with code "+str(exc.returncode)+"; inspect native logs") from None
+    except OSError:
+        raise RuntimeError("Native Kopia snapshot command unavailable") from None
+    try:
+        if len(raw)>1024*1024:raise ValueError("Oversized response")
         value=json.loads(raw)
-        stats=value["stats"]
-        if (value.get("incomplete") or value["source"]["path"]!=source
-                or not re.fullmatch(r"[a-f0-9]{32,64}",value["id"])
-                or not value["rootEntry"].get("obj")
-                or any(type(stats.get(k)) is not int or stats[k]!=0 for k in
-                       ("errorCount","ignoredErrorCount","excludedFileCount","excludedDirCount"))
-                or type(stats.get("fileCount")) is not int or stats["fileCount"]<1):
-            raise ValueError("Incomplete, excluded or empty snapshot")
-        return value["id"]
-    except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
-        raise RuntimeError("Snapshot not confirmed complete; inspect native Kopia (partial snapshots may remain)") from None
+    except (ValueError,TypeError):
+        raise RuntimeError("Native Kopia snapshot JSON missing or invalid") from None
+    snapshot_statistics(value,source)
+    return value["id"]
 
 def snapshot_application(job,ident):
     if ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported snapshot application")
@@ -423,18 +449,16 @@ def restore_manifest(ident,snapshot_id):
     source=SNAPSHOT_SOURCES[ident]
     try:
         raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","30s","/bin/kopia",
-            "snapshot","list","--json","--manifest-id","--max-results=50",source),
+            "snapshot","list","--json","--json-verbose","--manifest-id","--max-results=50",source),
             env=compose_env("kopia"),capture_output=True,text=True,timeout=40,check=True).stdout
         if len(raw)>4*1024*1024:raise ValueError("Oversized snapshot list")
         rows=json.loads(raw)
         matches=[row for row in rows if row.get("id")==snapshot_id and row.get("source",{}).get("path")==source]
         if len(matches)!=1:raise ValueError("Snapshot missing or ambiguous")
         row=matches[0]
-        stats=row["stats"]
+        stats=snapshot_statistics(row,source)
         root=row["rootEntry"]["obj"]
-        if (row.get("incomplete") or not re.fullmatch(r"[IZD]{0,8}[a-z]?[a-f0-9]{32,128}",root)
-                or any(type(stats.get(k)) is not int or stats[k]!=0 for k in
-                       ("errorCount","ignoredErrorCount","excludedFileCount","excludedDirCount"))
+        if (not isinstance(root,str) or not re.fullmatch(r"[IZD]{0,8}[a-z]?[a-f0-9]{32,128}",root)
                 or type(stats.get("totalSize")) is not int or not 0<stats["totalSize"]<=512*1024*1024):
             raise ValueError("Snapshot incomplete or exceeds 512 MiB verification limit")
         return root

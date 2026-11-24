@@ -133,6 +133,7 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         # upstream storage marker filename or host-side access permissions.
         action("restart","kopia")
         assert api("/api/admin/kopia/status")["connection"]=="connected"
+        print("Native Kopia creation and persistent reconnection passed.",flush=True)
         action("install","grocy")
         snapshot_job=api("/api/admin/modules/grocy/snapshot",{"confirmed":True})["id"]
         wait_job(snapshot_job,"quiesced Grocy snapshot")
@@ -140,10 +141,12 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
         record=next(j for j in api("/api/admin/jobs") if j["id"]==snapshot_job)
         assert "Native snapshot reported complete:" in record["log"]
         assert "restore not verified" in record["stage"]
+        print("Managed Grocy snapshot and prior running state restoration passed.",flush=True)
         restore_job=api("/api/admin/modules/grocy/verify-snapshot",{"confirmed":True})["id"]
         wait_job(restore_job,"isolated Grocy restore")
         verification=next(j for j in api("/api/admin/jobs") if j["id"]==restore_job)
         assert "SQLite integrity and expected schema passed" in verification["log"]
+        print("Isolated Grocy restore and SQLite integrity passed.",flush=True)
         assert module("grocy")["status"]=="running"
         action("uninstall","grocy")
     else:
