@@ -211,4 +211,27 @@ Use a new inventory filename under an existing private directory. Select modules
 
 The coordinator runs each selected source's existing native snapshot/verification pair, including both Jellyfin sources, then core and worker exports and a fresh inventory. It binds the final inventory to the exact successful job IDs from this run, refuses observed unrelated worker jobs and rejects MicroTAK before submitting anything. It does not cancel jobs, retry failed operations, overwrite an old inventory or publish a stale inventory. Session expiry, interruption or timeout requires inspecting the existing jobs before retrying. It is not a global write lock: native app writes, external Docker changes and external repository writers are not automatically prevented. Snapshots remain independent, not simultaneous.
 
-Keep the exclusive maintenance window active after this command, then stop source services without uninstalling them and run the existing `pack` command with the **same** module selection and new inventory. Stop/restart remains explicitly operator-controlled so a failure does not automatically restart or delete services. Inspect omitted captured modules before relying on the package. A future integrated maintenance lock and source-state handoff are distinct acceptance items. The guided disposable fixture now uses this coordinator; CI pending.
+Keep the exclusive maintenance window active after this command, then stop source services without uninstalling them and run the existing `pack` command with the **same** module selection and new inventory. Stop/restart remains explicitly operator-controlled so a failure does not automatically restart or delete services. Inspect omitted captured modules before relying on the package. The guarded capture and sealed handoff below provide portal admission protection; native application quiescence and host shutdown remain operator responsibilities. The guided disposable fixture now uses this coordinator; CI pending.
+
+
+## Guarded capture and sealed package handoff (development)
+
+The fresh capture command now enters persistent portal maintenance before submitting any backup job. Existing queued/running worker jobs, active downloads, regional operations, and place-index builds must finish first. The normal single-process portal serializes write admission: only the authenticated capture session can submit reviewed backup requests during capture; other application/configuration writes are refused. Once the final fresh inventory is sealed, all backup submissions are refused too. Login/logout and read-only requests remain available. The marker persists across source portal restarts and is deliberately not copied into recovered core data.
+
+After a successful capture, stop source containers through the host's reviewed Compose/Docker administration path (do not uninstall). The portal lifecycle actions are blocked while sealed. Keep native app clients, external writers and native scheduled repository changes quiescent throughout. Create the package with the same selected modules and require the seal:
+
+```sh
+sudo python3 recover.py pack --root /opt/aftergrid \
+  --inventory /secure/recovery-inventory.json --destination /secure/aftergrid-package \
+  --module kiwix --module maps --confirm-quiescent --require-sealed
+```
+
+The package command checks the canonical inventory digest, final manifest job ID, selected modules, and unchanged seal before publishing. An existing unsealed or mismatched marker refuses packaging even without the flag. Legacy manually prepared inventories may still be packaged without a marker when explicitly confirming quiescence; they do not have guarded capture evidence.
+
+After inspecting the package and source state, restart the original services using the existing host administration workflow, then explicitly release maintenance:
+
+```sh
+python3 recover.py release-maintenance --url http://127.0.0.1:8080 --confirm-release
+```
+
+The release requires authenticated administrator confirmation and idle worker/content operations. If capture fails or the client disconnects, maintenance intentionally remains active; inspect the existing jobs and source state before release and retry. Do not delete the marker as normal recovery practice. A malformed marker requires host inspection. This is portal admission protection, not a global system-wide write lock, native application freeze, or atomic capture. It does not automatically stop/restart services, manage other Docker projects, or change native Kopia policy. Native fixture and regression tests are pending CI verification.
