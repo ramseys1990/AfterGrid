@@ -49,7 +49,11 @@ def inventory_records(path,plan,metadata):
         raise ValueError("Inventory does not match staged core/worker exports")
     return records
 
+BLOCKED_RECOVERY={"tak":"MicroTAK 0.18.1 has no confirmed application-consistent capture and native restore acceptance"}
+
+
 def required_records(records,module):
+    if module in BLOCKED_RECOVERY:raise ValueError(BLOCKED_RECOVERY[module])
     # Kopia uses an independently copied native repository, not a snapshot of itself.
     if module=="kopia":return []
     if module not in SOURCES:raise ValueError("Unsupported recovery module")
