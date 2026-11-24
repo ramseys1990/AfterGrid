@@ -110,7 +110,6 @@ def main(fixture):
             password=call(old,"/api/admin/kopia/credentials",{})["repository_password"]
             post_job(old,"/api/admin/kopia/initialize",{"confirmed":True})
             # Exercise the real fresh-capture coordinator through the authenticated portal.
-            inventory=tmp/"inventory.json"
             other=client()
             call(other,"/api/login",creds)
             def capture_call(path,payload=None):
@@ -120,25 +119,35 @@ def main(fixture):
                     assert call(other,"/api/admin/backups/core/snapshot",{"confirmed":True},409)["detail"]
                     assert call(old,"/api/admin/households",{"name":"Must be blocked"},409)["detail"]
                 return result
-            capture=recover.guarded_capture(capture_call,["kiwix"],job_timeout=240)
-            assert call(old,"/api/admin/recovery-maintenance")["phase"]=="sealed"
+            repository=original/"backups"
+            package=tmp/"package"
+            packed=recover.create_package(capture_call,original,package,["kiwix"],password,job_timeout=240)
+            assert recover.verify_package(package)==packed and packed["omitted_captured"]==[]
+            assert not (original/"recovery-source-restart.json").exists()
+            assert all(row["state"]=="running" for row in recover.source_containers(original).values())
+            # Wait for original source portal and reader to be available again.
+            deadline=time.monotonic()+60
+            while True:
+                try:
+                    if call(old,"/api/admin/recovery-maintenance")["phase"]=="sealed" and reader_fixture():break
+                except OSError:pass
+                if time.monotonic()>deadline:raise RuntimeError("Original source restart not ready")
+                time.sleep(1)
             assert call(old,"/api/admin/households",{"name":"Must be blocked"},409)["detail"]
             assert call(old,"/api/admin/modules/kiwix/stop",{},409)["detail"]
-            recover.prep.private_write(inventory,json.dumps(capture).encode())
+            inventory=package/"inventory.json"
+            capture=json.loads(inventory.read_text())
             assert capture["atomic"] is False
             assert recover.core_records(inventory)["worker"]["verification_job"]>recover.core_records(inventory)["worker"]["snapshot_job"]
-            # Stop the original services but retain container image identities.
-            for ident in ("kiwix","kopia"):
-                ids=assets.docker("ps","--quiet","--filter","label=com.docker.compose.project=aftergrid-"+ident).splitlines()
-                assert len(ids)==1 and re.fullmatch(r"[a-f0-9]{12,64}",ids[0])
-                run(["docker"],"stop","--time","60",ids[0])
+            # Release explicitly after source readiness; stop again for the
+            # separate clean replacement drill. Do not assume native Kopia
+            # maintenance cannot change the restarted original repository.
+            call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True})
+            assert not call(old,"/api/status")["recovery_maintenance"]
+            for ident in ("kiwix","kopia"):post_job(old,"/api/admin/modules/"+ident+"/stop")
             run(cmd,"stop")
-            repository=original/"backups"
             before=repository_digest(repository)
             assert before
-            package=tmp/"package"
-            packed=recover.pack(original,inventory,package,["kiwix"],password,require_sealed=True)
-            assert recover.verify_package(package)==packed and packed["omitted_captured"]==[]
             # A modified inventory must be rejected before any replacement actions.
             packaged_inventory=package/"inventory.json"
             saved_inventory=packaged_inventory.read_bytes()
