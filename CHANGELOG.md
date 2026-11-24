@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.8.26-dev
+- Add fresh capture coordinator using existing authenticated native snapshot/verification jobs; bind final inventory to exact new job IDs and refuse observed concurrent work. Operator-controlled maintenance and service stops remain required. CI pending.
 - Add portable recovery package creation, verification and guided restore commands. Require a quiescent source, captured image inventory, exact verified snapshot selection, native manifest presence on copied repository, and deterministic repository byte digest.
 - Extend guided CI to assemble and verify package before and after recovery. Independent capture points remain explicitly non-atomic; CI pending.
 
