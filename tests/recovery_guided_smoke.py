@@ -155,15 +155,15 @@ def main(fixture,exported=None):
                     fmt="{{json .Config."+field+"}}"
                     assert assets.docker("image","inspect","--format",fmt,image)==assets.docker("image","inspect","--format",fmt,prior[name]["image"]),field
                 candidate_images[name]={"tag":tag,"image":image}
-            def run_trial(fail=False,interrupt=False,promote=False):
+            def run_trial(fail=False,interrupt=False,promote=False,promotion_failure=False):
                 prior=core_update.live_core(original)
-                candidate=tmp/("candidate-interruption" if interrupt else "candidate-failure" if fail else "candidate-success")
+                candidate=tmp/("candidate-promotion-failure" if promotion_failure else "candidate-promotion" if promote else "candidate-interruption" if interrupt else "candidate-failure" if fail else "candidate-success")
                 candidate.mkdir(mode=0o700)
                 source=candidate/"source"
                 source.mkdir()
                 shutil.copy2(original/"compose.yaml",source/"compose.yaml")
                 for name in ("core","worker","modules"):shutil.copytree(original/name,source/name)
-                if promote:(source/"core/update-fixture.txt").write_text("Disposable promoted source marker\n")
+                if promote or promotion_failure:(source/"core/update-fixture.txt").write_text("Disposable promoted source marker\n")
                 plan={"format":1,"root":str(original),"platform":assets.local_docker(),"commit":commit,
                       "previous":prior,"candidate":candidate_images,"configuration":core_update.check_scope(original,source),
                       "source_sha256":core_update.candidate_source_digest(source),
@@ -211,6 +211,29 @@ def main(fixture,exported=None):
                 assert all(core_update.live_core(original)[name]["image"]==prior[name]["image"] for name in prior)
                 assert applications=={ident:app_identity(ident) for ident in applications}
                 assert call(old,"/api/households")["households"][0]["name"]=="Guided household"
+                if promotion_failure:
+                    def bad_promotion():
+                        probe_candidate()
+                        # Simulate candidate schema changes in both canonical
+                        # databases, then reject the new version.
+                        run(cmd,"exec","-T","core","python","-c",
+                            "import sqlite3; c=sqlite3.connect('/data/core.sqlite3'); c.execute('CREATE TABLE failed_promotion_fixture (id INTEGER)'); c.commit(); c.close()")
+                        run(cmd,"exec","-T","worker","python3","-c",
+                            "import sqlite3; c=sqlite3.connect('/worker-state/jobs.sqlite3'); c.execute('CREATE TABLE failed_promotion_fixture (id INTEGER)'); c.commit(); c.close()")
+                        raise RuntimeError("Intentional canonical promotion failure")
+                    try:core_update.promote_disposable(original,candidate,bad_promotion)
+                    except RuntimeError as exc:
+                        if str(exc)!="Intentional canonical promotion failure":raise
+                    else:raise AssertionError("Expected canonical promotion failure")
+                    report=json.loads((candidate/"promotion.json").read_text())
+                    assert report["phase"]=="rolled_back"
+                    assert Path(report["failed_core"]).is_dir()
+                    assert not (original/"core/update-fixture.txt").exists()
+                    assert all(core_update.live_core(original)[name]["image"]==prior[name]["image"] for name in prior)
+                    for service,executable,database in (("core","python","/data/core.sqlite3"),("worker","python3","/worker-state/jobs.sqlite3")):
+                        run(cmd,"exec","-T",service,executable,"-c",
+                            "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert not c.execute(\"SELECT 1 FROM sqlite_master WHERE name='failed_promotion_fixture'\").fetchone(); c.close()",database)
+                    probe_candidate()
                 if promote:
                     promoted=core_update.promote_disposable(original,candidate,probe_candidate)
                     assert promoted["phase"]=="promoted"
@@ -229,6 +252,7 @@ def main(fixture,exported=None):
             run_trial()
             run_trial(fail=True)
             run_trial(interrupt=True)
+            run_trial(promotion_failure=True)
             run_trial(promote=True)
             print("Distinct candidate images, forced probe failure, interrupted trial reconciliation and canonical promotion passed; Kiwix and Kopia stayed online.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")

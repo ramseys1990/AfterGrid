@@ -726,7 +726,7 @@ def candidate_trial(root,candidate,probe):
     return trial_replacement(root,candidate,plan,retained,probe)
 
 
-def trial_container_inventory(root,candidate,plan):
+def trial_container_inventory(root,candidate,plan,canonical_candidate=False):
     """Inspect only the core project, including partially replaced services."""
     rows={}
     base=str(root/"compose.yaml")
@@ -744,7 +744,8 @@ def trial_container_inventory(root,candidate,plan):
             raise ValueError("Unexpected container in core project; inspect manually")
         trial=files!=base
         expected=plan["candidate" if trial else "previous"][service]["image"]
-        if image!=expected:raise ValueError("Unexpected core image; inspect manually")
+        if image!=expected and not (canonical_candidate and not trial and image==plan["candidate"][service]["image"]):
+            raise ValueError("Unexpected core image; inspect manually")
         target="/data" if service=="core" else "/worker-state"
         selected=[m for m in mounts if m["Destination"]==target]
         if len(selected)!=1:raise ValueError("Unexpected state mount")
@@ -891,13 +892,120 @@ def source_transition(root,stage,forward):
     return record
 
 
+# Fixed helper executed in the retained local worker image. The named volume
+# is never removed. Save failed files by rename before restoring; the
+# quarantine is intentionally retained for inspection.
+RESTORE_WORKER=r"""
+import hashlib,json,os,stat,sys,tarfile
+from pathlib import Path,PurePosixPath
+root=Path("/state")
+archive=Path("/checkpoint/worker.tar")
+quarantine=root/sys.argv[1]
+if hashlib.file_digest(archive.open("rb"),"sha256").hexdigest()!=sys.argv[2]:
+    raise RuntimeError("Worker checkpoint digest changed")
+with tarfile.open(archive,"r:") as tar:
+    members=tar.getmembers()
+    for m in members:
+        p=PurePosixPath(m.name)
+        if p.is_absolute() or ".." in p.parts or not (m.isdir() or m.isfile()) or quarantine.name in p.parts:
+            raise RuntimeError("Unsafe worker checkpoint")
+    quarantine.mkdir(mode=0o700)
+    for child in root.iterdir():
+        if child!=quarantine:child.rename(quarantine/child.name)
+    tar.extractall(root,numeric_owner=True,filter="fully_trusted")
+    for m in members:
+        p=root/m.name
+        info=p.lstat()
+        if m.isfile():
+            if not stat.S_ISREG(info.st_mode) or hashlib.file_digest(p.open("rb"),"sha256").digest()!=hashlib.file_digest(tar.extractfile(m),"sha256").digest():
+                raise RuntimeError("Restored worker file mismatch")
+        elif not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError("Restored worker directory mismatch")
+        if (info.st_uid,info.st_gid,stat.S_IMODE(info.st_mode))!=(m.uid,m.gid,m.mode):
+            raise RuntimeError("Restored worker ownership or mode mismatch")
+    os.sync()
+"""
+
+
+def restore_core_bind(root,checkpoint,report,suffix,seal_digest):
+    if not re.fullmatch(r"[a-f0-9]{20}",suffix):raise ValueError("Invalid rollback identity")
+    parent=assets.real_directory(root/"data")
+    live=assets.real_directory(parent/"core")
+    new=parent/(".core-restore-"+suffix)
+    failed=parent/(".core-failed-"+suffix)
+    if any(p.exists() or p.is_symlink() for p in (new,failed)):
+        raise ValueError("Existing rollback state; inspect manually")
+    unpack_checkpoint(checkpoint/"core.tar",new,report,"core.sqlite3",{"admin","sessions","first_run"})
+    marker=read_json_private(new/"recovery-maintenance.json",8192)
+    if marker.get("phase")!="updating" or marker.get("candidate_sha256")!=seal_digest:
+        raise ValueError("Checkpoint maintenance hold mismatch")
+    live.rename(failed)
+    sync_directory(parent)
+    new.rename(live)
+    sync_directory(parent)
+    return failed
+
+
+def rollback_disposable_promotion(root,candidate,state,plan,retained):
+    root,candidate=disposable_trial_scope(root,candidate)
+    if state.get("phase") not in {"starting_candidate","verifying"} or not state.get("checkpoint"):
+        raise ValueError("Canonical checkpoint and attempted startup required")
+    digest=retained["candidate_sha256"]
+    marker=read_json_private(root/"data/core/recovery-maintenance.json",8192)
+    if marker.get("phase")!="updating" or marker.get("candidate_sha256")!=digest:
+        raise ValueError("Maintenance hold changed")
+    checkpoint=assets.real_directory(candidate/"promotion-checkpoint")
+    report=read_json_private(checkpoint/"checkpoint.json")
+    if report.get("archives")!=state["checkpoint"] or report.get("previous")!=state["previous"]:
+        raise ValueError("Canonical checkpoint identity changed")
+    for name,database,tables in (("core","core.sqlite3",{"admin","sessions","first_run"}),
+                                 ("worker","jobs.sqlite3",{"jobs","sharing","batches"})):
+        if checkpoint_archive(checkpoint/(name+".tar"),database,tables)!=report["archives"][name]:
+            raise ValueError("Canonical checkpoint archive changed")
+    rows=trial_container_inventory(root,candidate,plan,canonical_candidate=True)
+    if any(row["trial"] for row in rows.values()):raise ValueError("Unexpected trial state")
+    path=candidate/"promotion.json"
+    state["phase"]="restoring_canonical_state"
+    journal(path,state)
+    for row in rows.values():
+        if row["state"] in {"running","restarting"}:
+            assets.docker("stop",row["container"],timeout=90)
+    volume="aftergrid-core_worker_state"
+    if assets.docker("ps","-q","--filter","volume="+volume):
+        raise ValueError("Worker state still in use")
+    # The disposable scope is mandatory; no writes to a real installed host.
+    # Keep the failed core directory and worker quarantine for investigation.
+    failed=restore_core_bind(root,checkpoint,report["archives"]["core"],digest[:20],digest)
+    state["failed_core"]=str(failed)
+    state["phase"]="restoring_worker_state"
+    journal(path,state)
+    quarantine=".aftergrid-failed-"+digest[:20]
+    assets.docker("run","--rm","--pull","never","--network","none","--read-only",
+                  "--cap-drop","ALL","--cap-add","DAC_OVERRIDE","--cap-add","CHOWN","--cap-add","FOWNER",
+                  "--security-opt","no-new-privileges",
+                  "--mount","type=volume,src="+volume+",dst=/state,volume-nocopy",
+                  "--mount","type=bind,src="+str(checkpoint)+",dst=/checkpoint,readonly",
+                  "--entrypoint","python3",retained["previous"]["worker"]["image"],
+                  "-c",RESTORE_WORKER,quarantine,report["archives"]["worker"]["sha256"],timeout=180)
+    state["failed_worker_quarantine"]=quarantine
+    state["phase"]="restoring_source"
+    journal(path,state)
+    source_transition(root,Path(state["source_stage"]),False)
+    state["phase"]="starting_previous"
+    journal(path,state)
+    state["returned_containers"]=replace_core(root,retained["previous"])
+    state["phase"]="rolled_back"
+    journal(path,state)
+    return state
+
+
 def promote_disposable(root,candidate,probe):
     """Permanent canonical-mount activation in the disposable fixture only.
 
     A successful isolated trial is mandatory. The original local state is
     captured again before the candidate is started on canonical mounts.
-    Failed canonical activation remains held for inspection; do not claim
-    automatic data restoration on this path yet.
+    Canonical startup or probe failure attempts checkpoint restoration.
+    An interrupted or unsuccessful restore remains held for inspection.
     """
     root,candidate=disposable_trial_scope(root,candidate)
     plan=read_json_private(candidate/"candidate.json")
@@ -940,8 +1048,15 @@ def promote_disposable(root,candidate,probe):
         state["phase"]="promoted"
         journal(path,state)
     except Exception:
-        state["phase"]="promotion_requires_inspection"
-        journal(path,state)
+        if state["phase"] in {"starting_candidate","verifying"} and state.get("checkpoint"):
+            try:rollback_disposable_promotion(root,candidate,state,plan,retained)
+            except Exception:
+                state["phase"]="promotion_requires_inspection"
+                journal(path,state)
+                raise
+        else:
+            state["phase"]="promotion_requires_inspection"
+            journal(path,state)
         raise
     return state
 

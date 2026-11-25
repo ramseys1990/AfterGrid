@@ -279,3 +279,25 @@ def test_source_transition_resumes_and_restores(tmp_path):
     (stage/"new/core/file").write_text("tampered")
     with pytest.raises(ValueError,match="Unknown source arrangement"):
         update.source_transition(root,stage,True)
+
+
+def test_restore_core_bind_retains_failed_state(tmp_path):
+    import json,sqlite3
+    root=tmp_path/"root"
+    live=root/"data/core"
+    live.mkdir(parents=True)
+    (live/"failed-marker").write_text("failed candidate")
+    source=tmp_path/"source"
+    source.mkdir()
+    with sqlite3.connect(source/"core.sqlite3") as con:
+        for name in ("admin","sessions","first_run"):con.execute("CREATE TABLE "+name+"(id INTEGER)")
+    digest="a"*64
+    update.write_private_json(source/"recovery-maintenance.json",{"phase":"updating","candidate_sha256":digest})
+    checkpoint=tmp_path/"checkpoint"
+    checkpoint.mkdir()
+    archive=checkpoint/"core.tar"
+    with tarfile.open(archive,"w") as tar:tar.add(source,arcname=".")
+    report=update.checkpoint_archive(archive,"core.sqlite3",{"admin","sessions","first_run"})
+    failed=update.restore_core_bind(root,checkpoint,report,digest[:20],digest)
+    assert (failed/"failed-marker").read_text()=="failed candidate"
+    assert (live/"core.sqlite3").is_file() and not (live/"failed-marker").exists()
