@@ -427,3 +427,23 @@ do not infer current readiness from the historical installation summary alone.
 Core/full-appliance preservation, interrupted initial installation, phone/native
 onboarding and clean-machine recovery remain open. Phase 3 stays 8/13 and
 production core activation remains gated.
+
+
+### Scoped core recreation and installed-host guards — 2026-11-25
+
+- Captured optional application container IDs/StartedAt values and exact core/worker image IDs.
+- Removed only the core and worker containers using the existing core Compose project, without removing volumes or networks. All four optional applications remained running. A fresh native Kiwix browser tab rendered the retained article during the core outage.
+- Recreated only core/worker with --no-build --pull never and waited for native health. Both returned healthy. Exact core/worker image IDs matched the pre-test baseline; optional app IDs and start times were unchanged.
+- Reloaded the portal: existing administrator session survived, installation records included Homebox job #27 and Grocy job #30, restored content metadata remained present, and backup health reconnected to the filesystem repository with all five prior verification records.
+- The installed script's --check refused the existing /opt/aftergrid root with exit 1; --resume refused the completed installation because no unfinished marker existed, also exit 1. Configuration checksum checks passed and all six container identities/start times were unchanged afterward.
+- These are current-image container removal/recreation and safe refusal tests, not a new release activation, an interrupted fresh install, deletion/recovery of persistent data or full clean-machine installation. Production activation remains gated.
+
+UI follow-up: lifecycle and recovery status messages can remain “queued” after
+the activity job succeeds; correlate messages with their jobs and replace them
+with terminal results. Recovery health evidence must remain explicit about
+historical verification versus live protection.
+
+Physical-phone LAN acceptance has been requested separately. No result is
+assumed. Native account onboarding remains blocked by SSH-only setup; genuine
+fresh-install failure/resume and clean-machine recovery still need isolated
+acceptance. Phase 3 implementation baseline remains 8/13.
