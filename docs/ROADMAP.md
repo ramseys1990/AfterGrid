@@ -447,3 +447,20 @@ Physical-phone LAN acceptance has been requested separately. No result is
 assumed. Native account onboarding remains blocked by SSH-only setup; genuine
 fresh-install failure/resume and clean-machine recovery still need isolated
 acceptance. Phase 3 implementation baseline remains 8/13.
+
+
+### Kopia reinstall and physical-phone confirmation — 2026-11-25
+
+- Stopped Kopia through the portal with no active backup job, then recorded SHA-256 for all 29 existing files under its repository and configuration directories.
+- Browser uninstall completed and removed the Kopia container. All 29 retained files passed the original checksum list.
+- Browser reinstall completed and the existing filesystem repository reconnected. All 29 prior files still passed their checksum list. Exact IDs and start times for the other five containers were unchanged.
+- A new Kiwix content-verify job then succeeded against the prior managed encrypted snapshot: native content read verification passed. This confirms post-reinstall access to retained encrypted backup content, not a full restore or independent disaster backup.
+- The user explicitly reported that a physical phone on the same LAN opened both the portal and a Kiwix article successfully. This is user-observed evidence, distinct from the earlier desktop viewport simulation.
+
+Remaining live gates: secure Homebox/Grocy browser onboarding and populated
+native user journeys; genuine failed fresh-install/resume on a separate empty
+environment; full clean-host recovery and resource/load/bare-metal acceptance;
+reviewed production core activation/handoff. Current-image core recreation and
+all four selected optional application removal/reinstall have now been exercised
+individually with data-preservation evidence. No persistent volumes, application
+data or unrelated workloads were deleted.
