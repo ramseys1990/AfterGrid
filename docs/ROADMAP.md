@@ -239,11 +239,11 @@ Baseline: **8 of 13 implementation items complete**. A complete row preserves th
 | 3 | Existing Docker workload protection | Complete | Worker and four app IDs/start times unchanged during scoped test core rebuild; deliberate conflicting fixture preserved; existing shared-host coverage remains partial |
 | 4 | Interrupted installation recovery | Complete | Real failed-start/resume acceptance pending |
 | 5 | First-run setup improvements | Complete | Administrator setup, logout/login, guest controls and portal restart/session persistence passed |
-| 6 | Application selection validation | Complete | Four-app wizard batch passed; independent retry submitted after resolved port conflict, final outcome unverified |
+| 6 | Application selection validation | Complete | Four-app wizard batch passed; independent Kiwix retry completed as job #12 after resolved port conflict |
 | 7 | Installation progress reporting | Complete | Real per-app Compose activity and completed-stage summaries observed; failed summary persisted after refresh |
-| 8 | Application port conflict handling | Complete | Real occupied-port rejection passed before image pull; error and retry survived refresh; successful retry acceptance pending |
+| 8 | Application port conflict handling | Complete | Real occupied-port rejection passed before image pull; error and retry survived refresh; Retry job #12 completed; native retained article reopened |
 | 9 | AfterGrid core updating | Open — production activation gated | Native disposable tests passed; reviewed production release/handoff pending |
-| 10 | Safe uninstall and reinstall | Open | Kiwix uninstall passed; archive SHA-256 unchanged; reinstall/reopen outcome unverified; core/full-appliance removal remains untested |
+| 10 | Safe uninstall and reinstall | Open | Kiwix uninstall passed; archive SHA-256 unchanged; Kiwix reinstall/reopen and subsequent independent restart passed; core/full-appliance removal remains untested |
 | 11 | LAN deployment validation | Open | Desktop setup, signed-out portal and anonymous Kiwix reading passed; guest WAN-routing-loss test passed; phone and native app onboarding pending |
 | 12 | Module authentication and simplified onboarding | Open | Native browser setup required; SSH-only initial setup remains a usability gap |
 | 13 | System requirements and clean-host acceptance | Open | Core plus four essentials installed on 4-core/4-GiB/100-GiB guest; guest WAN-loss reading passed; full resource, bare-metal and clean-machine recovery acceptance pending |
@@ -359,3 +359,35 @@ and managed snapshot actions.
 | Snapshot creation continues to display its historical “verification pending” message after a separate verification succeeds. | Show linked current snapshot and verification evidence while preserving accurate historical job outcomes. |
 
 These observations do not authorize bypassing native application security or the browser tool's policy checks. Live verification takes priority over visual redesign.
+
+
+### Selected-module backup acceptance — 2026-11-25
+
+| Live journey | Observed result | Remaining limit |
+|---|---|---|
+| Homebox consistent snapshot | Managed snapshot succeeded; portal subsequently showed running | Native account and representative user inventory have not been created |
+| Homebox isolated restore | verify-snapshot succeeded: isolated restore and application data check passed | Not a live data replacement or native recovered-startup test |
+| Grocy consistent snapshot | Managed snapshot succeeded; portal subsequently showed running | Native onboarding and representative stock/recipe data remain untested |
+| Grocy isolated restore | verify-snapshot succeeded: isolated restore and application data check passed | Not a live data replacement or native recovered-startup test |
+| Recovery inventory | Job #19 succeeded; output reported 5 of 13 reviewed sources present | Not atomic or a complete recovery package; no off-server copy claimed |
+| Backup health | Connected filesystem repository; five latest captures have recorded verification: core, worker, Homebox, Grocy and Kiwix content; zero need review, zero schedules due | Repository remains the local same-disk test destination; optional absent sources are not verified |
+| Kiwix restart | Independent restart job succeeded; a fresh reader tab rendered the retained globalThis article from the native LAN URL | No new archive-hash comparison or physical disconnection test in this slice |
+
+The user confirmed Homebox's restore dialog. A dedicated browser tab subsequently
+allowed Grocy confirmation handling through the browser's dialog API; intermittent
+focus/click timeouts still occurred, but the exact existing jobs were inspected
+before any further submission. Do not infer a failed operation from a browser
+timeout or blindly duplicate it.
+
+Additional deferred UI issue: inventory output counts 13 reviewed sources while
+backup health counts 12 and separately lists TAK as excluded. Make the denominator
+and exclusion rules explicit, and distinguish uninstalled optional sources from
+missing protection for installed applications.
+
+Phase 3 remains 8/13 implemented. Native Homebox/Grocy onboarding is blocked by
+loopback-only initial setup instructions; browser onboarding must be resolved
+without SSH tunnels before LAN usability can pass. Physical phone/LAN,
+interrupted installer/resume, full-appliance preserving uninstall/reinstall,
+representative native application data, bare-metal/clean-machine recovery and
+reviewed production core update/handoff remain open. Production core activation
+is still gated.
