@@ -128,3 +128,5 @@ The host-only recovery_install.py utility stages validated core and worker expor
 Native replacement application data restoration uses recovery_data.py with a copied read-only filesystem repository and exact verified snapshot IDs. Startup is separate.
 
 A guided replacement recovery entry point (`recover.py restore`) coordinates native Docker image import, exact snapshot restoration, read-only Kopia reconnection and guarded startup. Explicit restricted offline activation follows native checks; full recovery acceptance remains pending.
+
+Initial source installation is staged before publishing `/opt/aftergrid`, with a host installer lock to prevent overlapping installation attempts. If Docker startup fails after publication, retain the existing directory and setup token; do not delete data or rerun a fresh install. Controlled startup resume is a subsequent development item.

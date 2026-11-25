@@ -184,3 +184,6 @@ Update closeout: corrected snapshot run 45520288017 passed regression and guided
 ### Installation readiness (next milestone)
 
 Installer audit: add read-only preflight and reject conflicting local TCP listeners, Docker published portal ports, remote Docker contexts and existing AfterGrid containers/networks/volumes before source deployment. Preserve unrelated Docker projects. Explicitly export fixed installation root. Next: interrupted-install resume, first-run and port conflict handling for selected apps, clean Debian/Ubuntu and suitable Proxmox guest acceptance. Physical host checks remain unverified.
+
+
+Installer CI repair: reconstruct from the previously passing baseline rather than editing a malformed duplicate shell block. Fresh installation now uses a nonblocking host lock and stages the complete source, token, data directories and configuration under /opt before publishing the root by same-filesystem rename. This addresses partial source publication, not failed Docker startup; explicit safe resume remains pending. Full recovery/update CI at f3b614e passed (45521056086).
