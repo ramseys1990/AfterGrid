@@ -328,3 +328,18 @@ expire unpinned snapshots, including older recovery inventories; preserve
 independent packages. A failed or uncertain policy write requires inspection,
 not automatic rollback or retry. Native UI/CLI changes by outside administrators
 are outside AfterGrid's admission guarantees.
+
+### Backup health overview
+
+The administrator backup health view reads native repository connectivity,
+durable worker job history and managed schedule state. Latest successful
+captures, latest attempted operations, verification of the exact latest
+capture and latest recorded protected capture are distinct. Submitted times
+are job creation times, not completion times. The last generated recovery
+inventory supplies historical presence and pin observations only when exact
+snapshot and job identities match. A newer capture is not marked present
+from older evidence. Refresh does not run a full native read or restore;
+generate a new inventory for current manifest presence checks and run
+verification separately. Due schedules may be deferred; no notification
+delivery or full recovery readiness is implied. Optional sources without
+snapshots are not necessarily installed. MicroTAK remains excluded.

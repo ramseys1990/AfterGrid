@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("backup-health-result").replaceChildren();$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -196,6 +196,42 @@ async function renderModules(){
       $("catalog").append(card);
     }
 }
+$("backup-health-refresh").addEventListener("click",async()=>{
+  const button=$("backup-health-refresh"),root=$("backup-health-result");
+  button.disabled=true;root.textContent="Reading recorded backup health…";
+  try{
+    const report=await api("/api/admin/backups/health");
+    if(!status?.admin)return;
+    root.replaceChildren();
+    const date=value=>Number.isFinite(value)?new Date(value*1000).toLocaleString():"not recorded";
+    const line=(parent,text)=>{const p=document.createElement("p");p.textContent=text;parent.append(p);};
+    const attempt=row=>row?row.state+" (job "+row.id+", submitted "+date(row.created)+")":"not recorded";
+    line(root,"Repository connection: "+report.repository.connection+(report.repository.storage_type?" · "+report.repository.storage_type:""));
+    line(root,"Inventory check: "+(report.inventory_job?"job "+report.inventory_job+" · "+date(report.inventory_checked_at):"not generated")+". Availability and pin observations are historical, not current.");
+    const supported=report.sources.filter(s=>s.supported);
+    const attention=supported.filter(s=>["failed","interrupted","unknown","dispatching"].includes(s.schedule.result)||[s.latest_attempt,s.latest_verification_attempt].some(a=>a&&["failed","interrupted"].includes(a.state))||s.repository_at_inventory==="unavailable");
+    const due=supported.filter(s=>s.schedule.enabled&&s.schedule.next_due<=report.observed_at);
+    line(root,supported.filter(s=>s.verified).length+" of "+supported.length+" reviewed sources have recorded verification of their latest successful capture. "+attention.length+" need review; "+due.length+" schedules due (may be deferred). Optional sources may not be installed.");
+    if(report.maintenance_active||!report.managed_execution_enabled)line(root,"Managed scheduling deferred or disabled by recovery mode.");
+    if(report.latest_retention_attempt)line(root,"Last retention operation: "+attempt(report.latest_retention_attempt));
+    for(const s of report.sources){
+      const details=document.createElement("details"),summary=document.createElement("summary");
+      summary.textContent=s.key+" — "+(!s.supported?"excluded":attention.includes(s)?"review needed":s.verified?"verification recorded":s.snapshot_job?"not verified":"no recorded snapshot");
+      details.append(summary);root.append(details);
+      if(!s.supported){line(details,"MicroTAK data recovery excluded.");continue;}
+      line(details,"Latest successful snapshot: "+(s.snapshot_job?"job "+s.snapshot_job+" · submitted "+date(s.captured_at):"none recorded"));
+      line(details,"Latest snapshot attempt: "+attempt(s.latest_attempt));
+      line(details,"Latest verification attempt: "+attempt(s.latest_verification_attempt));
+      line(details,"Verification of latest successful snapshot: "+(s.verified?s.verification_kind+" · "+attempt(s.verified):"not recorded"));
+      line(details,"Matching inventory: "+s.repository_at_inventory+"; pin "+(s.pin_at_inventory===true?"observed":s.pin_at_inventory===false?"not present":"not checked"));
+      if(s.latest_protected_capture){const p=s.latest_protected_capture;line(details,"Latest protected capture: job "+p.job+" · "+date(p.created)+"; verification "+attempt(p.verification)+"; pin at inventory "+(p.pin_at_inventory===true?"observed":p.pin_at_inventory===false?"not present":"not checked"));}
+      else line(details,"No successful protected capture recorded.");
+      line(details,"Schedule: "+s.schedule.status+(s.schedule.enabled?" · "+s.schedule.interval+" · next eligible "+date(s.schedule.next_due):"")+(s.schedule.result?" · "+s.schedule.phase+" "+s.schedule.result:""));
+    }
+    line(root,"Generate a fresh recovery inventory below to recheck the exact latest snapshot IDs in Kopia. Keep an independent portable package.");
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
 $("kopia-status-check").addEventListener("click",async()=>{
   const button=$("kopia-status-check"),create=$("kopia-initialize"),root=$("kopia-repository-result");
   button.disabled=true;create.disabled=true;root.textContent="Checking native Kopia…";

@@ -795,6 +795,62 @@ def recovery_manifest_records():
             records.append(record)
     return records
 
+def backup_health():
+    """Sanitized recorded history, not a new repository verification."""
+    repository=kopia_status()
+    records=recovery_manifest_records()
+    try:
+        inventory=load_recovery_manifest()
+        if type(inventory.get("created")) is not int or not isinstance(inventory.get("records"),list):
+            raise ValueError("Invalid inventory")
+        checked={r["key"]:r for r in inventory["records"] if isinstance(r,dict) and isinstance(r.get("key"),str)}
+        checked_at=inventory["created"]
+        inventory_job=inventory["manifest_job"]
+    except (RuntimeError,ValueError,TypeError):
+        checked={}
+        checked_at=inventory_job=None
+    def attempt(row):
+        return {k:row[k] for k in ("id","state","created")} if row else None
+    result=[]
+    with db() as conn:
+        for key,module,action,verify,source,pattern,kind in recovery_sources():
+            record=next(r for r in records if r["key"]==key)
+            latest=conn.execute("SELECT id,state,created FROM jobs WHERE module=? AND action=? ORDER BY id DESC LIMIT 1",(module,action)).fetchone()
+            last_verify=conn.execute("SELECT id,state,created FROM jobs WHERE module=? AND action=? ORDER BY id DESC LIMIT 1",(module,verify)).fetchone()
+            matched=conn.execute("SELECT id,state,created FROM jobs WHERE id=? AND module=? AND action=?",(record["verification_job"],module,verify)).fetchone()
+            pin=conn.execute("SELECT j.id,j.log,j.created FROM jobs j JOIN protected_snapshots p ON p.job=j.id WHERE j.module=? AND j.action=? AND j.state='succeeded' ORDER BY j.id DESC LIMIT 1",(module,action)).fetchone()
+            protected=None
+            if pin:
+                match=re.search(pattern,pin["log"])
+                if match:
+                    sid=match.group(1)
+                    phrase=("Content snapshot "+sid+" verified:" if kind=="read-only" else "Snapshot "+sid+" restored;")
+                    proof=conn.execute("SELECT id,state,created FROM jobs WHERE module=? AND action=? AND state='succeeded' AND id>? AND instr(log,?)>0 ORDER BY id DESC LIMIT 1",(module,verify,pin["id"],phrase)).fetchone()
+                    protected={"job":pin["id"],"created":pin["created"],"verification":attempt(proof),
+                               "pin_at_inventory":None}
+                    evidence=checked.get(key,{})
+                    if evidence.get("snapshot_id")==sid and evidence.get("snapshot_job")==pin["id"]:
+                        protected["pin_at_inventory"]=evidence.get("aftergrid_pinned") if type(evidence.get("aftergrid_pinned")) is bool else None
+            evidence=checked.get(key,{})
+            availability="not checked"
+            pinned=None
+            if record["snapshot_id"] and evidence.get("snapshot_id")==record["snapshot_id"] and evidence.get("snapshot_job")==record["snapshot_job"]:
+                if evidence.get("repository_status") in {"present","unavailable"}:
+                    availability=evidence["repository_status"]
+                if type(evidence.get("aftergrid_pinned")) is bool:pinned=evidence["aftergrid_pinned"]
+            elif not record["snapshot_id"]:availability="no managed snapshot"
+            result.append({"key":key,"module":module,"supported":key!="application/tak",
+                           "snapshot_job":record["snapshot_job"],"captured_at":record["captured_at"],
+                           "verification_kind":record["verification"],"verified":attempt(matched),
+                           "latest_attempt":attempt(latest),"latest_verification_attempt":attempt(last_verify),
+                           "repository_at_inventory":availability,"pin_at_inventory":pinned,
+                           "latest_protected_capture":protected})
+        retention=conn.execute("SELECT id,state,created FROM jobs WHERE action='set-retention' AND module='kopia' ORDER BY id DESC LIMIT 1").fetchone()
+    return {"repository":repository,"inventory_job":inventory_job,"inventory_checked_at":checked_at,
+            "sources":result,"latest_retention_attempt":attempt(retention),
+            "live_manifest_verification":False}
+
+
 def recovery_manifest(job):
     change(job,state="running",total=3,completed=0,stage="Collect recorded recovery snapshots")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
@@ -1601,6 +1657,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except RuntimeError:return self.send_json(404,{"detail":"No confirmed recovery inventory; generate one first"})
         if self.path=="/kopia/status":
             return self.send_json(200,kopia_status())
+        if self.path=="/backup-health":
+            try:return self.send_json(200,backup_health())
+            except (RuntimeError,OSError,ValueError,TypeError,KeyError,sqlite3.Error):
+                return self.send_json(503,{"detail":"Recorded backup health unavailable"})
         if self.path=="/backup-policy/sources":
             return self.send_json(200,sorted(backup_policy_sources()))
         if self.path.startswith("/backup-policy/effective/"):

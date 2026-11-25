@@ -468,3 +468,18 @@ def test_offline_recovery_blocks_downloads_and_external_catalog(tmp_path,monkeyp
         assert c.post("/api/admin/content/downloads",json={},headers=ORIGIN).status_code==409
         assert c.post("/api/admin/modules/kiwix/update",json={},headers=ORIGIN).status_code==409
         assert c.post("/api/admin/modules/kiwix/start",json={},headers=ORIGIN).status_code==401
+
+def test_backup_health_admin_only_and_due_status(tmp_path,monkeypatch):
+    from core import app as core_app
+    from core.backup_schedule import BackupSchedules
+    monkeypatch.setattr(core_app,"call",lambda path:(200,{"sources":[{"key":"core"}],"repository":{"connection":"connected"}}))
+    (tmp_path/"setup-token").write_text("token")
+    with TestClient(create_app(tmp_path)) as c:
+        path="/api/admin/backups/health"
+        assert c.get(path).status_code==401
+        assert c.post("/api/setup",json={"username":"admin","password":"long test password","token":"token"},headers=ORIGIN).status_code==201
+        schedule=BackupSchedules(tmp_path,lambda:1)
+        schedule.configure("core",True,"daily")
+        report=c.get(path).json()
+        assert report["sources"][0]["schedule"]["status"]=="due; awaiting admission"
+        assert report["complete_recovery_certified"] is False

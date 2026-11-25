@@ -153,6 +153,12 @@ def main(fixture,exported=None):
             post_job(old,"/api/admin/backups/recovery-manifest",{"confirmed":True})
             retained=next(r for r in call(old,"/api/admin/backups/recovery-manifest")["records"] if r["key"]=="core")
             assert retained["snapshot_id"]==protected_record["snapshot_id"] and retained["aftergrid_pinned"] is True
+            health=call(old,"/api/admin/backups/health")
+            core_health=next(r for r in health["sources"] if r["key"]=="core")
+            assert health["repository"]["connection"]=="connected" and not health["complete_recovery_certified"]
+            assert core_health["snapshot_job"]==protected["id"] and core_health["verified"]
+            assert core_health["pin_at_inventory"] is True and core_health["repository_at_inventory"]=="present"
+            assert core_health["schedule"]["status"]=="disabled"
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)

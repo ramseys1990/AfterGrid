@@ -802,3 +802,33 @@ def test_retention_requires_verified_native_pin_and_exact_readback(tmp_path,monk
     worker.enqueue_retention(value)
     worker.execute(worker.jobs()[0])
     assert worker.jobs()[0]["state"]=="failed" and len(calls)==1
+
+def test_backup_health_distinguishes_history_and_matching_inventory(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    worker.init()
+    old=worker.enqueue("kopia","core-snapshot",protect=True)
+    worker.log(old,"Core database export snapshot: "+"a"*32+"; private fixture")
+    worker.change(old,state="succeeded")
+    v=worker.enqueue("kopia","core-verify-snapshot")
+    worker.log(v,"Snapshot "+"a"*32+" restored; fixture")
+    worker.change(v,state="succeeded")
+    newest=worker.enqueue("kopia","core-snapshot")
+    worker.log(newest,"Core database export snapshot: "+"b"*32+";")
+    worker.change(newest,state="succeeded")
+    failed=worker.enqueue("kopia","core-verify-snapshot")
+    worker.change(failed,state="failed")
+    monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected","storage_type":"filesystem"})
+    monkeypatch.setattr(worker,"load_recovery_manifest",lambda:{"manifest_job":99,"created":123,"records":[
+        {"key":"core","snapshot_id":"a"*32,"snapshot_job":old,"repository_status":"present","aftergrid_pinned":True}]})
+    report=worker.backup_health()
+    record=next(r for r in report["sources"] if r["key"]=="core")
+    assert record["snapshot_job"]==newest and record["verified"] is None
+    assert record["latest_verification_attempt"]["id"]==failed
+    assert record["repository_at_inventory"]=="not checked"
+    assert record["latest_protected_capture"]["verification"]["id"]==v
+    assert record["latest_protected_capture"]["pin_at_inventory"] is True
+    assert not report["live_manifest_verification"]
+    assert "private fixture" not in str(report)
+    assert not next(r for r in report["sources"] if r["key"]=="application/tak")["supported"]

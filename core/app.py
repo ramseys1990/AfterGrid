@@ -888,6 +888,39 @@ def create_app(data_dir=None):
         if code!=200:raise HTTPException(code if code in {404,503} else 502,"Native effective policy unavailable")
         return result
 
+    @api.get("/api/admin/backups/health")
+    def backup_health(request: Request):
+        require_admin(request)
+        try:
+            code,report=call("/backup-health")
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=200 or not isinstance(report,dict) or not isinstance(report.get("sources"),list):
+            raise HTTPException(503,"Recorded backup health unavailable")
+        try:
+            rows=schedules.load()
+            maintenance_active=maintenance() is not None
+        except (OSError,ValueError,TypeError):
+            raise HTTPException(409,"Schedule or maintenance state invalid; inspect host") from None
+        now=int(time.time())
+        execution_enabled=not (recovery_core_only or recovery_offline)
+        for source in report["sources"]:
+            row=rows.get(source["key"])
+            if row is None:
+                source["schedule"]={"status":"not configured"}
+                continue
+            active=row["result"] in {"dispatching","queued","running"}
+            if row["result"] in {"failed","interrupted","unknown","dispatching"} and not active:
+                label="paused; inspect result"
+            elif row["result"]=="dispatching":label="dispatch unconfirmed"
+            elif active:label="job recorded active"
+            elif not row["enabled"]:label="disabled"
+            elif not execution_enabled or maintenance_active:label="deferred by recovery or maintenance"
+            elif row["next_due"]<=now:label="due; awaiting admission"
+            else:label="scheduled"
+            source["schedule"]={**row,"status":label}
+        return {**report,"observed_at":now,"managed_execution_enabled":execution_enabled,
+                "maintenance_active":maintenance_active,"complete_recovery_certified":False}
+
     class ScheduleSelection(BaseModel):
         key: str = Field(min_length=1,max_length=80)
         interval: str = Field(min_length=1,max_length=10)
