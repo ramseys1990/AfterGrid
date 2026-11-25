@@ -2247,6 +2247,64 @@ def wait_ready(ident):
         time.sleep(2)
     raise RuntimeError("Application did not become ready; inspect logs and retry")
 
+class PublishedPortConflict(RuntimeError):
+    pass
+
+
+def requested_ports(config):
+    """Read normalized Compose ports, never infer them from the app's UI port."""
+    result=set()
+    for service in config["services"].values():
+        for entry in service.get("ports",[]):
+            if not isinstance(entry,dict):raise ValueError("Unrecognized Compose port")
+            published=str(entry.get("published",""))
+            protocol=entry.get("protocol","tcp")
+            if not published.isdecimal() or not 1<=int(published)<=65535 or protocol not in {"tcp","udp","sctp"}:
+                raise ValueError("Unsupported reviewed port publication")
+            result.add((int(published),protocol))
+    return result
+
+
+def docker_published_ports(ident,env):
+    raw=subprocess.run(["docker","ps","-q","--no-trunc"],env=env,capture_output=True,text=True,check=True,timeout=15).stdout
+    ids=raw.split()
+    if not all(re.fullmatch(r"[a-f0-9]{64}",i) for i in ids):raise ValueError("Unrecognized container identity")
+    if not ids:return set()
+    # Only select project labels and actual published ports; never return
+    # full Docker inspection data or unrelated container environment values.
+    fmt='{{json (index .Config.Labels "com.docker.compose.project")}}|{{json .NetworkSettings.Ports}}'
+    occupied=set()
+    for offset in range(0,len(ids),50):
+        raw=subprocess.run(["docker","inspect","--format",fmt,*ids[offset:offset+50]],env=env,capture_output=True,text=True,check=True,timeout=20).stdout
+        lines=raw.splitlines()
+        if len(lines)!=len(ids[offset:offset+50]):raise ValueError("Incomplete Docker port inspection")
+        for line in lines:
+            project,ports=line.split("|",1)
+            if json.loads(project)=="aftergrid-"+ident:continue
+            ports=json.loads(ports)
+            if ports is None:continue
+            for key,bindings in ports.items():
+                protocol=key.rsplit("/",1)[-1]
+                for binding in bindings or []:
+                    port=int(binding["HostPort"])
+                    if not 1<=port<=65535 or protocol not in {"tcp","udp","sctp"}:raise ValueError("Invalid published port")
+                    occupied.add((port,protocol))
+    return occupied
+
+
+def check_install_ports(ident):
+    try:
+        env=compose_env(ident,create=False)
+        raw=subprocess.run(command(ident,"config","--format","json"),env=env,capture_output=True,text=True,check=True,timeout=20).stdout
+        wanted=requested_ports(json.loads(raw))
+        conflicts=wanted & docker_published_ports(ident,env) if wanted else set()
+    except (OSError,subprocess.SubprocessError,ValueError,TypeError,KeyError,AttributeError):
+        raise RuntimeError("Cannot confirm Docker published-port availability; inspect Docker and retry") from None
+    if conflicts:
+        ports=", ".join(f"{port}/{protocol}" for port,protocol in sorted(conflicts))
+        raise PublishedPortConflict("Host port already published by another Docker workload: "+ports)
+
+
 def stages(action):
     validate = ("Validate Compose", ("config", "-q"))
     pull = ("Download images", ("pull",))
@@ -2363,6 +2421,9 @@ def execute(row):
         if ident == "routing" and action in {"install","update"}:
             steps.insert(2, ("Prepare regional routing graph", ("run", "--rm", "--no-deps", "-T", "--entrypoint", "/bin/sh", "routing", "/aftergrid/build.sh")))
         change(job, state="running", total=len(steps), completed=0)
+        if action=="install":
+            change(job,stage="Check application ports")
+            check_install_ports(ident)
         if action in {"share","unshare"}:
             if not catalog()[ident].get("lan_shareable"):
                 raise ValueError("Module does not support LAN sharing")
@@ -2402,7 +2463,7 @@ def execute(row):
             except Exception:
                 log(job,"\nCould not confirm containers stopped; inspect Docker immediately.\n")
         log(job, "\n" + str(exc) + "\n")
-        change(job, state="failed", stage="Failed; see output")
+        change(job, state="failed", stage=str(exc) if isinstance(exc,PublishedPortConflict) else "Failed; see output")
 
 def process():
     if RECOVERY_CORE_ONLY:return

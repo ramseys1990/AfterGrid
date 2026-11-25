@@ -16,6 +16,7 @@ def test_scope_and_queue(tmp_path, monkeypatch):
     with pytest.raises(sqlite3.IntegrityError):
         worker.enqueue("kiwix","stop")
     monkeypatch.setattr(worker, "run", lambda *a: None)
+    monkeypatch.setattr(worker, "check_install_ports", lambda *a: None)
     monkeypatch.setattr(worker, "wait_ready", lambda *a: None)
     worker.execute(worker.jobs()[0])
     row=worker.jobs()[0]
@@ -1307,3 +1308,48 @@ def test_installation_summary_outlives_recent_jobs(tmp_path,monkeypatch):
     with worker.db() as conn:
         job("grocy","start","running")
     assert not worker.installation_summary()["applications"][1]["retry_available"]
+
+
+def test_install_ports_reads_actual_compose_and_docker_publications(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    requested={"services":{"first":{"ports":[{"published":"8086","protocol":"tcp"},{"published":"8087"}]},
+                           "second":{"ports":[{"published":"9000","protocol":"udp"}]}}}
+    assert worker.requested_ports(requested)=={(8086,"tcp"),(8087,"tcp"),(9000,"udp")}
+    monkeypatch.setattr(worker,"compose_env",lambda *a,**kw:{})
+    monkeypatch.setattr(worker,"command",lambda ident,*args:["docker","compose",*args])
+    ids=["a"*64,"b"*64]
+    bindings={"8080/tcp":[{"HostIp":"0.0.0.0","HostPort":"8087"}],
+              "9000/tcp":[{"HostIp":"::","HostPort":"9000"}],"80/tcp":None}
+    def fake(argv,**kw):
+        if argv[1]=="compose":raw=json.dumps(requested)
+        elif argv[1]=="ps":raw="\n".join(ids)
+        else:
+            assert argv[1:3]==["inspect","--format"]
+            raw=json.dumps("aftergrid-kolibri")+"|"+json.dumps({"8086/tcp":[{"HostPort":"8086"}]})+"\n"+json.dumps("unrelated")+"|"+json.dumps(bindings)
+        return SimpleNamespace(stdout=raw)
+    monkeypatch.setattr(worker.subprocess,"run",fake)
+    with pytest.raises(worker.PublishedPortConflict,match="8087/tcp"):
+        worker.check_install_ports("kolibri")
+    bindings.pop("8080/tcp")
+    worker.check_install_ports("kolibri")
+    bindings["9000/udp"]=[{"HostPort":"9000"}]
+    with pytest.raises(worker.PublishedPortConflict,match="9000/udp"):
+        worker.check_install_ports("kolibri")
+
+
+def test_install_port_conflict_stops_before_pull(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    job=worker.enqueue("kolibri","install")
+    def conflict(ident):
+        raise worker.PublishedPortConflict("Host port already published by another Docker workload: 8087/tcp")
+    monkeypatch.setattr(worker,"check_install_ports",conflict)
+    calls=[]
+    monkeypatch.setattr(worker,"run",lambda *a:calls.append(a))
+    worker.execute(worker.jobs()[0])
+    assert not calls
+    assert worker.jobs()[0]["id"]==job and worker.jobs()[0]["state"]=="failed"
+    assert "8087/tcp" in worker.jobs()[0]["stage"]
