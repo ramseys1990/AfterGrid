@@ -721,3 +721,40 @@ def test_exact_verification_uses_requested_successful_source(tmp_path,monkeypatc
     monkeypatch.setattr(worker,"verify_snapshot",lambda *args:observed.append(args))
     worker.execute(worker.jobs()[0])
     assert observed==[(job,"core",old)]
+
+def test_native_protected_capture_preserves_manifest_identity(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"compose_env",lambda ident:{})
+    monkeypatch.setattr(worker,"command",lambda ident,*args:list(args))
+    source="/source/data/grocy"
+    manifest={"id":"a"*32,"source":{"path":source},"rootEntry":{"obj":"k"+"b"*32},
+              "stats":{"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0,
+                       "fileCount":1,"totalSize":100},"pins":[worker.RECOVERY_PIN]}
+    calls=[]
+    def run(argv,**kwargs):
+        calls.append(argv)
+        if "create" in argv:
+            assert argv[argv.index("--pin")+1]==worker.RECOVERY_PIN
+            return SimpleNamespace(stdout=json.dumps(manifest))
+        if "list" in argv:return SimpleNamespace(stdout=json.dumps([manifest]))
+        return SimpleNamespace(stdout="")
+    monkeypatch.setattr(worker.subprocess,"run",run)
+    assert worker.native_snapshot_source(source,protect=True)=="a"*32
+    assert not any("pin" in argv for argv in calls)
+    manifest["pins"]=[]
+    with pytest.raises(RuntimeError,match="protected snapshot not confirmed"):worker.native_snapshot_source(source,protect=True)
+    with pytest.raises(ValueError):worker.native_snapshot_source("/repository",protect=True)
+
+def test_protected_capture_job_is_fixed_scope(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    worker.init()
+    for module,action in (("tak","snapshot"),("kopia","core-verify-snapshot"),("grocy","stop")):
+        with pytest.raises(ValueError):worker.enqueue(module,action,protect=True)
+    job=worker.enqueue("kopia","core-snapshot",protect=True)
+    seen=[]
+    monkeypatch.setattr(worker,"core_snapshot",lambda j,protect=False:seen.append((j,protect)))
+    worker.execute(worker.jobs()[0])
+    assert seen==[(job,True)]

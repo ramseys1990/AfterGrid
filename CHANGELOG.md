@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.8.26-dev
+- Add opt-in native pin-at-creation for reviewed recovery snapshots, exact-ID native pin readback and inventory protection status. No retrospective manifest rewrites, automatic pin accumulation or retention edits. Full prior recovery CI 45513492158 passed; new native fixture pending.
 - Automatically verify scheduled snapshots by exact successful source job, record verification separately, pause on failure/uncertainty, and clean successful scheduled isolated restore directories. Add native due-schedule fixture and regression coverage. CI pending.
 - Add opt-in daily/weekly managed snapshot admission through the existing portal and worker, with maintenance/busy/native schedule guards, durable dispatch claim, no catch-up burst, pause on failure/uncertainty, admin UI and tests. No automatic verification or retention writes. CI pending.
 - Begin scheduling/retention with administrator-only read-only effective Kopia policies for reviewed sources, sanitized native scheduling and retention settings, and native fixture assertions. No scheduling or retention policy writes enabled; CI pending.

@@ -136,6 +136,14 @@ def main(fixture,exported=None):
             assert row["source_job"]<row["job"]
             assert not any("aftergrid-core-"+str(row["job"])+"-" in p.name for p in (original/"restore").iterdir())
             call(old,"/api/admin/backups/schedules",{"key":"core","interval":"daily","enabled":False,"confirmed":True})
+            # Explicit protected capture: native pin at creation and exact ID
+            # remains valid for subsequent verification and inventory lookup.
+            protected=post_job(old,"/api/admin/backups/protected-snapshot",{"key":"core","confirmed":True})
+            post_job(old,"/api/admin/backups/core/verify-snapshot",{"confirmed":True})
+            post_job(old,"/api/admin/backups/recovery-manifest",{"confirmed":True})
+            protected_record=next(r for r in call(old,"/api/admin/backups/recovery-manifest")["records"] if r["key"]=="core")
+            assert protected_record["snapshot_job"]==protected["id"]
+            assert protected_record["aftergrid_pinned"] is True and protected_record["verification"]=="isolated"
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)

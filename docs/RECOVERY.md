@@ -295,3 +295,22 @@ The disconnected gate **passed** on commit `d5d2572` in [Core checks run 4551349
 - Remaining acceptance: final full lifecycle result on the tested commit, broader application-specific native restore drills, and a physical clean installation/replacement on the intended Proxmox or bare Linux host with LAN clients and offline prerequisites.
 - Explicitly excluded: MicroTAK data recovery. No claim of all-application or simultaneous atomic recovery, no release of maintenance without native readiness inspection, and no claim of production deployment.
 - Next engineering milestone after recovery closeout: native Kopia scheduling and retention, preserving reviewed consistency boundaries and the original portable recovery package.
+
+### Explicit recovery point protection
+
+Kopia v0.23.1 supports `snapshot create --pin aftergrid-recovery`. AfterGrid
+offers this as an explicitly confirmed protected capture of a reviewed source
+(normal mode only), with native creation output and exact-ID readback checks.
+The snapshot is not automatically verified; use the existing verification
+action and generate a fresh recovery inventory. The inventory reports the
+native pin independently from verification. Routine schedules are not pinned.
+
+Do not add or remove a pin on an existing recorded manifest without reconciling
+all dependent inventory and verification evidence. Kopia's pinned version
+rewrites the manifest on such an update, potentially replacing its ID.
+AfterGrid does not expose post-capture pin edits or automatic unpinning.
+Protected snapshots consume storage and remain until deliberately managed
+in Kopia. Always retain an independent portable package; a native pin is not
+an off-server backup. Retention writes remain disabled in AfterGrid pending
+recovery-point coverage and native policy acceptance. Full representative
+recovery CI run 45513492158 passed, including the final general lifecycle smoke.

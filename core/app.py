@@ -917,6 +917,23 @@ def create_app(data_dir=None):
         try:return schedules.configure(payload.key,payload.enabled,payload.interval)
         except (OSError,ValueError,TypeError):raise HTTPException(409,"Schedule configuration unavailable; inspect host") from None
 
+    class ProtectedSnapshotSelection(BaseModel):
+        key: str = Field(min_length=1,max_length=80)
+        confirmed: bool = Field(strict=True)
+
+    @api.post("/api/admin/backups/protected-snapshot",status_code=202)
+    def protected_snapshot(payload: ProtectedSnapshotSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed or payload.key not in SCHEDULE_SOURCES:
+            raise HTTPException(409,"Confirm supported source and persistent native pin")
+        maintenance_idle()
+        module,action=SCHEDULE_SOURCES[payload.key]
+        try:code,result=call("/jobs",{"module":module,"action":action,"protect":True})
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=202:raise HTTPException(code if code in {400,409} else 502,"Protected snapshot unavailable")
+        return result
+
     class RepositoryConfirmation(BaseModel):
         confirmed: bool = Field(strict=True)
 

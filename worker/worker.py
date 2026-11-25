@@ -35,6 +35,7 @@ RECOVERY_OFFLINE = os.environ.get("AFTERGRID_RECOVERY_OFFLINE") == "1"
 OFFLINE_ACTIONS={"start","stop","restart","uninstall","share","unshare"}
 OFFLINE_BACKUP_ACTIONS={"snapshot","verify-snapshot","content-snapshot","content-verify","core-snapshot","core-verify-snapshot","worker-snapshot","worker-verify-snapshot","recovery-manifest"}
 MAX_LOG = 24000
+RECOVERY_PIN = "aftergrid-recovery"
 SECRET_LOCK = threading.Lock()
 REGISTRY_LOCK = threading.Lock()
 
@@ -224,6 +225,7 @@ def init():
             module TEXT PRIMARY KEY, shared INTEGER NOT NULL, registration_closed INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS batches (
             token TEXT PRIMARY KEY, selection TEXT NOT NULL, job_ids TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS protected_snapshots (job INTEGER PRIMARY KEY);
           CREATE TABLE IF NOT EXISTS exact_verifications (
             job INTEGER PRIMARY KEY, source_job INTEGER NOT NULL);
           CREATE UNIQUE INDEX IF NOT EXISTS one_pending_per_module
@@ -231,7 +233,7 @@ def init():
         """)
         conn.execute("UPDATE jobs SET state='interrupted',stage='Worker restarted; inspect service and retry' WHERE state='running'")
 
-def enqueue(ident, action, backup_confirmed=False, source_job=None):
+def enqueue(ident, action, backup_confirmed=False, source_job=None, protect=False):
     if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
     if RECOVERY_OFFLINE:offline_admission(ident,action)
     manifest = catalog().get(ident)
@@ -251,6 +253,9 @@ def enqueue(ident, action, backup_confirmed=False, source_job=None):
         raise ValueError("Module does not support LAN sharing")
     if action == "share" and not lan_available():
         raise ValueError("Configure a private LAN bind (local DNS is optional)")
+    if type(protect) is not bool or (protect and (RECOVERY_OFFLINE or ident=="tak" or source_job is not None
+            or action not in {"snapshot","core-snapshot","worker-snapshot","content-snapshot"})):
+        raise ValueError("Unsupported protected snapshot")
     with db() as conn:
         if source_job is not None:
             source_action={"verify-snapshot":"snapshot","core-verify-snapshot":"core-snapshot",
@@ -266,6 +271,7 @@ def enqueue(ident, action, backup_confirmed=False, source_job=None):
                               (ident, action, int(time.time())))
         if source_job is not None:
             conn.execute("INSERT INTO exact_verifications(job,source_job) VALUES (?,?)",(cursor.lastrowid,source_job))
+        if protect:conn.execute("INSERT INTO protected_snapshots(job) VALUES (?)",(cursor.lastrowid,))
         return cursor.lastrowid
 
 def enqueue_batch(token, selection):
@@ -485,10 +491,13 @@ def snapshot_statistics(value,source):
         raise RuntimeError("Kopia snapshot is empty or file count unavailable")
     return stats
 
-def native_snapshot(ident):
-    return native_snapshot_source(SNAPSHOT_SOURCES[ident])
+def native_snapshot(ident,protect=False):
+    return native_snapshot_source(SNAPSHOT_SOURCES[ident],**({"protect":True} if protect else {}))
 
-def native_snapshot_source(source,seconds=300):
+def native_snapshot_source(source,seconds=300,protect=False):
+    if type(protect) is not bool:raise ValueError("Invalid protection request")
+    if protect and source not in {v for k,v in backup_policy_sources().items() if k!="global"}:
+        raise ValueError("Unsupported protected source")
     try:
         subprocess.run(command("kopia","exec","-T","kopia","/bin/sh","-c",
             'test -d "$1" && test ! -L "$1"',"check-source",source),
@@ -497,7 +506,7 @@ def native_snapshot_source(source,seconds=300):
         raise RuntimeError("Reviewed source directory unavailable in Kopia") from None
     try:
         raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","--kill-after=10s",str(seconds)+"s",
-            "/bin/kopia","snapshot","create","--json","--json-verbose","--fail-fast","--force-disable-actions","--no-send-snapshot-report",source),
+            "/bin/kopia","snapshot","create","--json","--json-verbose","--fail-fast","--force-disable-actions","--no-send-snapshot-report",*(("--pin",RECOVERY_PIN) if protect else ()),source),
             env=compose_env("kopia"),capture_output=True,text=True,timeout=seconds+30,check=True).stdout
     except subprocess.TimeoutExpired:
         raise RuntimeError("Native Kopia snapshot timed out; inspect native tasks before retrying") from None
@@ -511,9 +520,15 @@ def native_snapshot_source(source,seconds=300):
     except (ValueError,TypeError):
         raise RuntimeError("Native Kopia snapshot JSON missing or invalid") from None
     snapshot_statistics(value,source)
+    if protect:
+        # Never pin an old manifest after capture: Kopia may change its ID.
+        # Require both creation output and an independent native readback.
+        if RECOVERY_PIN not in (value.get("pins") or []):raise RuntimeError("Native protected snapshot not confirmed")
+        _,stats=read_snapshot_manifest(source,value["id"])
+        if stats.get("aftergrid_pinned") is not True:raise RuntimeError("Native snapshot protection not confirmed")
     return value["id"]
 
-def snapshot_application(job,ident):
+def snapshot_application(job,ident,protect=False):
     if ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported snapshot application")
     change(job,state="running",total=4,completed=0,stage="Check repository and application")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
@@ -527,7 +542,7 @@ def snapshot_application(job,ident):
             log_shutdown_evidence(job,ident)
             raise RuntimeError("Clean application shutdown not confirmed; snapshot refused")
         change(job,completed=2,stage="Create native Kopia snapshot")
-        snapshot_id=native_snapshot(ident)
+        snapshot_id=native_snapshot(ident,**({"protect":True} if protect else {}))
         if not cleanly_stopped(ident):raise RuntimeError("Application state changed during snapshot; consistency unconfirmed")
         log(job,"\nNative snapshot reported complete: "+snapshot_id+"; restore not verified.\n")
         change(job,completed=3)
@@ -553,14 +568,14 @@ def content_guard(action,job):
     except (OSError,subprocess.SubprocessError):
         raise RuntimeError("Content maintenance guard refused; finish downloads or inspect interrupted maintenance") from None
 
-def content_snapshot(job,ident):
+def content_snapshot(job,ident,protect=False):
     if ident not in CONTENT_SOURCES:raise ValueError("Unsupported content source")
     change(job,state="running",total=3,completed=0,stage="Check repository and content maintenance")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
     content_guard("begin",job)
     try:
         change(job,completed=1,stage="Create native content snapshot")
-        snapshot_id=native_snapshot_source(CONTENT_SOURCES[ident],seconds=CONTENT_TIMEOUT)
+        snapshot_id=native_snapshot_source(CONTENT_SOURCES[ident],seconds=CONTENT_TIMEOUT,**({"protect":True} if protect else {}))
         log(job,"\nNative content snapshot: "+snapshot_id+"; restore not verified.\n")
         change(job,completed=2)
     finally:
@@ -679,7 +694,7 @@ def recovery_manifest_records():
         for key,module,action,verify,source,pattern,kind in recovery_sources():
             record={"key":key,"module":module,"source":source,"snapshot_id":None,"snapshot_job":None,
                     "captured_at":None,"verification":"not recorded","verification_job":None,
-                    "repository_status":"not checked","bytes":None,"file_count":None}
+                    "repository_status":"not checked","bytes":None,"file_count":None,"aftergrid_pinned":None}
             row=conn.execute("SELECT id,log,created FROM jobs WHERE module=? AND action=? AND state='succeeded' ORDER BY id DESC LIMIT 1",(module,action)).fetchone()
             if row:
                 match=re.search(pattern,row["log"])
@@ -709,7 +724,8 @@ def recovery_manifest(job):
         if item["snapshot_id"]:
             try:
                 _,stats=read_snapshot_manifest(item["source"],item["snapshot_id"])
-                item.update(repository_status="present",bytes=stats["totalSize"],file_count=stats["fileCount"])
+                item.update(repository_status="present",bytes=stats["totalSize"],file_count=stats["fileCount"],
+                            aftergrid_pinned=stats.get("aftergrid_pinned"))
             except RuntimeError:
                 item["repository_status"]="unavailable"
         else:item["repository_status"]="no managed snapshot"
@@ -718,7 +734,7 @@ def recovery_manifest(job):
             "complete_system_recovery":False,"records":records,
             "missing_artifacts":["rebuildable place indexes; review core content metadata coverage","host environment and exact release",
                                  "Docker image archive","replacement installation and disconnected acceptance"],
-            "guidance":"Independent capture points; retain exact snapshot IDs, worker envelope digest, repository and password separately. Missing snapshots can represent uninstalled apps. No automatic retention pinning."}
+            "guidance":"Independent capture points; retain exact snapshot IDs, worker envelope digest, repository and password separately. Missing snapshots can represent uninstalled apps. Explicit protected captures use native pin-at-creation; check pin status independently of verification."}
     change(job,completed=2,stage="Save private recovery inventory")
     target=STATE/"recovery-manifest.json"
     fd,tmp=tempfile.mkstemp(prefix=".recovery-manifest-",dir=STATE)
@@ -758,7 +774,7 @@ def core_container():
     except (OSError,ValueError,subprocess.SubprocessError):
         raise RuntimeError("Running AfterGrid core container unavailable") from None
 
-def core_snapshot(job):
+def core_snapshot(job,protect=False):
     change(job,state="running",total=3,completed=0,stage="Check repository and core")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
     cid=core_container()
@@ -773,7 +789,7 @@ def core_snapshot(job):
     try:
         log(job,"\nCore export includes content metadata format 1.\n")
         change(job,completed=2,stage="Snapshot core database export using Kopia")
-        snapshot_id=native_snapshot_source("/source/data/core/recovery-export")
+        snapshot_id=native_snapshot_source("/source/data/core/recovery-export",**({"protect":True} if protect else {}))
         log(job,"\nCore database export snapshot: "+snapshot_id+"; restore not verified.\n")
     finally:
         change(job,stage="Remove private core export")
@@ -832,7 +848,7 @@ def worker_recovery_payload(job):
     except (OSError,ValueError,TypeError,sqlite3.Error):
         raise RuntimeError("Private worker export failed; inspect worker state and reviewed secret files") from None
 
-def worker_snapshot(job):
+def worker_snapshot(job,protect=False):
     change(job,state="running",total=3,completed=0,stage="Check repository and export worker state")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
     payload,count=worker_recovery_payload(job)
@@ -850,7 +866,7 @@ def worker_snapshot(job):
     del payload
     try:
         change(job,completed=2,stage="Create native encrypted worker snapshot")
-        snapshot_id=native_snapshot_source(WORKER_EXPORT_SOURCE)
+        snapshot_id=native_snapshot_source(WORKER_EXPORT_SOURCE,**({"protect":True} if protect else {}))
         log(job,"\nWorker state export snapshot: "+snapshot_id+"; "+str(count)+" secret sets; restore not verified.\n")
         log(job,"Worker recovery envelope SHA-256: "+checksum+"\n")
     finally:
@@ -906,7 +922,9 @@ def read_snapshot_manifest(source,snapshot_id):
         if (not isinstance(root,str) or not re.fullmatch(r"[IZD]{0,8}[a-z]?[a-f0-9]{32,128}",root)
                 or type(stats.get("totalSize")) is not int or stats["totalSize"]<0):
             raise ValueError("Snapshot size unavailable")
-        return root,stats
+        pins=row.get("pins") or []
+        if not isinstance(pins,list) or any(not isinstance(p,str) for p in pins):raise ValueError("Invalid native pins")
+        return root,{**stats,"aftergrid_pinned":RECOVERY_PIN in pins}
     except (OSError,subprocess.SubprocessError,ValueError,KeyError,TypeError):
         raise RuntimeError("Managed snapshot missing, invalid or exceeds isolated restore limit") from None
 
@@ -1359,6 +1377,10 @@ def exact_verification_source(job):
     return row["source_job"] if row else None
 
 
+def protected_snapshot_requested(job):
+    with db() as conn:
+        return conn.execute("SELECT 1 FROM protected_snapshots WHERE job=?",(job,)).fetchone() is not None
+
 def execute(row):
     job, ident, action = row["id"], row["module"], row["action"]
     switch_attempted=False
@@ -1366,6 +1388,10 @@ def execute(row):
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
         if RECOVERY_OFFLINE:offline_admission(ident,action)
+        pin_args={}
+        if action in {"snapshot","core-snapshot","worker-snapshot","content-snapshot"} and protected_snapshot_requested(job):
+            if RECOVERY_OFFLINE or ident=="tak":raise ValueError("Protected capture unavailable")
+            pin_args={"protect":True}
         exact_args=()
         if action in {"verify-snapshot","core-verify-snapshot","worker-verify-snapshot","content-verify"}:
             exact=exact_verification_source(job)
@@ -1377,7 +1403,7 @@ def execute(row):
             recovery_manifest(job)
             return
         if action=="content-snapshot":
-            content_snapshot(job,ident)
+            content_snapshot(job,ident,**pin_args)
             return
         if action=="content-verify":
             verify_content(job,ident,*exact_args)
@@ -1388,7 +1414,7 @@ def execute(row):
             return
         if action=="worker-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
-            worker_snapshot(job)
+            worker_snapshot(job,**pin_args)
             return
         if action=="core-verify-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
@@ -1396,10 +1422,10 @@ def execute(row):
             return
         if action=="core-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
-            core_snapshot(job)
+            core_snapshot(job,**pin_args)
             return
         if action=="snapshot":
-            snapshot_application(job,ident)
+            snapshot_application(job,ident,**pin_args)
             return
         if action=="verify-snapshot":
             verify_snapshot(job,ident,*exact_args)
@@ -1544,12 +1570,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if body["action"]=="update":
                 if set(body)!={"module","action","backup_confirmed"} or body["backup_confirmed"] is not True:
                     raise ValueError("Explicit backup confirmation required")
+            elif set(body)=={"module","action","protect"}:
+                if body["protect"] is not True:raise ValueError("Explicit pin confirmation required")
             elif set(body)=={"module","action","source_job"}:
                 if type(body["source_job"]) is not int or body["source_job"]<=0:
                     raise ValueError("Invalid source job")
             elif set(body)!={"module","action"}:
                 raise ValueError("Invalid request")
-            job = enqueue(body["module"],body["action"],body.get("backup_confirmed",False),body.get("source_job"))
+            job = enqueue(body["module"],body["action"],body.get("backup_confirmed",False),body.get("source_job"),body.get("protect",False))
             self.send_json(202, {"id": job})
         except sqlite3.IntegrityError:
             self.send_json(409, {"detail": "A job is already pending for this module"})
