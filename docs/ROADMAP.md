@@ -391,3 +391,16 @@ interrupted installer/resume, full-appliance preserving uninstall/reinstall,
 representative native application data, bare-metal/clean-machine recovery and
 reviewed production core update/handoff remain open. Production core activation
 is still gated.
+
+
+### Lifecycle and recoverable content acceptance — 2026-11-25
+
+- Homebox stop and start jobs both succeeded; the application returned to running.
+- Grocy stop and start jobs both succeeded. The native effective Kopia policy read succeeded for application/grocy (latest 10, hourly 48, daily 7, weekly 4, monthly 24, annual 3). No retention policy was changed.
+- Browser removal of the JavaScript Docs ZIM moved it into Removed archives and left no active local ZIM entry. Restore returned the same named 2.5 MiB archive to indexed status. A fresh native reader tab rendered the globalThis article afterward. Permanent deletion was not used. This is recoverable local removal/restore, not Kopia file restoration or a new full-file hash comparison.
+- A temporary 390-by-844 desktop viewport rendered stacked portal application cards; measured page width was 375 CSS pixels and viewport width 390, with no horizontal page overflow at that observation. The viewport override was reset. Physical phone/LAN access and all responsive states remain unverified.
+- Resource inspection could not proceed because the existing Proxmox tab displayed an expired login session. No hypervisor or guest configuration was changed.
+
+UI follow-up: the stopped Homebox/Grocy cards expose both Start and Install, plus Stop, leaving the distinction unclear for an ordinary user. Prefer actions appropriate to current installed/running state and clear explanations where reinstall is needed. Native browser confirmation handling worked through the dedicated browser dialog API, though click/focus timeout reports still required inspecting actual job admission.
+
+Native setup remains a functional blocker: both current module READMEs still require SSH forwarding before initial LAN sharing. Do not mark module onboarding complete based on snapshot/lifecycle checks. Phase 3 remains 8/13; production core activation remains gated.
