@@ -236,17 +236,17 @@ Baseline: **8 of 13 implementation items complete**. A complete row preserves th
 |---|---|---|---|
 | 1 | Installer audit | Complete | Fresh Ubuntu 24.04 guest install passed through healthy core/worker and LAN setup page |
 | 2 | Read-only installation preflight | Complete | Passed on fresh Ubuntu 24.04 unprivileged Proxmox guest |
-| 3 | Existing Docker workload protection | Complete | Shared Docker-host acceptance pending; no unrelated workloads modified |
+| 3 | Existing Docker workload protection | Complete | Worker and four app IDs/start times unchanged during scoped test core rebuild; deliberate conflicting fixture preserved; existing shared-host coverage remains partial |
 | 4 | Interrupted installation recovery | Complete | Real failed-start/resume acceptance pending |
-| 5 | First-run setup improvements | Complete | Browser setup and account persistence pending |
-| 6 | Application selection validation | Complete | Browser selection and independent retry pending |
-| 7 | Installation progress reporting | Complete | Real application installation progress pending |
-| 8 | Application port conflict handling | Complete | Real conflict/retry acceptance pending |
+| 5 | First-run setup improvements | Complete | Administrator setup, logout/login, guest controls and portal restart/session persistence passed |
+| 6 | Application selection validation | Complete | Four-app wizard batch passed; independent retry submitted after resolved port conflict, final outcome unverified |
+| 7 | Installation progress reporting | Complete | Real per-app Compose activity and completed-stage summaries observed; failed summary persisted after refresh |
+| 8 | Application port conflict handling | Complete | Real occupied-port rejection passed before image pull; error and retry survived refresh; successful retry acceptance pending |
 | 9 | AfterGrid core updating | Open — production activation gated | Native disposable tests passed; reviewed production release/handoff pending |
-| 10 | Safe uninstall and reinstall | Open | Data-preserving removal/reinstallation pending |
-| 11 | LAN deployment validation | Open | Guest DHCP, LAN health endpoint and desktop setup page passed; native app and phone access pending |
+| 10 | Safe uninstall and reinstall | Open | Kiwix uninstall passed; archive SHA-256 unchanged; reinstall/reopen outcome unverified; core/full-appliance removal remains untested |
+| 11 | LAN deployment validation | Open | Desktop setup, signed-out portal and anonymous Kiwix reading passed; guest WAN-routing-loss test passed; phone and native app onboarding pending |
 | 12 | Module authentication and simplified onboarding | Open | Native browser setup required; SSH-only initial setup remains a usability gap |
-| 13 | System requirements and clean-host acceptance | Open | Core install passed on 4-core/4-GiB/100-GiB guest; full module/resource/disconnected acceptance pending |
+| 13 | System requirements and clean-host acceptance | Open | Core plus four essentials installed on 4-core/4-GiB/100-GiB guest; guest WAN-loss reading passed; full resource, bare-metal and clean-machine recovery acceptance pending |
 
 The test guest is disposable, but acceptance must preserve installed application data unless a distinct test explicitly calls for deletion. Keep all infrastructure changes confined to the designated guest. Retain native application permissions, use Compose and Kopia, and defer the major UI overhaul until the approach to 1.0.
 
@@ -274,9 +274,67 @@ and default route. No unrelated guests or workloads were modified.
   worker 52.25 MiB. This is a point-in-time core-only observation, not a
   system requirement or full appliance resource certification.
 
-Administrator creation awaits the operator's password entry. Login/logout,
-account persistence after restart, first-run application selection, real
-installation progress/retries, native application setup, phone access,
-data-preserving reinstall and physically disconnected acceptance remain
-unverified. Production core update activation remains gated; the checklist
-stays at **8/13**. No new architecture or authentication service was added.
+At the initial evidence capture, administrator creation and subsequent journeys
+were still pending. The follow-up evidence below supersedes that pending status
+where an observed result is recorded. Production core update activation remains
+gated; the implementation checklist stays at **8/13**. No new architecture or
+authentication service was added.
+
+
+### Live acceptance follow-up — 2026-11-25
+
+The initial installation used `ebbb27c`. Two observed downloader failures were
+fixed and tested on the same designated disposable guest:
+
+- `04213f8`: official Metalink metadata requests now use Kiwix's canonical
+  `lb.download.kiwix.org` endpoint directly. Arbitrary metadata redirects remain
+  blocked. The previous origin returned HTTP 301.
+- `c71095a`: native curl retries an unavailable selected mirror once using
+  `mirror.download.kiwix.org`, with the same resume, HTTPS, size and SHA-256
+  checks. The selected mirror's TLS connection timed out; the official primary
+  was reachable from the same container.
+
+The downloader suite passed **7 tests on Linux** in a disposable container.
+A Windows run could not execute the hard-link filesystem tests under its
+sandbox; it is not evidence of a complete Windows pass. Only the portal was
+rebuilt for the test patches using normal Compose. Exact worker and four
+application container IDs and native start times were unchanged during the
+second rebuild. This development patch exercise does not release production
+core update activation.
+
+| Journey | Observed result | Remaining limit |
+|---|---|---|
+| Administrator setup | Operator created the account; logout/login passed | Other native application accounts are separate |
+| Guest access | Signed-out portal remained accessible and administrative controls were hidden | Broader authorization/CSRF testing remains separate |
+| Core restart | Administrator session and unsubmitted first-run wizard survived a portal-only restart; worker stayed up | Interrupted initial installation/resume not yet exercised on this guest |
+| Optional selection | Selected Kiwix, Homebox, Grocy and Kopia in the browser; four separate install jobs completed | Other optional modules were not installed |
+| Install feedback | Actual Compose stages/output and persistent per-app summaries observed | No synthetic transfer progress or configuration-readiness claim |
+| Live content | Official catalog search found a 2.5 MiB JavaScript Docs archive; normal queue downloaded, verified and indexed it after the fixes | Technical sample content, not an accepted preparedness collection |
+| Native reader | Kiwix reloaded the library and served the archive and a local article without a login | Other native applications still require their supported setup |
+| Kopia initialization | New encrypted repository initialized at the configured local test destination | This same-disk test repository is not independent disaster protection |
+| Core recovery | Consistent core export/snapshot and isolated restore/application-data check succeeded | No live database replacement or full clean-machine recovery performed |
+| Worker recovery | Worker-state snapshot and isolated export/database/generated-secret verification succeeded | No claim that every application dataset has been restored |
+| Scoped WAN loss | Temporary unreachable IPv4 routes blocked default/public-DNS egress; no IPv6 default existed. External hostname and public-IP requests from core failed; LAN health, signed-out portal and a newly opened/reloaded Kiwix article worked | Browser device itself retained WAN; no physical whole-LAN disconnection or off-server browser-request block was tested |
+| Network cleanup | Removed both temporary routes; private guest routing and an official HTTPS metadata request worked again | No unrelated host or guest networking changed |
+| Kiwix removal | Browser uninstall completed; native Docker listing showed the reader removed; the retained ZIM matched its pre-removal SHA-256 | Reinstallation and post-reinstall reader opening remain unverified |
+| Port conflict | A labeled disposable fixture occupied the reader port. Install job #11 failed at application-port preflight with the exact 8081/tcp conflict; error and individual retry persisted after browser refresh | No unrelated workload was stopped to resolve the conflict |
+| Conflict cleanup/retry | Verified the fixture label and stopped only that auto-removing test fixture; accepted “Retry Kiwix using existing data?” | Retry completion was not observed before local browser controls became unavailable |
+
+No new native account was provisioned for Homebox or Grocy, no authentication
+was bypassed, and no SSH tunnel was introduced. Their current loopback-only
+first-run instructions are a confirmed appliance-usability gap. Kopia's native
+UI also remained local-only; the browser portal drove its tested repository
+and managed snapshot actions.
+
+#### Resume the live run
+
+1. Inspect the submitted Kiwix retry; do not submit a duplicate blindly. Confirm
+   successful installation, unchanged retained archive hash/library and
+   anonymous article reopening. Keep core and other application data intact.
+2. Exercise the selected application's backup/restore and data-preserving
+   lifecycle, then address Homebox/Grocy native browser onboarding using
+   supported upstream setup and permissions. Record any credential-entry
+   handoff separately from product usability.
+3. Continue interrupted-install/resume, full appliance preservation,
+   phone/desktop LAN, remaining selected-module and clean-machine acceptance.
+   Keep production core activation gated and defer the major UI overhaul.
