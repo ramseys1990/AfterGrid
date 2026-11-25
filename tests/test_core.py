@@ -572,3 +572,27 @@ def test_reader_update_health_admin_only(tmp_path,monkeypatch):
         result=c.get(path).json()
         assert result["preferences"]["preference"] is None
         assert result["activation_required"] and not result["automatic_execution_enabled"]
+
+
+def test_first_run_lost_response_preserves_selection_across_restart(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def fake_call(path,payload=None):
+        assert path=="/jobs/batch"
+        calls.append(payload)
+        if len(calls)==1:raise core_app.WorkerUnavailable("lost response")
+        return 202,{"ids":[11,12]}
+    monkeypatch.setattr(core_app,"call",fake_call)
+    (tmp_path/"setup-token").write_text("test-token")
+    creds={"username":"admin","password":"long test password"}
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.post("/api/setup",json={**creds,"token":"test-token"},headers=ORIGIN).status_code==201
+        assert client.post("/api/admin/first-run",json={"modules":["kiwix","grocy"]},headers=ORIGIN).status_code==503
+        assert client.get("/api/status").json()["submitted_selection"]==["grocy","kiwix"]
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.get("/api/status").json()["submitted_selection"] is None
+        assert client.post("/api/login",json=creds,headers=ORIGIN).status_code==200
+        assert client.post("/api/admin/first-run",json={"modules":[]},headers=ORIGIN).status_code==409
+        assert client.post("/api/admin/first-run",json={"modules":["grocy","kiwix"]},headers=ORIGIN).json()=={"ids":[11,12]}
+        assert calls[0]["token"]==calls[1]["token"]
+        assert not client.get("/api/status").json()["selection_pending"]

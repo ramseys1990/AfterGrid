@@ -498,10 +498,11 @@ def create_app(data_dir=None):
     def status(request: Request):
         with db() as con:
             row = con.execute("SELECT server_name FROM admin WHERE id=1").fetchone()
-            first = con.execute("SELECT result FROM first_run WHERE id=1").fetchone()
+            first = con.execute("SELECT selection,result FROM first_run WHERE id=1").fetchone()
         is_admin = admin_session(request)
         return {"setup_required": row is None, "admin": is_admin,
                 "selection_pending": bool(is_admin and first["result"] is None),
+                "submitted_selection": json.loads(first["selection"]) if is_admin and first["result"] is None and first["selection"] is not None else None,
                 "server_name": row["server_name"] if row else "AfterGrid",
                 "version": api.version, "recovery_core_only": recovery_core_only, "recovery_offline": recovery_offline,
                 "recovery_maintenance": maintenance_path.exists() or maintenance_path.is_symlink()}
@@ -790,24 +791,37 @@ def create_app(data_dir=None):
         if len(set(selected)) != len(selected) or any(not re.fullmatch(r"[a-z][a-z0-9-]{0,39}",i) for i in selected):
             raise HTTPException(400, "Invalid module selection")
         canonical = json.dumps(sorted(selected))
+        # Commit the selection BEFORE the socket request. An accepted batch
+        # with a lost response must never be replaced by a different selection.
         with db() as con:
             con.execute("BEGIN IMMEDIATE")
             saved = con.execute("SELECT * FROM first_run WHERE id=1").fetchone()
+            if saved["selection"] is not None and saved["selection"] != canonical:
+                raise HTTPException(409, "Initial selection already submitted; retry that selection or use the catalog after it completes")
             if saved["result"] is not None:
-                if saved["selection"] != canonical:
-                    raise HTTPException(409, "Initial selection already saved; use the application catalog")
                 return json.loads(saved["result"])
-            if selected:
-                try:
-                    code, result = call("/jobs/batch", {"token":saved["token"],"modules":selected})
-                except WorkerUnavailable:
-                    raise HTTPException(503, "Module manager unavailable; retry the same selection")
-                if code != 202:
-                    raise HTTPException(code if code in {400,409} else 502, result.get("detail","Module manager request failed"))
-            else:
-                result = {"ids":[]}
-            con.execute("UPDATE first_run SET selection=?,result=? WHERE id=1", (canonical,json.dumps(result)))
-            return result
+            con.execute("UPDATE first_run SET selection=? WHERE id=1", (canonical,))
+        if selected:
+            try:
+                code, result = call("/jobs/batch", {"token":saved["token"],"modules":selected})
+            except WorkerUnavailable:
+                raise HTTPException(503, "Submission unconfirmed; retry the saved selection")
+            if code != 202:
+                # The worker checks token replay before catalog admission. An
+                # explicit 400 therefore confirms this batch was not accepted.
+                if code==400:
+                    with db() as con:
+                        con.execute("UPDATE first_run SET selection=NULL WHERE id=1 AND result IS NULL AND selection=?",(canonical,))
+                raise HTTPException(code if code in {400,409} else 502, result.get("detail","Module manager request failed"))
+            if (not isinstance(result,dict) or not isinstance(result.get("ids"),list)
+                or len(result["ids"])!=len(selected) or any(type(i) is not int or i<=0 for i in result["ids"])
+                or len(set(result["ids"]))!=len(selected)):
+                raise HTTPException(502,"Submission unconfirmed; retry the saved selection")
+        else:
+            result = {"ids":[]}
+        with db() as con:
+            con.execute("UPDATE first_run SET result=? WHERE id=1 AND selection=?",(json.dumps(result),canonical))
+        return result
 
     @api.get("/api/admin/jobs")
     def list_jobs(request: Request):

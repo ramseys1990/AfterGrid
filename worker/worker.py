@@ -351,17 +351,11 @@ def enqueue(ident, action, backup_confirmed=False, source_job=None, protect=Fals
 def enqueue_batch(token, selection):
     if RECOVERY_OFFLINE:raise ValueError("Offline recovery disables new installations")
     if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
-    manifests = catalog()
     if (not isinstance(token,str) or not re.fullmatch(r"[a-f0-9]{48}",token)
             or not isinstance(selection,list) or not 1 <= len(selection) <= 12
-            or not all(isinstance(i,str) and i in manifests for i in selection)
+            or not all(isinstance(i,str) and re.fullmatch(r"[a-z][a-z0-9-]{0,39}",i) for i in selection)
             or len(set(selection)) != len(selection)):
         raise ValueError("Invalid module selection")
-    # Shared module dependencies are not implemented yet. Fail closed rather
-    # than silently start a future dependent module out of order.
-    if any(manifests[i].get("dependencies") for i in selection):
-        raise ValueError("Selected module requires dependency support")
-    for ident in selection:kiwix_lifecycle_admission(ident,"install")
     canonical = json.dumps(sorted(selection))
     with db() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -370,6 +364,11 @@ def enqueue_batch(token, selection):
             if previous["selection"] != canonical:
                 raise sqlite3.IntegrityError("Batch selection changed")
             return json.loads(previous["job_ids"])
+        manifests=catalog()
+        if any(i not in manifests for i in selection):raise ValueError("Invalid module selection")
+        if any(manifests[i].get("dependencies") for i in selection):
+            raise ValueError("Selected module requires dependency support")
+        for ident in selection:kiwix_lifecycle_admission(ident,"install")
         ids = []
         for ident in selection:
             cursor = conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES (?,'install','queued','Queued',?)",

@@ -649,8 +649,20 @@ $("preparedness-refresh").addEventListener("click",async()=>{
 });
 function renderWizard(modules){
   const root=$("wizard-options");
-  const checked=new Set([...root.querySelectorAll("input:checked")].map(i=>i.value));
+  const saved=status.submitted_selection;
+  const checked=new Set(saved||[...root.querySelectorAll("input:checked")].map(i=>i.value));
   root.replaceChildren();
+  $("essentials").disabled=!!saved||submittingWizard;
+  $("skip-wizard").disabled=!!saved||submittingWizard;
+  $("wizard-form").querySelector("button[type=submit]").textContent=saved?"Retry saved selection":"Install selected";
+  if(saved){
+    for(const id of saved){
+      const p=document.createElement("p");p.textContent=modules.find(m=>m.id===id)?.name||id;root.append(p);
+    }
+    $("wizard-message").textContent="Submission not yet confirmed. Retry this saved selection; applications already queued will not be queued twice.";
+    return;
+  }
+  $("wizard-message").textContent="";
   for(const mod of modules.filter(m=>m.installable&&m.status==="not installed"&&!pending.has(m.id))){
     const label=document.createElement("label");label.className="wizard-option";
     const input=document.createElement("input");input.type="checkbox";input.value=mod.id;input.checked=checked.has(mod.id);
@@ -668,15 +680,15 @@ async function submitWizard(modules){
   try{
     await api("/api/admin/first-run",{modules});
     await refresh();
-  }catch(e){error(e.message);}
-  finally{submittingWizard=false;for(const el of controls)el.disabled=false;}
+  }catch(e){try{await refresh();}catch(_){/* preserve original submission error */}error(e.message);}
+  finally{submittingWizard=false;for(const el of controls)el.disabled=false; $("essentials").disabled=!!status?.submitted_selection; $("skip-wizard").disabled=!!status?.submitted_selection; $("wizard-form").querySelector("button[type=submit]").disabled=false;}
 }
 $("essentials").addEventListener("click",()=>{
   for(const input of $("wizard-options").querySelectorAll("input"))input.checked=["kiwix","homebox","grocy","kopia"].includes(input.value);
 });
 $("wizard-form").addEventListener("submit",event=>{
   event.preventDefault();
-  const chosen=[...$("wizard-options").querySelectorAll("input:checked")].map(i=>i.value);
+  const chosen=status.submitted_selection||[...$("wizard-options").querySelectorAll("input:checked")].map(i=>i.value);
   if(!chosen.length){$("wizard-message").textContent="Select an application or use Skip for now.";return;}
   submitWizard(chosen);
 });
@@ -791,6 +803,10 @@ async function renderJobs(){
     const row=document.createElement("article");
     const title=document.createElement("strong");title.textContent=job.module+" · "+job.action+" · "+job.state;row.append(title);
     const stage=document.createElement("p");stage.textContent=job.stage;row.append(stage);
+    if(job.action==="install"&&["failed","interrupted"].includes(job.state)&&!pending.has(job.module)&&jobs.find(j=>j.module===job.module)?.id===job.id&&!status.recovery_core_only&&!status.recovery_offline&&!status.recovery_maintenance){
+      const retry=document.createElement("button");retry.type="button";retry.textContent="Retry this application";
+      retry.addEventListener("click",async()=>{if(!confirm("Retry installation of "+job.module+" using existing application data?"))return;retry.disabled=true;try{await api("/api/admin/modules/"+job.module+"/install",{});await renderJobs();await renderModules();}catch(e){error(e.message);retry.disabled=false;}});row.append(retry);
+    }
     if(job.total){const progress=document.createElement("progress");progress.max=job.total;progress.value=job.completed;progress.setAttribute("aria-label","Completed installation stages");row.append(progress);}
     const details=document.createElement("details");details.dataset.job=String(job.id);details.open=open.has(String(job.id));const summary=document.createElement("summary");summary.textContent="Docker output";const pre=document.createElement("pre");pre.textContent=job.log;details.append(summary,pre);row.append(details);parent.append(row);
   }
