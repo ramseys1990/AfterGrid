@@ -1303,6 +1303,17 @@ def create_app(data_dir=None):
         if code!=202:raise HTTPException(code if code in {400,409} else 502,"Approved update preparation unavailable")
         return result
 
+    @api.post("/api/admin/modules/kiwix/guarded-update",status_code=202)
+    def queue_guarded_update(payload: UpdatePreparationSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:raise HTTPException(409,"Confirm protected backup, archived previous image and service interruption")
+        maintenance_idle()
+        try:code,result=call("/guarded-update",payload.model_dump(exclude={"confirmed"}))
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=202:raise HTTPException(code if code in {400,409} else 502,"Approved guarded update unavailable")
+        return result
+
     @api.post("/api/admin/modules/{ident}/registry-check")
     def module_registry_check(ident: str,request: Request):
         require_admin(request)

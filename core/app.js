@@ -184,7 +184,17 @@ async function renderModules(){
               }
               if(online&&r.status==="reviewed candidate confirmed"){
                 const prep=document.createElement("button");prep.type="button";prep.textContent="Prepare protected pre-update backup";
-                eligibility.append(prep);
+                const guarded=document.createElement("button");guarded.type="button";guarded.textContent="Run guarded approved update";
+                eligibility.append(prep,guarded);
+                guarded.addEventListener("click",async()=>{
+                  if(!confirm("Run the reviewed Kiwix update? A fresh pinned backup, full content verification and prior image archive must succeed first. The reader may be interrupted. Failures require inspection; automatic rollback is not enabled."))return;
+                  guarded.disabled=prep.disabled=true;
+                  try{
+                    const job=await api("/api/admin/modules/kiwix/guarded-update",{candidate:r.candidate,platform:r.platform,previous_image_id:r.installed_image_ids[0],target_image_id:r.expected_target_image_id,confirmed:true});
+                    if(status?.admin&&card.isConnected){eligibility.textContent="Guarded update job "+job.id+" queued. Check installation activity.";await renderJobs();}
+                  }catch(e){if(status?.admin&&card.isConnected)eligibility.textContent=e.message;}
+                  finally{guarded.disabled=prep.disabled=false;}
+                });
                 prep.addEventListener("click",async()=>{
                   if(!confirm("Create a new pinned Kiwix snapshot and read every file? Content operations are paused during preparation. This may take hours and consume storage. No update will be installed."))return;
                   prep.disabled=true;
@@ -199,7 +209,7 @@ async function renderModules(){
               if(!status?.admin||!card.isConnected)return;
               if(history.latest){
                 const p=document.createElement("p"),h=history.latest;
-                p.textContent="Latest preparation: job "+h.job+" · "+h.state+(h.evidence?" · protected snapshot "+h.evidence.snapshot_id+" · exact content read passed"+(h.evidence.previous_image_archive?" · previous image archive recorded":"")+"; no update performed":"");
+                p.textContent="Latest "+(h.action||"preparation")+": job "+h.job+" · "+h.state+(h.evidence?" · protected snapshot "+h.evidence.snapshot_id+" · exact content read passed"+(h.evidence.previous_image_archive?" · previous image archive recorded":"")+(h.state==="succeeded"&&h.evidence.update_performed?" · target identity and catalog verified":h.evidence.recreation_attempted?" · recreation attempted; inspect outcome":" · no recreation recorded"):"");
                 eligibility.append(p);
               }
             }catch(e){if(status?.admin&&card.isConnected)eligibility.textContent=e.message;}

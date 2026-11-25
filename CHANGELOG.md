@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.8.26-dev
+- Add administrator-triggered guarded Kiwix update with fresh verified protected content, prior image archive, exact pulled and resulting image checks, durable mutation evidence and native catalog sample comparison. No approved candidate, unattended execution or automatic rollback yet. CI pending.
 - Preserve previous Kiwix image by exact ID in a bounded private native Docker archive, with checksum/config identity verification, deduplication and preparation evidence. Add disposable native image save/load test. CI pending.
 - Add explicit Kiwix protected pre-update preparation rehearsal using native pin-at-creation and exact content verification, continuous content guard, previous image identity and historical evidence. No image pull/update or reusable authorization. CI pending.
 - Begin backup-aware update pilot with administrator-only read-only Kiwix eligibility, explicitly reviewed digest-pinned transition and platform identities, and optional registry confirmation. No approved candidate or automatic execution enabled. CI pending.

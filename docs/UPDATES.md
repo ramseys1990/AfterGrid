@@ -124,3 +124,20 @@ included in the current worker recovery export. Preserve important
 portable packages separately. The disposable native fixture checks actual
 save and load without deleting any image. Positive approved-transition
 acceptance remains outstanding.
+
+### Administrator-triggered guarded update
+
+A separate confirmed Kiwix action now repeats the entire preparation under
+one content guard, persists pre-update recovery evidence, rechecks registry
+and local identity, pulls only the reviewed digest-pinned Compose target,
+and refuses recreation unless the pulled image config ID is exactly the
+approved target. It records the recreation boundary durably before Compose
+up (no pull/build), checks actual reader readiness and installed image ID,
+and compares a bounded nonempty native catalog entry-ID sample before and
+after. This is a catalog check, not full article retrieval or schema
+migration acceptance. Failure/interruption retains prior archive and pin
+evidence and blocks another guarded update; no automatic rollback or retry
+yet. Existing manual update semantics remain separate. The repository
+candidate is still null, so the production action cannot execute until a
+reviewed transition is supplied. Positive native transition acceptance,
+explicit recovery handling and scheduling are subsequent gates.

@@ -973,3 +973,40 @@ def test_previous_image_archive_validation_and_reuse(tmp_path,monkeypatch):
     with pytest.raises(RuntimeError,match="Existing previous image archive invalid"):worker.preserve_previous_image(image)
     assert len(calls)==2
     with pytest.raises(ValueError):worker.preserve_previous_image("latest")
+
+
+def test_guarded_compose_update_records_boundary_and_checks_target(tmp_path,monkeypatch):
+    from pathlib import Path
+    import json
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    worker.init()
+    old="sha256:"+"a"*64
+    new="sha256:"+"b"*64
+    target="ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"c"*64
+    request={"candidate":target,"platform":"linux/amd64","previous_image_id":old,"target_image_id":new}
+    monkeypatch.setattr(worker,"approved_update_candidate",lambda ident:{"image":target,"platforms":{"linux/amd64":{"from":[old],"to":new}}})
+    job=worker.enqueue_update_preparation(request,guarded=True)
+    seen=[]
+    monkeypatch.setattr(worker,"kiwix_catalog_sample",lambda:["fixture"])
+    monkeypatch.setattr(worker,"check_preparation_identity",lambda j,e,online:{"local_target_image_id":new})
+    monkeypatch.setattr(worker,"wait_ready",lambda ident:seen.append("ready"))
+    monkeypatch.setattr(worker,"version_report",lambda ident:{"services":[{"service":"kiwix","configured_image":target,"installed_image_ids":[new]}]})
+    def run(j,ident,*args):
+        seen.append(args[0])
+        if args[0]=="up":
+            assert worker.latest_update_preparation()["evidence"]["recreation_attempted"] is True
+            assert "--pull" in args and "never" in args and "--no-build" in args
+    monkeypatch.setattr(worker,"run",run)
+    evidence={"snapshot_id":"d"*32,"update_performed":False}
+    worker.guarded_compose_update(job,request,evidence)
+    assert seen==["config","pull","up","ready"]
+    assert evidence["update_performed"] and evidence["catalog_sample_matched"] and evidence["result_image_id"]==new
+    seen.clear()
+    monkeypatch.setattr(worker,"check_preparation_identity",lambda j,e,online:{"local_target_image_id":old})
+    with pytest.raises(RuntimeError,match="Pulled image ID"):worker.guarded_compose_update(job,request,{})
+    assert seen==["config","pull"]
+    worker.change(job,state="failed")
+    with pytest.raises(ValueError,match="Unresolved update"):worker.enqueue_update_preparation(request,guarded=True)

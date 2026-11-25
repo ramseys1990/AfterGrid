@@ -20,6 +20,7 @@ import time
 import tempfile
 import urllib.request
 import urllib.error
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -1537,7 +1538,7 @@ def update_eligibility(ident,online=False,own_job=None):
         with db() as conn:
             if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') AND id!=? LIMIT 1",(own_job or 0,)).fetchone():
                 result["blockers"].append("Worker jobs active")
-            last=conn.execute("SELECT state FROM jobs WHERE module=? AND action IN ('update','guarded-update') ORDER BY id DESC LIMIT 1",(ident,)).fetchone()
+            last=conn.execute("SELECT state FROM jobs WHERE module=? AND action IN ('update','guarded-update') AND id!=? ORDER BY id DESC LIMIT 1",(ident,own_job or 0)).fetchone()
             if last and last["state"] in {"failed","interrupted"}:result["blockers"].append("Unresolved previous update outcome")
         if kopia_status()["connection"]!="connected":result["blockers"].append("Connect Kopia repository first")
         if result["blockers"]:
@@ -1573,7 +1574,7 @@ def validate_update_preparation(value):
     return value
 
 
-def enqueue_update_preparation(value):
+def enqueue_update_preparation(value,guarded=False):
     if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE or "kiwix" not in catalog():raise ValueError("Update preparation unavailable")
     value=validate_update_preparation(value)
     candidate=approved_update_candidate("kiwix")
@@ -1585,7 +1586,10 @@ def enqueue_update_preparation(value):
         conn.execute("BEGIN IMMEDIATE")
         if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone():
             raise sqlite3.IntegrityError("Worker busy")
-        row=conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix','prepare-update','queued','Queued',?)",(int(time.time()),))
+        if guarded:
+            prior=conn.execute("SELECT state FROM jobs WHERE module='kiwix' AND action IN ('update','guarded-update') ORDER BY id DESC LIMIT 1").fetchone()
+            if prior and prior["state"] in {"failed","interrupted"}:raise ValueError("Unresolved update outcome")
+        row=conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix',?,'queued','Queued',?)",("guarded-update" if guarded else "prepare-update",int(time.time())))
         conn.execute("INSERT INTO update_preparations(job,request) VALUES (?,?)",(row.lastrowid,json.dumps(value,sort_keys=True)))
         return row.lastrowid
 
@@ -1712,14 +1716,67 @@ def preserve_previous_image(image_id):
         raise RuntimeError("Previous image preservation failed; inspect storage and Docker before retry") from None
 
 
-def prepare_update(job):
-    """Standalone rehearsal/evidence only; never an authorization to update later."""
+def kiwix_catalog_sample():
+    """Bounded native reader probe; no arbitrary URLs, redirects or proxy."""
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),KopiaNoRedirect())
+    try:
+        with opener.open("http://aftergrid-kiwix:8080/catalog/v2/entries",timeout=10) as response:
+            if response.status!=200:raise ValueError("Catalog unavailable")
+            raw=response.read(2*1024*1024+1)
+        if len(raw)>2*1024*1024 or b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
+            raise ValueError("Invalid catalog")
+        root=ET.fromstring(raw)
+        ns="{http://www.w3.org/2005/Atom}"
+        if root.tag!=ns+"feed":raise ValueError("Invalid reader feed")
+        ids=sorted(entry.findtext(ns+"id","") for entry in root.findall(ns+"entry"))
+        if not ids or len(ids)>1000 or len(set(ids))!=len(ids) or any(not s or len(s)>512 for s in ids):
+            raise ValueError("Expected nonempty unique catalog sample")
+        return ids
+    except (OSError,ValueError,ET.ParseError):
+        raise RuntimeError("Kiwix native catalog sample unavailable or empty") from None
+
+
+def guarded_compose_update(job,expected,evidence):
+    """Run only the reviewed Compose target under the caller's content guard."""
+    sample=kiwix_catalog_sample()
+    change(job,completed=5,stage="Pull reviewed digest-pinned image")
+    check_preparation_identity(job,expected,True)
+    run(job,"kiwix","config","-q")
+    run(job,"kiwix","pull")
+    result=check_preparation_identity(job,expected,False)
+    if result.get("local_target_image_id")!=expected["target_image_id"]:
+        raise RuntimeError("Pulled image ID does not match reviewed target; no recreation")
+    # Persist verified pre-update evidence and the mutation boundary before
+    # recreation. Failed/interrupted jobs retain it for operator recovery.
+    evidence.update(catalog_sample_before=len(sample),catalog_sample_sha256=hashlib.sha256(json.dumps(sample).encode()).hexdigest(),
+                    recreation_attempted=True)
+    with db() as conn:
+        conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
+    change(job,completed=6,stage="Recreate reviewed Kiwix service")
+    run(job,"kiwix","up","-d","--wait","--wait-timeout","90","--pull","never","--no-build")
+    change(job,completed=7,stage="Verify target image and reader catalog")
+    wait_ready("kiwix")
+    local=version_report("kiwix")
+    services=local["services"]
+    if (len(services)!=1 or services[0]["service"]!="kiwix"
+        or services[0]["configured_image"]!=expected["candidate"]
+        or services[0]["installed_image_ids"]!=[expected["target_image_id"]]):
+        raise RuntimeError("Updated container image identity not confirmed")
+    if kiwix_catalog_sample()!=sample:
+        raise RuntimeError("Updated reader catalog sample differs; inspect preserved recovery evidence")
+    evidence.update(update_performed=True,result_image_id=expected["target_image_id"],catalog_sample_matched=True,
+                    post_update_checked_at=int(time.time()))
+    log(job,"\nReviewed target image and native catalog sample confirmed. Full article retrieval and rollback acceptance remain separate.\n")
+
+
+def prepare_update(job,guarded=False):
+    """Capture new recovery evidence; optionally execute one guarded reader update."""
     if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE:raise ValueError("Update preparation unavailable")
     with db() as conn:
         row=conn.execute("SELECT request FROM update_preparations WHERE job=?",(job,)).fetchone()
     if not row:raise ValueError("Reviewed transition request missing")
     expected=validate_update_preparation(json.loads(row["request"]))
-    change(job,state="running",total=6,completed=0,stage="Recheck approved transition and registry")
+    change(job,state="running",total=9 if guarded else 6,completed=0,stage="Recheck approved transition and registry")
     check_preparation_identity(job,expected,True)
     source=CONTENT_SOURCES["kiwix"]
     policy=native_policy_summary("content/kiwix")["policy"]
@@ -1745,21 +1802,28 @@ def prepare_update(job):
         evidence={**expected,"snapshot_id":sid,"file_objects_read":count,"checked_at":int(time.time()),
                   "pin_confirmed":True,"verification":"read-only","previous_image_archive":archive,
                   "update_performed":False,"reusable_authorization":False}
-        change(job,completed=5,stage="Release content maintenance")
+        if guarded:
+            # Save the recovery evidence before any pull. A failed update must
+            # never imply success or discard a verified prior image archive.
+            evidence["recreation_attempted"]=False
+            with db() as conn:
+                conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
+            guarded_compose_update(job,expected,evidence)
+        change(job,completed=8 if guarded else 5,stage="Release content maintenance")
     finally:
         content_guard("end",job)
     with db() as conn:
         conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
-    log(job,"\nPrevious image archived: "+expected["previous_image_id"]+"; preparation only, no pull or update. Repeat backup and verification inside future guarded update.\n")
-    change(job,completed=6,state="succeeded",stage="Protected preparation and previous image archive verified; no update performed")
+    log(job,"\nPrevious image archived: "+expected["previous_image_id"]+("; guarded update verified.\n" if guarded else "; preparation only, no pull or update. Repeat backup and verification inside future guarded update.\n"))
+    change(job,completed=9 if guarded else 6,state="succeeded",stage="Guarded reader update verified" if guarded else "Protected preparation and previous image archive verified; no update performed")
 
 
 def latest_update_preparation():
     with db() as conn:
-        row=conn.execute("SELECT j.id,j.state,j.created,p.evidence FROM jobs j JOIN update_preparations p ON p.job=j.id ORDER BY j.id DESC LIMIT 1").fetchone()
+        row=conn.execute("SELECT j.id,j.state,j.action,j.created,p.evidence FROM jobs j JOIN update_preparations p ON p.job=j.id ORDER BY j.id DESC LIMIT 1").fetchone()
     if not row:return None
-    return {"job":row["id"],"state":row["state"],"created":row["created"],
-            "evidence":json.loads(row["evidence"]) if row["state"]=="succeeded" and row["evidence"] else None}
+    return {"job":row["id"],"state":row["state"],"action":row["action"],"created":row["created"],
+            "evidence":json.loads(row["evidence"]) if row["evidence"] and (row["state"]=="succeeded" or row["action"]=="guarded-update") else None}
 
 
 def ready(ident):
@@ -1828,9 +1892,9 @@ def execute(row):
     job, ident, action = row["id"], row["module"], row["action"]
     switch_attempted=False
     try:
-        if action=="prepare-update":
+        if action in {"prepare-update","guarded-update"}:
             if ident!="kiwix" or ident not in catalog():raise ValueError("Unsupported update preparation")
-            prepare_update(job)
+            prepare_update(job,guarded=action=="guarded-update")
             return
         if action=="set-retention":
             if ident!="kopia" or ident not in catalog():raise ValueError("Unsupported retention job")
@@ -2010,15 +2074,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if RECOVERY_CORE_ONLY:
             return self.send_json(409,{"detail":"Core-only recovery disables module actions"})
-        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation"}:
+        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation", "/guarded-update"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
-            if self.path=="/update-preparation":
-                return self.send_json(202,{"id":enqueue_update_preparation(body)})
+            if self.path in {"/update-preparation","/guarded-update"}:
+                return self.send_json(202,{"id":enqueue_update_preparation(body,guarded=self.path=="/guarded-update")})
             if self.path=="/update-eligibility":
                 if not isinstance(body,dict) or set(body)!={"module"} or body["module"]!="kiwix":
                     raise ValueError("Unsupported update pilot")

@@ -523,3 +523,23 @@ def test_update_preparation_requires_admin_and_explicit_confirmation(tmp_path,mo
         assert c.post(path,json={**payload,"confirmed":False},headers=ORIGIN).status_code==409
         assert c.post(path,json=payload,headers=ORIGIN).json()=={"id":9}
         assert calls[-1]==("/update-preparation",{k:v for k,v in payload.items() if k!="confirmed"})
+
+
+def test_guarded_update_endpoint_requires_confirmation(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def call(path,payload=None,**kwargs):
+        calls.append((path,payload))
+        if path=="/jobs":return 200,[]
+        return 202,{"id":10}
+    monkeypatch.setattr(core_app,"call",call)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/modules/kiwix/guarded-update"
+    payload={"candidate":"ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"c"*64,"platform":"linux/amd64",
+             "previous_image_id":"sha256:"+"a"*64,"target_image_id":"sha256:"+"b"*64,"confirmed":True}
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.post(path,json=payload,headers=ORIGIN).status_code==401
+        assert c.post("/api/setup",json={"username":"admin","password":"long test password","token":"token"},headers=ORIGIN).status_code==201
+        assert c.post(path,json={**payload,"confirmed":False},headers=ORIGIN).status_code==409
+        assert c.post(path,json=payload,headers=ORIGIN).json()=={"id":10}
+        assert calls[-1]==("/guarded-update",{k:v for k,v in payload.items() if k!="confirmed"})
