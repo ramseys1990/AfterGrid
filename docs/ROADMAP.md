@@ -230,11 +230,11 @@ The next deliverable is a manually approved, single-action core update for a rev
 
 ## Phase 3 master checklist — installation and deployment
 
-Baseline: **8 of 13 implementation items complete**. A checked row preserves the existing development checklist; it does not imply clean-host or browser acceptance. Runtime evidence is recorded separately below. Production core activation remains gated.
+Baseline: **8 of 13 implementation items complete**. A complete row preserves the existing development checklist; it does not imply clean-host or browser acceptance. Runtime evidence is recorded separately below. Production core activation remains gated.
 
 | # | Checklist item | Implementation status | Real-machine acceptance |
 |---|---|---|---|
-| 1 | Installer audit | Complete | Installer reviewed; clean-guest installation acceptance pending |
+| 1 | Installer audit | Complete | Fresh Ubuntu 24.04 guest install passed through healthy core/worker and LAN setup page |
 | 2 | Read-only installation preflight | Complete | Passed on fresh Ubuntu 24.04 unprivileged Proxmox guest |
 | 3 | Existing Docker workload protection | Complete | Shared Docker-host acceptance pending; no unrelated workloads modified |
 | 4 | Interrupted installation recovery | Complete | Real failed-start/resume acceptance pending |
@@ -244,8 +244,39 @@ Baseline: **8 of 13 implementation items complete**. A checked row preserves the
 | 8 | Application port conflict handling | Complete | Real conflict/retry acceptance pending |
 | 9 | AfterGrid core updating | Open — production activation gated | Native disposable tests passed; reviewed production release/handoff pending |
 | 10 | Safe uninstall and reinstall | Open | Data-preserving removal/reinstallation pending |
-| 11 | LAN deployment validation | Open | Guest DHCP verified; portal and native application access pending |
+| 11 | LAN deployment validation | Open | Guest DHCP, LAN health endpoint and desktop setup page passed; native app and phone access pending |
 | 12 | Module authentication and simplified onboarding | Open | Native browser setup required; SSH-only initial setup remains a usability gap |
-| 13 | System requirements and clean-host acceptance | Open | 4-core/4-GiB/100-GiB guest verified; full install, resource and disconnected acceptance pending |
+| 13 | System requirements and clean-host acceptance | Open | Core install passed on 4-core/4-GiB/100-GiB guest; full module/resource/disconnected acceptance pending |
 
 The test guest is disposable, but acceptance must preserve installed application data unless a distinct test explicitly calls for deletion. Keep all infrastructure changes confined to the designated guest. Retain native application permissions, use Compose and Kopia, and defer the major UI overhaul until the approach to 1.0.
+
+
+### Real Proxmox installation evidence — 2026-11-24
+
+Tested source: `ebbb27c0566bb085bbcff16f005b9553385a83bb`.
+Fresh Ubuntu 24.04 amd64 unprivileged guest, nesting enabled, 4 cores,
+4 GiB RAM, 512 MiB swap and 100 GiB root disk. The initial guest had
+blank static IPv4 settings; selecting DHCP provided its private LAN address
+and default route. No unrelated guests or workloads were modified.
+
+- Installed missing curl/CA prerequisites from Ubuntu packages.
+- The pinned installer `--check` passed without Docker installed and
+  automatically selected the guest's private address and port 8080.
+- Installed the pinned source using `AFTERGRID_REF`; Docker Engine
+  29.10.1 and Compose 5.8.0 came from Docker's official Ubuntu repository.
+- Both locally built core and worker started healthy. `docker ps -a`
+  showed only those two containers; no optional modules were installed.
+- The private LAN `/health` endpoint returned `{"status":"ok"}`.
+  The initial-install pending marker was absent after success.
+- The connected desktop browser rendered the first-run setup form at
+  the printed LAN URL. No SSH tunnel, custom DNS or proxy was needed.
+- One idle `docker stats --no-stream` sample reported core 38.73 MiB and
+  worker 52.25 MiB. This is a point-in-time core-only observation, not a
+  system requirement or full appliance resource certification.
+
+Administrator creation awaits the operator's password entry. Login/logout,
+account persistence after restart, first-run application selection, real
+installation progress/retries, native application setup, phone access,
+data-preserving reinstall and physically disconnected acceptance remain
+unverified. Production core update activation remains gated; the checklist
+stays at **8/13**. No new architecture or authentication service was added.
