@@ -21,6 +21,7 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import recover
 import recovery_assets as assets
+import core_update
 import recovery_install as install
 from recovery_core_smoke import BASE,call,client
 
@@ -112,6 +113,28 @@ def main(fixture,exported=None):
                 time.sleep(1)
             password=call(old,"/api/admin/kopia/credentials",{})["repository_password"]
             post_job(old,"/api/admin/kopia/initialize",{"confirmed":True})
+            # Disposable core-only outage: native applications keep running.
+            # Do not use a production update command or fabricate readiness.
+            prior=core_update.live_core(original)
+            def app_identity(ident):
+                cid=assets.docker("ps","-q","--no-trunc","--filter","label=com.docker.compose.project=aftergrid-"+ident)
+                assert len(cid)==64
+                return cid,assets.docker("container","inspect","--format","{{.State.StartedAt}}",cid)
+            applications={ident:app_identity(ident) for ident in ("kiwix","kopia")}
+            call(old,"/api/admin/recovery-maintenance/begin",{"confirmed":True,"modules":[]})
+            run(cmd,"stop","core","worker")
+            try:
+                assert reader_fixture()
+                assert applications=={ident:app_identity(ident) for ident in applications}
+                checkpoint=core_update.capture_stopped_checkpoint(original,tmp/"core-checkpoint",prior)
+                assert all(row["database_integrity"] for row in checkpoint["archives"].values())
+                assert applications=={ident:app_identity(ident) for ident in applications}
+            finally:
+                run(cmd,"up","-d","--no-build","--pull","never","--wait","--wait-timeout","120","worker","core")
+            call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True})
+            assert applications=={ident:app_identity(ident) for ident in applications}
+            assert reader_fixture()
+            print("Core-only outage checkpoint: Kiwix and Kopia containers unchanged, reader accessible, both databases validated.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")
             assert "core" in keys and "content/kiwix" in keys and "application/tak" not in keys
             for key in ("global","content/kiwix"):

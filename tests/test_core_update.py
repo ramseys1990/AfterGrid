@@ -137,3 +137,21 @@ def test_activation_gate_rejects_unclaimed_or_wrong_candidate(tmp_path,monkeypat
         update.check_activation(root,candidate)
     write("updating","a"*64)
     assert update.check_activation(root,candidate)["activation_enabled"] is False
+
+
+def test_checkpoint_archive_validates_database_and_rejects_special_files(tmp_path):
+    import sqlite3
+    db=tmp_path/"fixture.sqlite3"
+    with sqlite3.connect(db) as con:
+        con.execute("CREATE TABLE admin(id INTEGER)")
+    path=tmp_path/"checkpoint.tar"
+    with tarfile.open(path,"w") as tar:
+        tar.add(db,arcname="./core.sqlite3")
+    assert update.checkpoint_archive(path,"core.sqlite3",{"admin"})["database_integrity"]
+    with tarfile.open(path,"a") as tar:
+        link=tarfile.TarInfo("link")
+        link.type=tarfile.SYMTYPE
+        link.linkname="/etc/passwd"
+        tar.addfile(link)
+    with pytest.raises(ValueError,match="link or special"):
+        update.checkpoint_archive(path,"core.sqlite3",{"admin"})

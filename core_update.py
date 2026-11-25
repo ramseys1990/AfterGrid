@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import tarfile
@@ -443,6 +444,124 @@ def cancel_claim(root,candidate):
         finally:os.close(directory_fd)
     finally:Path(tmp).unlink(missing_ok=True)
     return {"phase":"sealed","activation_enabled":False}
+
+
+CHECKPOINT_LIMIT=32*1024**3
+
+
+def checkpoint_archive(path,database,required_tables):
+    """Validate a private stopped-state tar without extracting arbitrary paths."""
+    seen=set()
+    total=0
+    with tarfile.open(path,"r:") as tar:
+        for member in tar:
+            name=PurePosixPath(member.name)
+            if name.is_absolute() or ".." in name.parts or name in seen:
+                raise ValueError("Invalid checkpoint member path")
+            seen.add(name)
+            if not (member.isdir() or member.isfile()):
+                raise ValueError("Checkpoint contains a link or special file")
+            total+=member.size
+            if total>CHECKPOINT_LIMIT or len(seen)>100000:
+                raise ValueError("Checkpoint exceeds local safety limit")
+            if member.isfile() and name.name.endswith(("-wal","-journal")) and member.size:
+                raise ValueError("Nonempty SQLite journal in stopped checkpoint")
+        with tempfile.TemporaryDirectory(prefix="aftergrid-checkpoint-db-") as tmp:
+            db=Path(tmp)/"check.sqlite3"
+            member=next((m for m in tar.getmembers() if PurePosixPath(m.name)==PurePosixPath(database)),None)
+            if member is None or not member.isfile() or not 0<member.size<=128*1024**2:
+                raise ValueError("Required checkpoint database missing or oversized")
+            with tar.extractfile(member) as source,db.open("xb") as out:shutil.copyfileobj(source,out)
+            with sqlite3.connect(db.as_uri()+"?mode=ro&immutable=1",uri=True) as con:
+                con.execute("PRAGMA trusted_schema=OFF")
+                if con.execute("PRAGMA integrity_check").fetchmany(2)!=[("ok",)]:
+                    raise ValueError("Checkpoint database integrity check failed")
+                tables={row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if not required_tables<=tables:raise ValueError("Checkpoint database schema missing")
+    return {"sha256":assets.sha256_file(path),"bytes":path.stat().st_size,"database_integrity":True}
+
+
+def stopped_core_mounts(root,prior):
+    """Confirm exact stopped containers and expected storage, not other projects."""
+    if set(prior)!={"core","worker"}:raise ValueError("Unexpected checkpoint services")
+    for service in ("core","worker"):
+        row=prior[service]
+        cid=row["container"]
+        if not SHA.fullmatch(cid) or not IMAGE.fullmatch(row["image"]):raise ValueError("Invalid prior identity")
+        fmt='{{json .Config.Labels}}|{{json .Image}}|{{json .State.Status}}|{{json .Mounts}}'
+        labels,image,status,mounts=map(json.loads,assets.docker("container","inspect","--format",fmt,cid).split("|"))
+        if (image!=row["image"] or status!="exited"
+            or labels.get("com.docker.compose.project")!="aftergrid-core"
+            or labels.get("com.docker.compose.service")!=service
+            or labels.get("com.docker.compose.project.working_dir")!=str(root)
+            or labels.get("com.docker.compose.project.config_files")!=str(root/"compose.yaml")):
+            raise ValueError("Expected exact stopped core services")
+        target="/data" if service=="core" else "/worker-state"
+        matches=[m for m in mounts if m["Destination"]==target]
+        if len(matches)!=1:raise ValueError("Unexpected checkpoint storage")
+        mount=matches[0]
+        if service=="core":
+            if mount.get("Type")!="bind" or mount.get("Source")!=str(root/"data/core"):
+                raise ValueError("Unexpected core data bind")
+        elif mount.get("Type")!="volume" or mount.get("Name")!="aftergrid-core_worker_state":
+            raise ValueError("Unexpected worker state volume")
+    return "aftergrid-core_worker_state"
+
+
+def capture_stopped_checkpoint(root,destination,prior):
+    """Internal preparation primitive; no stop/start or activation CLI yet.
+
+    The transaction caller must hold maintenance and stop exactly the reviewed
+    core services before calling. Only their persistent state is archived.
+    """
+    root=assets.real_directory(root)
+    destination=Path(destination).absolute()
+    parent=assets.real_directory(destination.parent)
+    if destination.exists() or destination.is_symlink() or root==destination or root in destination.parents:
+        raise ValueError("Choose a new private checkpoint outside the installation")
+    assets.local_docker()
+    volume=stopped_core_mounts(root,prior)
+    # A running container sharing the state volume would invalidate consistency.
+    if assets.docker("ps","-q","--filter","volume="+volume):
+        raise ValueError("Worker state volume still in use")
+    source=assets.real_directory(root/"data/core")
+    # Refuse overlapping writable Docker binds; Kopia's read-only source is fine.
+    for cid in assets.docker("ps","-q","--no-trunc").splitlines():
+        if not SHA.fullmatch(cid):raise ValueError("Unexpected container identity")
+        for mount in json.loads(assets.docker("container","inspect","--format","{{json .Mounts}}",cid)):
+            if mount.get("Type")=="bind" and mount.get("RW"):
+                other=Path(mount["Source"])
+                if other==source or other in source.parents or source in other.parents:
+                    raise ValueError("Core state still mounted writable by a running container")
+    stage=Path(tempfile.mkdtemp(prefix=".checkpoint-",dir=parent))
+    try:
+        core=stage/"core.tar"
+        with tarfile.open(core,"w",dereference=False) as tar:
+            tar.add(source,arcname=".")
+        core.chmod(0o600)
+        worker=stage/"worker.tar"
+        # Native Docker volume backup: existing local worker image, no network,
+        # Docker socket, writable volume mount or image pull.
+        with worker.open("xb") as out:
+            os.fchmod(out.fileno(),0o600)
+            subprocess.run(["docker","run","--rm","--pull","never","--network","none",
+                            "--read-only","--cap-drop","ALL","--cap-add","DAC_OVERRIDE",
+                            "--security-opt","no-new-privileges",
+                            "--mount","type=volume,src="+volume+",dst=/state,readonly,volume-nocopy",
+                            "--entrypoint","tar",prior["worker"]["image"],"-C","/state","-cf","-","."],
+                           stdout=out,stderr=subprocess.PIPE,check=True,timeout=180)
+        reports={"core":checkpoint_archive(core,"core.sqlite3",{"admin","sessions","first_run"}),
+                 "worker":checkpoint_archive(worker,"jobs.sqlite3",{"jobs","sharing","batches"})}
+        stopped_core_mounts(root,prior)
+        report={"format":1,"previous":prior,"created":int(time.time()),"archives":reports,
+                "scope":"core and worker state only","activation_enabled":False}
+        write_private_json(stage/"checkpoint.json",report)
+        for path in (core,worker):
+            with path.open("rb") as stream:os.fsync(stream.fileno())
+        stage.rename(destination)
+        return report
+    finally:
+        if stage.exists():shutil.rmtree(stage)
 
 
 def main():
