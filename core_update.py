@@ -97,7 +97,7 @@ def check_scope(root,candidate):
             "modules_sha256":hashlib.sha256(json.dumps(tree_hashes(root/"modules"),sort_keys=True).encode()).hexdigest()}
 
 
-def live_core(root):
+def live_core(root,override=None):
     result={}
     rows=assets.docker("ps","-a","-q","--no-trunc","--filter","label=com.docker.compose.project=aftergrid-core").splitlines()
     for cid in rows:
@@ -111,7 +111,7 @@ def live_core(root):
             or state!="running" or health!="healthy"
             or labels.get("com.docker.compose.project")!="aftergrid-core"
             or labels.get("com.docker.compose.project.working_dir")!=str(root)
-            or labels.get("com.docker.compose.project.config_files")!=str(root/"compose.yaml")):
+            or labels.get("com.docker.compose.project.config_files")!=(str(root/"compose.yaml")+(","+str(override) if override else ""))):
             raise ValueError("Expected healthy normal AfterGrid core and worker")
         result[name]={"container":cid,"image":image}
     if set(result)!={"core","worker"}:raise ValueError("Both core services must be healthy")
@@ -562,6 +562,124 @@ def capture_stopped_checkpoint(root,destination,prior):
         return report
     finally:
         if stage.exists():shutil.rmtree(stage)
+
+
+def scoped_compose(root,*args,override=None):
+    cmd=["docker","compose","--project-name","aftergrid-core","--project-directory",str(root),
+         "--env-file",str(root/".env"),"--file",str(root/"compose.yaml")]
+    if override is not None:cmd.extend(("--file",str(override)))
+    env={"PATH":os.environ["PATH"],"HOME":"/root","DOCKER_HOST":"unix:///var/run/docker.sock"}
+    return subprocess.run([*cmd,*args],env=env,capture_output=True,text=True,check=True,timeout=180).stdout
+
+
+def replace_core(root,images,override=None):
+    if set(images)!={"core","worker"}:raise ValueError("Unexpected replacement services")
+    for name in ("core","worker"):
+        row=images[name]
+        image_ref_matches(row["tag"],row["image"])
+        if override is None:
+            assets.docker("image","tag",row["image"],"aftergrid-core-"+name)
+    scoped_compose(root,"up","-d","--no-deps","--force-recreate","--no-build","--pull","never",
+                   "--wait","--wait-timeout","120","worker","core",override=override)
+    actual=live_core(root,override)
+    if any(actual[name]["image"]!=images[name]["image"] for name in images):
+        raise ValueError("Replacement image identity mismatch")
+    return actual
+
+
+def unpack_checkpoint(archive,destination,expected,database,tables):
+    if checkpoint_archive(archive,database,tables)!=expected:
+        raise ValueError("Checkpoint archive changed")
+    destination.mkdir(mode=0o700)
+    # Validation rejects links, special files and traversal. Preserve numeric
+    # ownership of the private application state on this disposable host.
+    with tarfile.open(archive,"r:") as tar:
+        tar.extractall(destination,numeric_owner=True,filter="fully_trusted")
+
+
+def journal(path,value):
+    fd,tmp=tempfile.mkstemp(prefix=".update-journal-",dir=path.parent)
+    try:
+        with os.fdopen(fd,"w") as out:
+            json.dump(value,out,indent=2)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp,path)
+        directory_fd=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(directory_fd)
+        finally:os.close(directory_fd)
+    finally:Path(tmp).unlink(missing_ok=True)
+
+
+def trial_replacement(root,candidate,plan,retained,probe):
+    state={"format":1,"candidate_sha256":retained["candidate_sha256"],"phase":"stopping",
+           "previous":plan["previous"],"trial_only":True}
+    transaction=candidate/"activation.json"
+    write_private_json(transaction,state)
+    def phase(value):
+        state["phase"]=value
+        journal(transaction,state)
+    override=candidate/"trial-compose.json"
+    attempted=False
+    verified=False
+    try:
+        scoped_compose(root,"stop","core","worker")
+        phase("checkpointing")
+        checkpoint=capture_stopped_checkpoint(root,candidate/"checkpoint",plan["previous"])
+        state["checkpoint"]=checkpoint["archives"]
+        for service,database,tables in (("core","core.sqlite3",{"admin","sessions","first_run"}),
+                                        ("worker","jobs.sqlite3",{"jobs","sharing","batches"})):
+            unpack_checkpoint(candidate/"checkpoint"/(service+".tar"),candidate/(service+"-trial"),
+                              checkpoint["archives"][service],database,tables)
+        write_private_json(override,{"services":{
+            service:{"image":plan["candidate"][service]["tag"],"pull_policy":"never","volumes":[
+                {"type":"bind","source":str(candidate/(service+"-trial")),
+                 "target":"/data" if service=="core" else "/worker-state","bind":{"create_host_path":False}}]}
+            for service in ("core","worker")}})
+        config=json.loads(scoped_compose(root,"config","--format","json",override=override))
+        if set(config["services"])!={"core","worker"}:raise ValueError("Unexpected trial configuration")
+        for service,target in (("core","/data"),("worker","/worker-state")):
+            definition=config["services"][service]
+            mounts=[m for m in definition["volumes"] if m["target"]==target]
+            if (definition["image"]!=plan["candidate"][service]["tag"] or definition["pull_policy"]!="never"
+                or len(mounts)!=1 or mounts[0]["type"]!="bind" or mounts[0]["source"]!=str(candidate/(service+"-trial"))):
+                raise ValueError("Trial state isolation mismatch")
+        phase("replacing")
+        attempted=True
+        state["trial_containers"]=replace_core(root,plan["candidate"],override)
+        phase("verifying")
+        probe()
+        verified=True
+        phase("trial_verified")
+    finally:
+        # The candidate ran on copies; never restore over or delete original
+        # state. The original bind and named volume remain authoritative.
+        phase("returning_to_previous")
+        try:
+            if attempted:scoped_compose(root,"stop","core","worker",override=override)
+            state["returned_containers"]=replace_core(root,retained["previous"])
+            state["trial_verified"]=verified
+            phase("returned_to_previous")
+        except Exception:
+            phase("rollback_requires_inspection")
+            raise
+    return state
+
+
+def candidate_trial(root,candidate,probe):
+    """Disposable acceptance only. No production activation or promotion."""
+    if os.geteuid()!=0 or os.environ.get("AFTERGRID_DISPOSABLE_RECOVERY_TEST")!="1":
+        raise ValueError("Disposable core update acceptance only")
+    root=assets.real_directory(root)
+    candidate=assets.real_directory(candidate)
+    if not root.parent.name.startswith("aftergrid-guided-ci-") or root.name!="original" or candidate.parent!=root.parent:
+        raise ValueError("Expected disposable guided fixture")
+    plan=read_json_private(candidate/"candidate.json")
+    retained=verify_retention(candidate,plan)
+    check_activation(root,candidate)
+    if (candidate/"activation.json").exists() or (candidate/"activation.json").is_symlink():
+        raise ValueError("Update journal already exists")
+    return trial_replacement(root,candidate,plan,retained,probe)
 
 
 def main():

@@ -155,3 +155,55 @@ def test_checkpoint_archive_validates_database_and_rejects_special_files(tmp_pat
         tar.addfile(link)
     with pytest.raises(ValueError,match="link or special"):
         update.checkpoint_archive(path,"core.sqlite3",{"admin"})
+
+
+def test_unpack_checkpoint_rejects_changed_archive(tmp_path):
+    import sqlite3
+    db=tmp_path/"db.sqlite3"
+    with sqlite3.connect(db) as con:con.execute("CREATE TABLE admin(id INTEGER)")
+    path=tmp_path/"state.tar"
+    with tarfile.open(path,"w") as tar:tar.add(db,arcname="./core.sqlite3")
+    report=update.checkpoint_archive(path,"core.sqlite3",{"admin"})
+    update.unpack_checkpoint(path,tmp_path/"valid",report,"core.sqlite3",{"admin"})
+    assert (tmp_path/"valid/core.sqlite3").read_bytes()==db.read_bytes()
+    with pytest.raises(ValueError,match="changed"):
+        update.unpack_checkpoint(path,tmp_path/"invalid",{**report,"sha256":"0"*64},"core.sqlite3",{"admin"})
+
+
+def test_candidate_trial_not_available_without_disposable_guard(tmp_path,monkeypatch):
+    monkeypatch.delenv("AFTERGRID_DISPOSABLE_RECOVERY_TEST",raising=False)
+    with pytest.raises(ValueError,match="Disposable"):
+        update.candidate_trial(tmp_path,tmp_path,lambda:None)
+
+
+def test_trial_returns_to_previous_on_probe_failure(tmp_path,monkeypatch):
+    import json
+    images={name:{"tag":name,"image":"sha256:"+"a"*64} for name in ("core","worker")}
+    prior={"core":{"tag":"old-core"},"worker":{"tag":"old-worker"}}
+    root=tmp_path/"root"
+    root.mkdir()
+    candidate=tmp_path/"candidate"
+    candidate.mkdir()
+    calls=[]
+    def compose(root,*args,override=None):
+        calls.append(args)
+        if args[0]=="config":
+            return json.dumps({"services":{name:{"image":images[name]["tag"],"pull_policy":"never",
+              "volumes":[{"type":"bind","source":str(candidate/(name+"-trial")),
+                         "target":"/data" if name=="core" else "/worker-state"}]} for name in images}})
+        return ""
+    monkeypatch.setattr(update,"scoped_compose",compose)
+    monkeypatch.setattr(update,"capture_stopped_checkpoint",lambda *a:{"archives":{"core":{},"worker":{}}})
+    monkeypatch.setattr(update,"unpack_checkpoint",lambda *a:None)
+    def replace(root,refs,override=None):
+        calls.append(("replace",refs))
+        return refs
+    monkeypatch.setattr(update,"replace_core",replace)
+    def fail():raise RuntimeError("candidate probe failed")
+    with pytest.raises(RuntimeError,match="probe failed"):
+        update.trial_replacement(root,candidate,{"previous":prior,"candidate":images},
+                                 {"previous":prior,"candidate_sha256":"b"*64},fail)
+    report=json.loads((candidate/"activation.json").read_text())
+    assert report["phase"]=="returned_to_previous" and not report["trial_verified"]
+    assert calls[-1]==("replace",prior)
+    assert all(c==("stop","core","worker") for c in calls if c[0]=="stop")
