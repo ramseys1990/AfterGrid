@@ -229,3 +229,8 @@ Routine core updates target only the two services in `aftergrid-core`: `core` an
 ### Disposable candidate replacement trial
 
 Native acceptance exercises journaled Compose replacement using candidate references and copied core/worker state, leaving original persistent state authoritative. The trial uses only core/worker targets, no dependency recreation, no build/pull, and always returns to the previous images and original state even if the probe fails. The native fixture reuses the same image IDs under candidate tags to exercise replacement and state isolation; a unit test injects probe failure. This is acceptance-only, not production activation, promotion or crash recovery. Next: distinct reviewed release images, durable production promotion/source identity, native forced-failure acceptance, and a narrow browser update handoff.
+
+
+### Distinct candidate and failed verification acceptance
+
+The disposable fixture now creates distinct local candidate image IDs from the installed images with a harmless fixture label (not a separately released version), executes both a successful probe and an intentional native failed probe, and checks return to the exact original images and state without interrupting Kiwix/Kopia. A read-only `--trial-status CANDIDATE` reports journal phase and whether inspection is required; it never claims production activation. Candidate plans now bind core, worker and module source tree hashes plus Compose identity; changed or legacy unbound candidates must be prepared again. Source hashing does not establish a reproducible or signed build. Actual production promotion, crash reconciliation, and browser handoff remain gated.

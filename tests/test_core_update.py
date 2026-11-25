@@ -207,3 +207,27 @@ def test_trial_returns_to_previous_on_probe_failure(tmp_path,monkeypatch):
     assert report["phase"]=="returned_to_previous" and not report["trial_verified"]
     assert calls[-1]==("replace",prior)
     assert all(c==("stop","core","worker") for c in calls if c[0]=="stop")
+
+
+def test_candidate_source_digest_detects_core_changes(tmp_path):
+    for name in ("core","worker","modules"):
+        (tmp_path/name).mkdir()
+        (tmp_path/name/"fixture").write_text(name)
+    (tmp_path/"compose.yaml").write_text("services: {}")
+    digest=update.candidate_source_digest(tmp_path)
+    (tmp_path/"core/fixture").write_text("changed")
+    assert update.candidate_source_digest(tmp_path)!=digest
+
+
+def test_inspect_trial_never_claims_production_activation(tmp_path):
+    import json
+    plan={"previous":{"core":{},"worker":{}}}
+    path=tmp_path/"candidate.json"
+    path.write_text(json.dumps(plan))
+    path.chmod(0o600)
+    assert update.inspect_trial(tmp_path)["phase"]=="not_started"
+    state={"format":1,"trial_only":True,"candidate_sha256":hashlib.sha256(path.read_bytes()).hexdigest(),
+           "previous":plan["previous"],"phase":"replacing"}
+    update.write_private_json(tmp_path/"activation.json",state)
+    report=update.inspect_trial(tmp_path)
+    assert report["requires_inspection"] and not report["production_activation"]

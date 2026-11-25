@@ -135,54 +135,73 @@ def main(fixture,exported=None):
             assert applications=={ident:app_identity(ident) for ident in applications}
             assert reader_fixture()
             print("Core-only outage checkpoint: Kiwix and Kopia containers unchanged, reader accessible, both databases validated.",flush=True)
-            # Actual Compose replacement on copies of the core state. Reuse
-            # locally built images with distinct reviewed fixture tags.
-            prior=core_update.live_core(original)
-            candidate=tmp/"candidate"
-            candidate.mkdir(mode=0o700)
-            source=candidate/"source"
-            source.mkdir()
-            shutil.copy2(original/"compose.yaml",source/"compose.yaml")
-            shutil.copytree(original/"modules",source/"modules")
+            # Native replacement with distinct image IDs and actual probe failure.
+            # Create a stopped disposable container from each local prior image,
+            # then commit a harmless fixture label. No registry/build dependency.
             commit="a"*40
+            prior=core_update.live_core(original)
             candidate_images={}
             for name in ("core","worker"):
                 tag="aftergrid-candidate/"+name+":"+commit+"-123456789abc"
-                assets.docker("image","tag",prior[name]["image"],tag)
-                candidate_images[name]={"tag":tag,"image":prior[name]["image"]}
-            plan={"format":1,"root":str(original),"platform":assets.local_docker(),"commit":commit,
-                  "previous":prior,"candidate":candidate_images,"configuration":core_update.check_scope(original,source),
-                  "prepared_at":int(time.time()),"activated":False,"rollback_ready":False}
-            core_update.write_private_json(candidate/"candidate.json",plan)
-            core_update.retain_previous(original,candidate)
-            call(old,"/api/admin/recovery-maintenance/begin",{"confirmed":True,"modules":[]})
-            for key in ("core","worker"):
-                post_job(old,"/api/admin/backups/protected-snapshot",{"key":key,"confirmed":True})
-                post_job(old,"/api/admin/backups/"+key+"/verify-snapshot",{"confirmed":True})
-            post_job(old,"/api/admin/backups/recovery-manifest",{"confirmed":True})
-            sealed=call(old,"/api/admin/recovery-maintenance/seal",{"confirmed":True})
-            call(old,"/api/admin/core-update/claim",{"confirmed":True,"candidate_sha256":assets.sha256_file(candidate/"candidate.json"),
-                 "inventory_sha256":sealed["inventory_sha256"]})
-            def probe_candidate():
-                assert call(old,"/api/status")["server_name"]=="Guided recovery fixture"
-                assert call(old,"/api/households")["households"][0]["name"]=="Guided household"
-                assert call(old,"/api/admin/recovery-maintenance")["phase"]=="updating"
-                call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True},409)
+                cid=assets.docker("create","--network","none","--entrypoint","/bin/true",prior[name]["image"])
+                try:
+                    assets.docker("commit","--change","LABEL org.aftergrid.update-fixture=true",cid,tag,timeout=120)
+                finally:
+                    assets.docker("rm","-v",cid)
+                image=assets.docker("image","inspect","--format","{{.Id}}",tag)
+                assert image!=prior[name]["image"]
+                candidate_images[name]={"tag":tag,"image":image}
+            def run_trial(fail=False):
+                prior=core_update.live_core(original)
+                candidate=tmp/("candidate-failure" if fail else "candidate-success")
+                candidate.mkdir(mode=0o700)
+                source=candidate/"source"
+                source.mkdir()
+                shutil.copy2(original/"compose.yaml",source/"compose.yaml")
+                for name in ("core","worker","modules"):shutil.copytree(original/name,source/name)
+                plan={"format":1,"root":str(original),"platform":assets.local_docker(),"commit":commit,
+                      "previous":prior,"candidate":candidate_images,"configuration":core_update.check_scope(original,source),
+                      "source_sha256":core_update.candidate_source_digest(source),
+                      "prepared_at":int(time.time()),"activated":False,"rollback_ready":False}
+                core_update.write_private_json(candidate/"candidate.json",plan)
+                core_update.retain_previous(original,candidate)
+                call(old,"/api/admin/recovery-maintenance/begin",{"confirmed":True,"modules":[]})
+                for key in ("core","worker"):
+                    post_job(old,"/api/admin/backups/protected-snapshot",{"key":key,"confirmed":True})
+                    post_job(old,"/api/admin/backups/"+key+"/verify-snapshot",{"confirmed":True})
+                post_job(old,"/api/admin/backups/recovery-manifest",{"confirmed":True})
+                sealed=call(old,"/api/admin/recovery-maintenance/seal",{"confirmed":True})
+                call(old,"/api/admin/core-update/claim",{"confirmed":True,"candidate_sha256":assets.sha256_file(candidate/"candidate.json"),
+                     "inventory_sha256":sealed["inventory_sha256"]})
+                def probe_candidate():
+                    assert call(old,"/api/status")["server_name"]=="Guided recovery fixture"
+                    assert call(old,"/api/households")["households"][0]["name"]=="Guided household"
+                    assert call(old,"/api/admin/recovery-maintenance")["phase"]=="updating"
+                    call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True},409)
+                    assert applications=={ident:app_identity(ident) for ident in applications}
+                    assert reader_fixture()
+                    if fail:raise RuntimeError("Intentional native candidate probe failure")
+                if fail:
+                    try:core_update.candidate_trial(original,candidate,probe_candidate)
+                    except RuntimeError as exc:
+                        if str(exc)!="Intentional native candidate probe failure":raise
+                    else:raise AssertionError("Expected failed candidate")
+                    trial=json.loads((candidate/"activation.json").read_text())
+                else:trial=core_update.candidate_trial(original,candidate,probe_candidate)
+                assert trial["phase"]=="returned_to_previous" and trial["trial_verified"] is not fail
+                assert core_update.inspect_trial(candidate)["requires_inspection"] is False
+                assert all(trial["trial_containers"][name]["image"]==candidate_images[name]["image"] for name in prior)
+                assert all(core_update.live_core(original)[name]["image"]==prior[name]["image"] for name in prior)
                 assert applications=={ident:app_identity(ident) for ident in applications}
-                assert reader_fixture()
-            trial=core_update.candidate_trial(original,candidate,probe_candidate)
-            assert trial["phase"]=="returned_to_previous" and trial["trial_verified"]
-            assert all(trial["trial_containers"][name]["container"]!=prior[name]["container"] for name in prior)
-            assert all(core_update.live_core(original)[name]["image"]==prior[name]["image"] for name in prior)
-            assert applications=={ident:app_identity(ident) for ident in applications}
-            assert call(old,"/api/households")["households"][0]["name"]=="Guided household"
-            # Disposable fixture only; production promotion/release is separate.
-            marker=original/"data/core/recovery-maintenance.json"
-            value=json.loads(marker.read_text())
-            value["phase"]="sealed"
-            marker.write_text(json.dumps(value))
-            call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True})
-            print("Core replacement trial and exact prior-state return passed; native applications stayed online.",flush=True)
+                assert call(old,"/api/households")["households"][0]["name"]=="Guided household"
+                marker=original/"data/core/recovery-maintenance.json"
+                value=json.loads(marker.read_text())
+                value["phase"]="sealed"
+                marker.write_text(json.dumps(value))
+                call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True})
+            run_trial()
+            run_trial(fail=True)
+            print("Distinct candidate image replacement and native forced-probe-failure return passed; Kiwix and Kopia stayed online.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")
             assert "core" in keys and "content/kiwix" in keys and "application/tak" not in keys
             for key in ("global","content/kiwix"):

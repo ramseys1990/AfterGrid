@@ -131,6 +131,14 @@ def build_candidate(source, commit, suffix):
     return result
 
 
+def candidate_source_digest(source):
+    # Bind the reviewed build context to the plan, not merely the unchanged
+    # module catalog. This does not attest that a Docker build is reproducible.
+    trees={name:tree_hashes(source/name) for name in ("core","worker","modules")}
+    trees["compose_sha256"]=assets.sha256_file(source/"compose.yaml")
+    return hashlib.sha256(json.dumps(trees,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+
+
 def prepare(root, staging, archive, commit, checksum):
     root=assets.real_directory(root)
     if (root/".install-pending").exists() or (root/"recovery-install-plan.json").exists():
@@ -152,12 +160,15 @@ def prepare(root, staging, archive, commit, checksum):
         source=stage/"source"
         extract_candidate(archive,source,commit,checksum)
         before=check_scope(root,source)
+        source_digest=candidate_source_digest(source)
         candidate=build_candidate(source,commit,suffix)
+        if candidate_source_digest(source)!=source_digest:
+            raise ValueError("Candidate source changed during build")
         if live_core(root)!=prior or check_scope(root,source)!=before or assets.local_docker()!=platform:
             raise ValueError("Installed core changed during preparation")
         plan={"format":1,"commit":commit,"archive_sha256":checksum,"platform":platform,
               "root":str(root),"previous":prior,"candidate":candidate,"configuration":before,
-              "prepared_at":int(time.time()),"activated":False,"rollback_ready":False}
+              "source_sha256":source_digest,"prepared_at":int(time.time()),"activated":False,"rollback_ready":False}
         with (stage/"candidate.json").open("x") as out:json.dump(plan,out,indent=2)
         (stage/"candidate.json").chmod(0o600)
         stage.rename(destination)
@@ -253,12 +264,18 @@ def live_backup_inventory(worker_id):
     return json.loads(raw)
 
 
+def check_candidate_source(candidate,plan):
+    if plan.get("source_sha256")!=candidate_source_digest(candidate/"source"):
+        raise ValueError("Candidate source digest changed or unavailable; prepare again")
+
+
 def check_backups(root, candidate):
     root=assets.real_directory(root)
     candidate=assets.real_directory(candidate)
     plan=read_json_private(candidate/"candidate.json")
     if plan.get("format")!=1 or plan.get("root")!=str(root) or plan.get("activated") is not False:
         raise ValueError("Invalid candidate")
+    check_candidate_source(candidate,plan)
     before=live_core(root)
     if before!=plan["previous"] or check_scope(root,candidate/"source")!=plan["configuration"] or assets.local_docker()!=plan["platform"]:
         raise ValueError("Installed configuration or core identity changed")
@@ -321,6 +338,7 @@ def retain_previous(root,candidate):
         raise ValueError("Invalid candidate")
     if assets.local_docker()!=plan["platform"] or live_core(root)!=plan["previous"]:
         raise ValueError("Installed core changed")
+    check_candidate_source(candidate,plan)
     if check_scope(root,candidate/"source")!=plan["configuration"]:raise ValueError("Configuration changed")
     destination=candidate/"previous"
     if destination.exists() or destination.is_symlink():raise ValueError("Previous image retention already exists; inspect it")
@@ -666,6 +684,27 @@ def trial_replacement(root,candidate,plan,retained,probe):
     return state
 
 
+def inspect_trial(candidate):
+    """Read-only durable trial status; never infer success from a journal alone."""
+    candidate=assets.real_directory(candidate)
+    plan=read_json_private(candidate/"candidate.json")
+    path=candidate/"activation.json"
+    if not path.exists() and not path.is_symlink():
+        return {"phase":"not_started","production_activation":False}
+    state=read_json_private(path)
+    if (state.get("format")!=1 or state.get("trial_only") is not True
+        or state.get("candidate_sha256")!=assets.sha256_file(candidate/"candidate.json")
+        or state.get("previous")!=plan.get("previous")):
+        raise ValueError("Trial journal does not match candidate")
+    phase=state.get("phase")
+    if phase not in {"stopping","checkpointing","replacing","verifying","trial_verified",
+                     "returning_to_previous","returned_to_previous","rollback_requires_inspection"}:
+        raise ValueError("Invalid update journal phase")
+    return {"phase":phase,"trial_verified":state.get("trial_verified") is True,
+            "requires_inspection":phase!="returned_to_previous",
+            "production_activation":False}
+
+
 def candidate_trial(root,candidate,probe):
     """Disposable acceptance only. No production activation or promotion."""
     if os.geteuid()!=0 or os.environ.get("AFTERGRID_DISPOSABLE_RECOVERY_TEST")!="1":
@@ -692,10 +731,15 @@ def main():
     modes.add_argument("--retain-previous",type=Path,metavar="CANDIDATE",help="Retain exact prior images without activation")
     modes.add_argument("--check-activation",type=Path,metavar="CANDIDATE",help="Read-only activation prerequisites")
     modes.add_argument("--cancel-claim",type=Path,metavar="CANDIDATE",help="Cancel an unactivated update claim")
+    modes.add_argument("--trial-status",type=Path,metavar="CANDIDATE",help="Read-only disposable trial journal status")
     args=parser.parse_args()
     if os.geteuid()!=0:parser.error("Run as root on the installed Linux guest")
     if Path("/etc/pve").exists() or shutil.which("pveversion"):parser.error("Do not run on the Proxmox hypervisor")
     try:
+        if args.trial_status is not None:
+            if any((args.archive,args.commit,args.sha256)):parser.error("Use trial status separately")
+            print(json.dumps(inspect_trial(args.trial_status),indent=2))
+            return
         if args.check_activation is not None or args.cancel_claim is not None:
             if any((args.archive,args.commit,args.sha256)):parser.error("Use claim commands separately")
             result=check_activation(ROOT,args.check_activation) if args.check_activation is not None else cancel_claim(ROOT,args.cancel_claim)
