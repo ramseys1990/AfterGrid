@@ -549,9 +549,27 @@ def snapshot_statistics(value,source):
             raise RuntimeError("Kopia snapshot counter unavailable: "+key)
         if count:
             raise RuntimeError("Kopia snapshot reports "+key+"="+str(count)+"; completeness not confirmed")
-    if type(stats.get("fileCount")) is not int or stats["fileCount"]<1:
-        raise RuntimeError("Kopia snapshot is empty or file count unavailable")
-    return stats
+    # Kopia 0.23.1 generation stats count newly processed files separately
+    # from cached entries. The root directory summary is the logical snapshot
+    # inventory and the basis of native verify's expectedTotalFileCount.
+    if type(stats.get("fileCount")) is not int or stats["fileCount"]<0:
+        raise RuntimeError("Kopia snapshot generation file count unavailable")
+    summary=value["rootEntry"].get("summ")
+    if not isinstance(summary,dict):
+        raise RuntimeError("Kopia snapshot directory summary unavailable")
+    if summary.get("incomplete"):
+        raise RuntimeError("Kopia reported an incomplete directory summary")
+    for key,count in (("numFailed",summary.get("numFailed")),
+                      ("numIgnoredErrors",summary.get("numIgnoredErrors",0))):
+        # numIgnoredErrors is omitted by Kopia when zero; numFailed is mandatory.
+        if type(count) is not int or count!=0:
+            raise RuntimeError("Kopia directory summary error counter invalid: "+key)
+    count,size=summary.get("files"),summary.get("size")
+    if type(count) is not int or count<1 or type(size) is not int or size<0:
+        raise RuntimeError("Kopia snapshot is empty or directory summary unavailable")
+    if stats["fileCount"]>count:
+        raise RuntimeError("Kopia snapshot generation count exceeds directory summary")
+    return {**stats,"fileCount":count,"totalSize":size}
 
 def native_snapshot(ident,protect=False):
     return native_snapshot_source(SNAPSHOT_SOURCES[ident],**({"protect":True} if protect else {}))

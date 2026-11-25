@@ -330,7 +330,7 @@ def test_snapshot_rejects_partial_or_excluded_manifest(monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setattr(worker,"compose_env",lambda ident:{})
     monkeypatch.setattr(worker,"command",lambda ident,*args:list(args))
-    value={"id":"a"*32,"source":{"path":"/source/data/grocy"},"rootEntry":{"obj":"fixture"},
+    value={"id":"a"*32,"source":{"path":"/source/data/grocy"},"rootEntry":{"obj":"fixture","summ":{"files":1,"size":100,"numFailed":0}},
            "stats":{"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0,"fileCount":1}}
     def native(argv,**kwargs):
         if "snapshot" in argv:
@@ -381,7 +381,7 @@ def test_restore_manifest_requires_verbose_and_exact_id(monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setattr(worker,"compose_env",lambda ident:{})
     monkeypatch.setattr(worker,"command",lambda ident,*args:list(args))
-    manifest={"id":"a"*32,"source":{"path":"/source/data/grocy"},"rootEntry":{"obj":"k"+"b"*32},
+    manifest={"id":"a"*32,"source":{"path":"/source/data/grocy"},"rootEntry":{"obj":"k"+"b"*32,"summ":{"files":1,"size":100,"numFailed":0}},
               "stats":{"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0,
                        "fileCount":1,"totalSize":100}}
     def native(argv,**kwargs):
@@ -728,7 +728,7 @@ def test_native_protected_capture_preserves_manifest_identity(monkeypatch):
     monkeypatch.setattr(worker,"compose_env",lambda ident:{})
     monkeypatch.setattr(worker,"command",lambda ident,*args:list(args))
     source="/source/data/grocy"
-    manifest={"id":"a"*32,"source":{"path":source},"rootEntry":{"obj":"k"+"b"*32},
+    manifest={"id":"a"*32,"source":{"path":source},"rootEntry":{"obj":"k"+"b"*32,"summ":{"files":1,"size":100,"numFailed":0}},
               "stats":{"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0,
                        "fileCount":1,"totalSize":100},"pins":[worker.RECOVERY_PIN]}
     calls=[]
@@ -1171,3 +1171,36 @@ def test_guarded_update_failure_retains_evidence_and_releases_guard(tmp_path,mon
         assert attempted==(["transition","rollback"] if expected_rollback else ["transition"])
     with pytest.raises(ValueError,match="Unresolved update outcome"):
         worker.enqueue_update_preparation(request,guarded=True)
+
+
+def test_snapshot_statistics_uses_logical_directory_summary_for_cached_files():
+    import copy
+    source="/source/content/kiwix"
+    manifest={"id":"a"*32,"source":{"path":source},
+              "rootEntry":{"obj":"k"+"b"*32,"summ":{"files":3,"size":123,"numFailed":0}},
+              "stats":{"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,
+                       "excludedDirCount":0,"fileCount":0,"cachedFiles":3,"totalSize":123}}
+    original=copy.deepcopy(manifest)
+    assert worker.snapshot_statistics(manifest,source)["fileCount"]==3
+    assert worker.snapshot_statistics(manifest,source)["totalSize"]==123
+    assert manifest==original
+    manifest["stats"]["fileCount"]=1
+    assert worker.snapshot_statistics(manifest,source)["fileCount"]==3
+    for change in ({"files":0},{"files":True},{"size":-1},{"numFailed":1},
+                   {"numIgnoredErrors":1},{"incomplete":"checkpoint"}):
+        bad=copy.deepcopy(manifest)
+        bad["rootEntry"]["summ"].update(change)
+        with pytest.raises(RuntimeError):worker.snapshot_statistics(bad,source)
+    for key in ("files","size","numFailed"):
+        bad=copy.deepcopy(manifest)
+        del bad["rootEntry"]["summ"][key]
+        with pytest.raises(RuntimeError):worker.snapshot_statistics(bad,source)
+    bad=copy.deepcopy(manifest)
+    del bad["rootEntry"]["summ"]
+    with pytest.raises(RuntimeError):worker.snapshot_statistics(bad,source)
+    bad=copy.deepcopy(manifest)
+    bad["stats"]["fileCount"]=4
+    with pytest.raises(RuntimeError):worker.snapshot_statistics(bad,source)
+    bad=copy.deepcopy(manifest)
+    bad["stats"]["excludedFileCount"]=1
+    with pytest.raises(RuntimeError):worker.snapshot_statistics(bad,source)
