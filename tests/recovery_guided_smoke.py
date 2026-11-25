@@ -244,11 +244,17 @@ def main(fixture,exported=None):
                     run(cmd,"up","-d","--no-build","--pull","never","--force-recreate","--wait","--wait-timeout","120","worker","core")
                     probe_candidate()
                     assert all(core_update.live_core(original)[name]["image"]==candidate_images[name]["image"] for name in prior)
-                marker=original/"data/core/recovery-maintenance.json"
-                value=json.loads(marker.read_text())
-                value["phase"]="sealed"
-                marker.write_text(json.dumps(value))
+                if promote or promotion_failure:
+                    assert core_update.finish_disposable_promotion(original,candidate)["maintenance_phase"]=="sealed"
+                else:
+                    # Trial-only acceptance fixture reconciliation; no permanent
+                    # state was promoted and original storage remains authoritative.
+                    marker=original/"data/core/recovery-maintenance.json"
+                    value=json.loads(marker.read_text())
+                    value["phase"]="sealed"
+                    marker.write_text(json.dumps(value))
                 call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True})
+                assert call(old,"/api/admin/core-update/status")["phase"]=="idle"
             run_trial()
             run_trial(fail=True)
             run_trial(interrupt=True)

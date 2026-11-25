@@ -1061,6 +1061,58 @@ def promote_disposable(root,candidate,probe):
     return state
 
 
+def finish_disposable_promotion(root,candidate):
+    """Reconcile the maintenance hold only after a terminal, verified outcome."""
+    root,candidate=disposable_trial_scope(root,candidate)
+    plan=read_json_private(candidate/"candidate.json")
+    retained=verify_retention(candidate,plan)
+    path=candidate/"promotion.json"
+    state=read_json_private(path)
+    digest=retained["candidate_sha256"]
+    if (state.get("format")!=1 or state.get("disposable_only") is not True
+        or state.get("candidate_sha256")!=digest or state.get("phase") not in {"promoted","rolled_back"}):
+        raise ValueError("Verified terminal promotion outcome required")
+    if check_scope(root,candidate/"source")!=plan["configuration"] or assets.local_docker()!=plan["platform"]:
+        raise ValueError("Installed configuration changed")
+    check_candidate_source(candidate,plan)
+    source_stage=Path(state["source_stage"])
+    if source_stage!=root/(".core-update-source-"+digest[:20]):
+        raise ValueError("Unexpected source transition")
+    transition=read_json_private(source_stage/"source-transition.json")
+    promoted=state["phase"]=="promoted"
+    if transition.get("candidate_sha256")!=digest or transition.get("phase")!=("promoted" if promoted else "restored"):
+        raise ValueError("Source transition not confirmed")
+    for name in ("core","worker"):
+        if source_tree_digest(root/name)!=transition["sources"][name]["candidate" if promoted else "previous"]:
+            raise ValueError("Installed source identity mismatch")
+    actual=live_core(root)
+    expected=plan["candidate"] if promoted else retained["previous"]
+    if any(actual[name]["image"]!=expected[name]["image"] for name in expected):
+        raise ValueError("Running images do not match terminal outcome")
+    marker=root/"data/core/recovery-maintenance.json"
+    seal=read_json_private(marker,8192)
+    if seal.get("phase")!="updating" or seal.get("candidate_sha256")!=digest:
+        raise ValueError("Matching maintenance claim required")
+    # Preserve ownership because the unprivileged core must read the marker.
+    info=marker.stat()
+    value={key:seal[key] for key in ("format","modules","inventory_sha256","manifest_job")}
+    value["phase"]="sealed"
+    fd,tmp=tempfile.mkstemp(prefix=".core-update-finish-",dir=marker.parent)
+    try:
+        with os.fdopen(fd,"w") as out:
+            os.fchown(out.fileno(),info.st_uid,info.st_gid)
+            os.fchmod(out.fileno(),0o600)
+            json.dump(value,out)
+            out.flush()
+            os.fsync(out.fileno())
+        if read_json_private(marker,8192)!=seal or live_core(root)!=actual:
+            raise ValueError("Maintenance or core changed during finalization")
+        os.replace(tmp,marker)
+        sync_directory(marker.parent)
+    finally:Path(tmp).unlink(missing_ok=True)
+    return {"outcome":state["phase"],"maintenance_phase":"sealed","production_activation":False}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive",type=Path,nargs="?",help="Local reviewed GitHub commit tar.gz")

@@ -18,10 +18,10 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){$("update-health-result").replaceChildren();$("backup-health-result").replaceChildren();$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("installation-summary").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("core-update-result").textContent="Not checked.";$("update-health-result").replaceChildren();$("backup-health-result").replaceChildren();$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("installation-summary").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
-    if(status.admin){await renderJobs();await renderInstallationSummary();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
+    if(status.admin){refreshCoreUpdate().catch(()=>{});await renderJobs();await renderInstallationSummary();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
     await renderModules();
     await refreshPreparedness();
     await refreshHouseholds();
@@ -294,6 +294,21 @@ async function renderModules(){
       $("catalog").append(card);
     }
 }
+async function refreshCoreUpdate(){
+  const button=$("core-update-refresh"),result=$("core-update-result");
+  button.disabled=true;
+  try{
+    const r=await api("/api/admin/core-update/status");
+    if(!status?.admin)return;
+    result.textContent=r.host_reconciliation_required
+      ?"Update maintenance requires host reconciliation. Do not release maintenance or rebuild containers manually."
+      :r.maintenance_active
+        ?"Recovery maintenance is active. Core update activation is not released."
+        :"Core update activation is not released. Your applications remain independently managed.";
+  }catch(e){if(status?.admin)result.textContent="Core update status unavailable.";}
+  finally{button.disabled=false;}
+}
+$("core-update-refresh").addEventListener("click",refreshCoreUpdate);
 $("update-health-refresh").addEventListener("click",async()=>{
   const button=$("update-health-refresh"),root=$("update-health-result");
   button.disabled=true;root.textContent="Reading local update health…";

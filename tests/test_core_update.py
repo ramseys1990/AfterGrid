@@ -301,3 +301,9 @@ def test_restore_core_bind_retains_failed_state(tmp_path):
     failed=update.restore_core_bind(root,checkpoint,report,digest[:20],digest)
     assert (failed/"failed-marker").read_text()=="failed candidate"
     assert (live/"core.sqlite3").is_file() and not (live/"failed-marker").exists()
+
+
+def test_finish_promotion_requires_disposable_scope(tmp_path,monkeypatch):
+    monkeypatch.delenv("AFTERGRID_DISPOSABLE_RECOVERY_TEST",raising=False)
+    with pytest.raises(ValueError,match="Disposable"):
+        update.finish_disposable_promotion(tmp_path,tmp_path)

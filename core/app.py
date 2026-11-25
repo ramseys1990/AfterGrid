@@ -1104,6 +1104,17 @@ def create_app(data_dir=None):
         candidate_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
         inventory_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
+    @api.get("/api/admin/core-update/status")
+    def core_update_status(request: Request):
+        require_admin(request)
+        try:active=maintenance()
+        except (OSError,ValueError,TypeError):active={"phase":"invalid"}
+        phase=active.get("phase") if active else "idle"
+        return {"activation_enabled":False,"phase":phase,
+                "maintenance_active":bool(active),"host_reconciliation_required":phase in {"updating","invalid"},
+                "affected_services":["core","worker"],"optional_applications_stopped":False,
+                "message":"Core update activation is not released; no changes can be initiated from this dashboard."}
+
     @api.post("/api/admin/core-update/claim")
     def claim_core_update(payload: CoreUpdateClaim,request: Request):
         require_admin(request)

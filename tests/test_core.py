@@ -637,3 +637,22 @@ def test_core_update_claim_blocks_mutations_and_survives_restart(tmp_path,monkey
         assert client.get("/api/admin/recovery-maintenance").json()["phase"]=="updating"
         assert client.post("/api/login",json=creds,headers=ORIGIN).status_code==409
         assert client.post("/api/admin/modules/kiwix/install",json={},headers=ORIGIN).status_code==409
+
+
+def test_core_update_dashboard_status_is_read_only_and_admin_only(tmp_path):
+    import json
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        path="/api/admin/core-update/status"
+        assert client.get(path).status_code==401
+        assert client.post("/api/setup",json={"username":"admin","password":"long test password","token":"test-token"},headers=ORIGIN).status_code==201
+        result=client.get(path).json()
+        assert result["phase"]=="idle" and not result["activation_enabled"]
+        assert result["affected_services"]==["core","worker"]
+        marker=tmp_path/"recovery-maintenance.json"
+        marker.write_text(json.dumps({"format":1,"phase":"updating"}))
+        result=client.get(path).json()
+        assert result["host_reconciliation_required"] and not result["activation_enabled"]
+        assert client.post(path,json={},headers=ORIGIN).status_code==409
+        marker.write_text("broken")
+        assert client.get(path).json()["host_reconciliation_required"]
