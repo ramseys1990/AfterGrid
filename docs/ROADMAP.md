@@ -404,3 +404,26 @@ is still gated.
 UI follow-up: the stopped Homebox/Grocy cards expose both Start and Install, plus Stop, leaving the distinction unclear for an ordinary user. Prefer actions appropriate to current installed/running state and clear explanations where reinstall is needed. Native browser confirmation handling worked through the dedicated browser dialog API, though click/focus timeout reports still required inspecting actual job admission.
 
 Native setup remains a functional blocker: both current module READMEs still require SSH forwarding before initial LAN sharing. Do not mark module onboarding complete based on snapshot/lifecycle checks. Phase 3 remains 8/13; production core activation remains gated.
+
+
+### Real guest resource and native reinstall acceptance — 2026-11-25
+
+Proxmox sign-in was restored. All following shell checks ran in the embedded
+console of guest 115, hostname aftergrid, under /opt/aftergrid.
+
+- Point-in-time guest sample: 4096 MiB memory total, 268 MiB used, 3827 MiB available; 85 MiB swap allocated out of 512 MiB. Memory PSI some/full averages were 0.00 for 10/60/300 seconds. This does not measure current swap-in/out or certify minimum requirements. Filesystem used 3.6 GiB with approximately 90 GiB available.
+- Six selected containers were up. Docker memory samples: core 47.68 MiB, worker 96.84 MiB, Kiwix 9.188 MiB, Kopia 48.03 MiB, Grocy 28.54 MiB, Homebox 17.64 MiB. These are samples after the preceding tests, not load/peak measurements.
+- Homebox was cleanly stopped through the portal, then its native database SHA-256 recorded. Browser uninstall succeeded and removed its container. The retained database passed sha256sum -c. Browser reinstall succeeded as job #27, native container health returned healthy, loopback HTTP returned 200, and the database still matched the original stopped-state hash.
+- Grocy underwent the same stopped-baseline/uninstall/reinstall journey. Its retained native database passed the original SHA-256 check after removal and after reinstall. Native HTTP returned 302 and following the native redirect returned 200.
+- For each application's uninstall and reinstall, exact IDs and StartedAt values for the other five AfterGrid containers matched their respective pre-test baseline. No unrelated container was changed.
+- Both native databases remain initial/pre-onboarding databases. No representative inventory, user-account continuity, QR scan or browser-native account creation is claimed.
+
+Additional UI follow-up: application status can briefly show the prior state or
+“starting or unhealthy” after a completed lifecycle job. Installation summaries
+correctly describe historical attempts but need clearer separation from current
+operational state. Use job completion together with refreshed native readiness;
+do not infer current readiness from the historical installation summary alone.
+
+Core/full-appliance preservation, interrupted initial installation, phone/native
+onboarding and clean-machine recovery remain open. Phase 3 stays 8/13 and
+production core activation remains gated.
