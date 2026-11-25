@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.8.26-dev
+- Add opt-in daily/weekly managed snapshot admission through the existing portal and worker, with maintenance/busy/native schedule guards, durable dispatch claim, no catch-up burst, pause on failure/uncertainty, admin UI and tests. No automatic verification or retention writes. CI pending.
 - Begin scheduling/retention with administrator-only read-only effective Kopia policies for reviewed sources, sanitized native scheduling and retention settings, and native fixture assertions. No scheduling or retention policy writes enabled; CI pending.
 - Verified representative guided and disconnected recovery on commit d5d2572, Core checks run 45513492158: actual empty-daemon archive import with no external network, original native state, restored reader, writable working-copy backup and unchanged package. Final general lifecycle smoke pending at evidence capture; physical and broader app acceptance remain outstanding. MicroTAK data recovery excluded.
 - Add combined guarded package capture, exact-container source shutdown/restart journal and sealed handoff; leave maintenance active until readiness inspection and release. Add disconnected hosted replacement acceptance using a separate empty daemon, actual archive import and network none. Native results pending.

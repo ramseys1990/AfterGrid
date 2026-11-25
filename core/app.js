@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -235,10 +235,44 @@ $("backup-policy-check").addEventListener("click",async()=>{
     if(s.times_utc.length)line("Scheduled times (Kopia UTC): "+s.times_utc.join(", "));
     if(s.cron_count)line("Cron entries: "+s.cron_count+" (inspect native Kopia for expressions)");
     line("Retention: "+Object.entries(p.retention).map(([k,v])=>k.replace("keep","")+": "+(v===null?"not reported":v)).join(" · "));
-    line("Managed scheduling and retention changes are not enabled. Protect recovery snapshots and verify consistency before changing policies.");
+    line("Native policy changes are read-only here. Use managed schedules separately; protect recovery snapshots before changing retention.");
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{if(status?.admin){button.disabled=false;select.disabled=false;}}
 });
+async function loadBackupSchedules(){
+  const root=$("backup-schedule-result"),select=$("backup-schedule-source");
+  const previous=select.value;
+  select.disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;
+  try{
+    const result=await api("/api/admin/backups/schedules");
+    if(!status?.admin)return;
+    select.replaceChildren();root.replaceChildren();
+    for(const key of result.available){
+      const o=document.createElement("option");o.value=key;o.textContent=key;select.append(o);
+    }
+    if(result.available.includes(previous))select.value=previous;
+    const line=text=>{const p=document.createElement("p");p.textContent=text;root.append(p);};
+    for(const [key,row] of Object.entries(result.sources)){
+      line(key+": "+(row.enabled?row.interval+" · next eligible "+new Date(row.next_due*1000).toLocaleString():"disabled")+" · last snapshot "+row.result+(row.job?" (job "+row.job+")":""));
+    }
+    if(!Object.keys(result.sources).length)line("No schedules configured.");
+    if(!result.execution_enabled)line("Managed schedules are disabled in recovery mode.");
+    select.disabled=!result.execution_enabled;
+    $("backup-schedule-interval").disabled=!result.execution_enabled;
+    $("backup-schedule-enable").disabled=!result.execution_enabled;
+    $("backup-schedule-disable").disabled=!result.execution_enabled;
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+}
+$("backup-schedule-load").addEventListener("click",loadBackupSchedules);
+async function changeBackupSchedule(enabled){
+  if(!confirm(enabled?"Enable this managed snapshot schedule? Application sources may be stopped and restarted. Confirm native raw scheduling is disabled and verification will be performed separately.":"Disable future scheduled snapshots? An existing job is not cancelled."))return;
+  try{
+    await api("/api/admin/backups/schedules",{key:$("backup-schedule-source").value,interval:$("backup-schedule-interval").value,enabled,confirmed:true});
+    await loadBackupSchedules();
+  }catch(e){if(status?.admin)$("backup-schedule-result").textContent=e.message;}
+}
+$("backup-schedule-enable").addEventListener("click",()=>changeBackupSchedule(true));
+$("backup-schedule-disable").addEventListener("click",()=>changeBackupSchedule(false));
 $("kopia-initialize").addEventListener("click",async()=>{
   if(!confirm("Create a NEW encrypted repository in the configured empty /repository directory? Confirm the intended backup destination is mounted and the generated repository password is stored securely off-server. Do not use this to connect existing storage."))return;
   $("kopia-initialize").disabled=true;

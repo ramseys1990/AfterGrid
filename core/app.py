@@ -27,6 +27,7 @@ try:
     from .worker_client import call, WorkerUnavailable
     from .content import search_catalog, local_inventory, CatalogUnavailable
     from .content_backup_guard import content_admission
+    from .backup_schedule import BackupSchedules, SOURCES as SCHEDULE_SOURCES, INTERVALS as SCHEDULE_INTERVALS
     from .downloads import Downloads
     from .households import Households
     from .inventory import Inventory, InventoryError
@@ -40,6 +41,7 @@ except ImportError:
     from worker_client import call, WorkerUnavailable
     from content import search_catalog, local_inventory, CatalogUnavailable
     from content_backup_guard import content_admission
+    from backup_schedule import BackupSchedules, SOURCES as SCHEDULE_SOURCES, INTERVALS as SCHEDULE_INTERVALS
     from downloads import Downloads
     from households import Households
     from inventory import Inventory, InventoryError
@@ -101,6 +103,7 @@ def create_app(data_dir=None):
     lock = threading.Lock()
     mutation_lock = asyncio.Lock()
     maintenance_path = data / "recovery-maintenance.json"
+    schedules = BackupSchedules(data)
 
     def maintenance():
         try:
@@ -137,6 +140,22 @@ def create_app(data_dir=None):
         finally:
             con.close()
 
+    async def schedule_loop(stop):
+        # Only the existing single-process portal admits managed work.
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(),timeout=30)
+                break
+            except asyncio.TimeoutError:
+                pass
+            async with mutation_lock:
+                try:
+                    if maintenance() is None:
+                        await asyncio.to_thread(schedules.tick,call,maintenance_idle)
+                except (HTTPException,WorkerUnavailable,OSError,ValueError,TypeError,KeyError,sqlite3.Error):
+                    # Fail closed; never schedule on a corrupt file or busy host.
+                    continue
+
     @asynccontextmanager
     async def lifespan(_):
         data.mkdir(parents=True, exist_ok=True)
@@ -159,9 +178,13 @@ def create_app(data_dir=None):
         comms.init()
         maps.start()
         routing_data.start()
+        stop_schedules=asyncio.Event()
+        scheduler=None if recovery_core_only or recovery_offline else asyncio.create_task(schedule_loop(stop_schedules))
         try:
             yield
         finally:
+            stop_schedules.set()
+            if scheduler is not None:await scheduler
             places.close()
             routing_data.close()
             maps.close()
@@ -864,6 +887,35 @@ def create_app(data_dir=None):
         except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
         if code!=200:raise HTTPException(code if code in {404,503} else 502,"Native effective policy unavailable")
         return result
+
+    class ScheduleSelection(BaseModel):
+        key: str = Field(min_length=1,max_length=80)
+        interval: str = Field(min_length=1,max_length=10)
+        enabled: bool = Field(strict=True)
+        confirmed: bool = Field(strict=True)
+
+    @api.get("/api/admin/backups/schedules")
+    def managed_schedules(request: Request):
+        require_admin(request)
+        try:rows=schedules.load()
+        except (OSError,ValueError,TypeError):raise HTTPException(409,"Invalid schedule file; inspect host") from None
+        return {"sources":rows,"available":sorted(SCHEDULE_SOURCES),
+                "intervals":sorted(SCHEDULE_INTERVALS),"execution_enabled":not (recovery_core_only or recovery_offline),
+                "verification_automatic":False}
+
+    @api.post("/api/admin/backups/schedules")
+    def configure_schedule(payload: ScheduleSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed or payload.key not in SCHEDULE_SOURCES or payload.interval not in SCHEDULE_INTERVALS:
+            raise HTTPException(409,"Confirm reviewed schedule and application downtime")
+        if payload.enabled:
+            try:code,policy=call("/backup-policy/effective/"+payload.key)
+            except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+            if code!=200 or policy.get("policy",{}).get("schedule",{}).get("automatic_policy") is not False:
+                raise HTTPException(409,"Review native Kopia policy; automatic native source scheduling must be absent")
+        try:return schedules.configure(payload.key,payload.enabled,payload.interval)
+        except (OSError,ValueError,TypeError):raise HTTPException(409,"Schedule configuration unavailable; inspect host") from None
 
     class RepositoryConfirmation(BaseModel):
         confirmed: bool = Field(strict=True)
