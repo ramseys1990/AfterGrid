@@ -36,7 +36,8 @@ def test_native_restore_exact_readonly_mount(tmp_path,monkeypatch):
         result=Result()
         if "list" in argv:
             result.stdout=json.dumps([{"id":"a"*32,"source":{"path":"/source/content/maps"},
-                "rootEntry":{"obj":"a"*32},"stats":{"fileCount":1,"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0}}]).encode()
+                "rootEntry":{"obj":"a"*32,"summ":{"files":1,"size":7,"numFailed":0}},
+                "stats":{"fileCount":0,"cachedFiles":1,"totalSize":7,"errorCount":0,"ignoredErrorCount":0,"excludedFileCount":0,"excludedDirCount":0}}]).encode()
         if "restore" in argv:
             (stage/"data").mkdir()
             (stage/"data/archive").write_bytes(b"fixture")
