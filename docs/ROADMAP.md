@@ -338,3 +338,24 @@ and managed snapshot actions.
 3. Continue interrupted-install/resume, full appliance preservation,
    phone/desktop LAN, remaining selected-module and clean-machine acceptance.
    Keep production core activation gated and defer the major UI overhaul.
+
+
+### Live browser continuation — 2026-11-25
+
+- Kiwix's previously submitted retry completed as job #12; the installation summary shows four completed selected applications. Reloading the retained JavaScript Docs globalThis article rendered its content from the native LAN reader without a login. This does not repeat the archive checksum comparison or prove physical disconnection.
+- Kiwix managed content snapshot succeeded. The subsequent content-verify job succeeded with “Native content read verification passed; restore not tested”. File restoration and recovered native startup remain separate gates.
+- Homebox consistent snapshot was accepted and observed running at “Check repository and application”. Completion, return to prior state and isolated restore verification are pending; inspect the existing job before retrying.
+- Production core activation remains gated. Implementation baseline remains 8/13.
+
+#### UI overhaul observations — deferred
+
+| Observed issue | Proposed later improvement |
+|---|---|
+| Browser-native confirmation dialogs repeatedly coincide with Windows browser-control URL-confidence stops. The address remains visible in the browser inventory/accessibility tree; root cause is not confirmed. | Replace JavaScript confirm/alert dialogs with accessible in-page modals that retain the action, application, consequences and explicit confirm/cancel buttons. Preserve all existing server-side authorization and operation guards. Include keyboard focus, Escape/cancel and focus return. |
+| Status refreshes collapse expanded application backup details and hide controls being used. | Preserve expanded sections, focus and scroll position across status updates. |
+| Administration is one long page; narrow cards wrap setup text and push actions far below headings. | Group administration by task and give native setup/progress a clear dedicated view. |
+| A generic “Failed to fetch” alert appeared without identifying the failed operation or recovery action. | Associate errors with their operation and provide a concrete next step. |
+| Homebox/Grocy are running but their initial setup instructions require SSH forwarding. | Resolve supported secure browser onboarding as functional Phase 3 work; do not count an installed container as completed onboarding. |
+| Snapshot creation continues to display its historical “verification pending” message after a separate verification succeeds. | Show linked current snapshot and verification evidence while preserving accurate historical job outcomes. |
+
+These observations do not authorize bypassing native application security or the browser tool's policy checks. Live verification takes priority over visual redesign.
