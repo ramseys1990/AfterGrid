@@ -198,8 +198,20 @@ def main(fixture,exported=None):
             # Seed a disposable failed-job record for the native rollback
             # helper above, then exercise the actual resolution endpoint.
             # This is not a claim that a real failed transition was injected.
-            failed=int(run(cmd,"exec","-T","worker","python3","-c",
-                "import worker,json,sys,hashlib; a=json.loads(sys.argv[1]); i=a['image_id']; e={'previous_image_id':i,'recreation_attempted':True,'rollback_status':'restored','rollback_image_id':i,'pin_confirmed':True,'snapshot_id':sys.argv[2],'previous_image_archive':a,'catalog_sample_sha256':hashlib.sha256(json.dumps(worker.kiwix_catalog_sample()).encode()).hexdigest()}; c=worker.db(); db=c.__enter__(); j=db.execute(\\\"INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix','guarded-update','failed','Disposable native rollback fixture',1)\\\").lastrowid; db.execute(\\\"INSERT INTO update_preparations(job,request,evidence) VALUES (?,'{}',?)\\\",(j,json.dumps(e))); c.__exit__(None,None,None); print(j)",
+            seed_failure = """
+import worker,json,sys,hashlib
+a=json.loads(sys.argv[1])
+i=a["image_id"]
+e={"previous_image_id":i,"recreation_attempted":True,"rollback_status":"restored",
+   "rollback_image_id":i,"pin_confirmed":True,"snapshot_id":sys.argv[2],
+   "previous_image_archive":a,
+   "catalog_sample_sha256":hashlib.sha256(json.dumps(worker.kiwix_catalog_sample()).encode()).hexdigest()}
+with worker.db() as db:
+    j=db.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix','guarded-update','failed','Disposable native rollback fixture',1)").lastrowid
+    db.execute("INSERT INTO update_preparations(job,request,evidence) VALUES (?,'{}',?)",(j,json.dumps(e)))
+print(j)
+"""
+            failed=int(run(cmd,"exec","-T","worker","python3","-c",seed_failure,
                 json.dumps(saved),rb["snapshot_id"]).decode().strip())
             health=call(old,"/api/admin/updates/health")
             assert health["rollback_resolution"]["clear_enabled"]
