@@ -199,3 +199,8 @@ The administrator may queue an exact failed-job/image resolution only when the u
 ### Gated automatic dispatch
 
 The existing portal scheduler now includes a Kiwix dispatch path with a release gate (`EXECUTION_ENABLED=False`), separate administrator activation, private persistent window claim, local eligibility, one online identity check, idle/maintenance and window recheck, and the same guarded worker queue. A claimed window is never retried after a timeout, rejection or process restart. Changing preferences disables activation. Disabled release or preference performs no registry polling. The activation endpoint cannot enable execution while the release gate is false. This intentionally leaves unattended execution off until native resolution and scheduler acceptance are confirmed. No new service or installation process is introduced.
+
+
+## Core update preparation (restricted pilot)
+
+The host-only `core_update.py` prepares a reviewed exact commit archive with an independently reviewed SHA-256. It builds two isolated candidate image tags, records the original healthy core/worker container and image identities plus configuration hashes, and leaves all running services unchanged. Example: `sudo python3 /opt/aftergrid/core_update.py /path/to/reviewed.tar.gz --commit <40-hex-commit> --sha256 <64-hex-sha256>`. The operator supplies the reviewed archive; a checksum is integrity evidence, not a signature. Only unchanged base Compose and module trees are accepted in this first slice. No automatic activation, database migration, rollback readiness, image pruning, or browser root command is claimed. Next: verified consistent core and worker snapshots, maintenance admission, exact image retention, controlled replacement and rollback acceptance.
