@@ -141,3 +141,25 @@ yet. Existing manual update semantics remain separate. The repository
 candidate is still null, so the production action cannot execute until a
 reviewed transition is supplied. Positive native transition acceptance,
 explicit recovery handling and scheduling are subsequent gates.
+
+### Reader failure recovery
+
+After a guarded Kiwix recreation attempt fails, the worker attempts image-only
+rollback while still holding the content guard. It requires unchanged reviewed
+Compose file bytes, the exact saved archive and matching checksum/config
+identity, and an existing protected snapshot. It restores the local old image
+if missing, sets a reserved exact-ID tag and publishes a persistent private
+Compose image override with pull policy never. The rollback uses the same
+reviewed reader configuration and does not overwrite content. Verify the
+installed image and compare the native catalog sample to pre-update evidence.
+A restored reader is still a failed update, never a successful upgrade.
+Unconfirmed rollback or interruption requires host/operator inspection.
+The hold blocks further update, install and restart; Start uses the
+exact local recovery tag and refuses pull/build. No automatic hold clearing,
+image pruning, data restore or update retry. Host-side lifecycle commands
+outside AfterGrid can bypass the hold. The current portable recovery export
+does not carry the local hold or image archive; it captures the actual running
+container image separately. This is not database migration rollback.
+Disposable native reader rollback helper coverage and regressions added;
+positive approved-transition acceptance and explicit hold resolution remain
+outstanding.

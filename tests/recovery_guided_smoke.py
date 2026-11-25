@@ -178,6 +178,24 @@ def main(fixture,exported=None):
             run(cmd,"exec","-T","worker","python3","-c",
                 "import worker,sys,subprocess; i=sys.argv[1]; p=worker.STATE/'previous-images'/('kiwix-'+i.split(':')[1]); worker.verify_previous_archive(p,i); subprocess.run(['docker','image','load','--input',str(p/'image.tar')],check=True); assert subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',i],text=True).strip()==i",
                 saved["image_id"],timeout=180)
+            # Test native local reader restoration and the persistent override
+            # in a disposable installation only; no production candidate.
+            # Use the existing verified Kiwix content record or generate one.
+            rollback_capture=post_job(old,"/api/admin/backups/protected-snapshot",{"key":"content/kiwix","confirmed":True})
+            post_job(old,"/api/admin/backups/content/kiwix/verify",{"confirmed":True})
+            post_job(old,"/api/admin/backups/recovery-manifest",{"confirmed":True})
+            rb=next(r for r in call(old,"/api/admin/backups/recovery-manifest")["records"] if r["key"]=="content/kiwix")
+            assert rb["snapshot_job"]==rollback_capture["id"] and rb["aftergrid_pinned"] is True and rb["verification"]=="read-only"
+            # Native helper exercised with actual preserved image and catalog.
+            run(cmd,"exec","-T","worker","python3","-c",
+                "import worker,json,sys,hashlib; a=json.loads(sys.argv[1]); i=a['image_id']; sample=worker.kiwix_catalog_sample(); e={'recreation_attempted':True,'compose_sha256':worker.reader_compose_fingerprint(),'previous_image_archive':a,'snapshot_id':sys.argv[2],'catalog_sample_sha256':hashlib.sha256(json.dumps(sample).encode()).hexdigest()}; worker.rollback_reader(999999,{'previous_image_id':i},e); assert e['rollback_status']=='restored'; assert worker.kiwix_rollback_override()[1]==i",
+                json.dumps(saved),rb["snapshot_id"],timeout=240)
+            assert reader_fixture()
+            # Fixture-only cleanup: restore unchanged reviewed config before
+            # recovery package acceptance. No production hold-clear endpoint.
+            run(cmd,"exec","-T","worker","python3","-c","import worker; worker.kiwix_rollback_override()[0].unlink()")
+            post_job(old,"/api/admin/modules/kiwix/start")
+            assert reader_fixture()
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)

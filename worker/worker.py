@@ -113,6 +113,37 @@ def offline_admission(ident,action):
     except (OSError,subprocess.SubprocessError,ValueError,TypeError,AttributeError,KeyError):
         raise ValueError("Offline image, writable repository or recovered credentials unavailable") from None
 
+def rollback_tag(image_id):
+    if not isinstance(image_id,str) or not re.fullmatch(r"sha256:[a-f0-9]{64}",image_id):
+        raise ValueError("Invalid rollback image ID")
+    return "aftergrid-recovery/kiwix:"+image_id.split(":")[1]
+
+
+def kiwix_rollback_override():
+    """Only the fixed, private, exact-ID reader override is accepted."""
+    path=STATE/"kiwix-rollback.json"
+    if not path.exists() and not path.is_symlink():return None
+    info=path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_mode&0o077 or not 0<info.st_size<=4096:
+        raise ValueError("Invalid Kiwix rollback override")
+    value=json.loads(path.read_text())
+    try:tag=value["services"]["kiwix"]["image"]
+    except (KeyError,TypeError):raise ValueError("Invalid Kiwix rollback override") from None
+    if (not isinstance(tag,str) or not re.fullmatch(r"aftergrid-recovery/kiwix:[a-f0-9]{64}",tag)
+        or value!={"services":{"kiwix":{"image":tag,"pull_policy":"never"}}}):
+        raise ValueError("Invalid Kiwix rollback override")
+    return path,"sha256:"+tag.rsplit(":",1)[1],tag
+
+
+def exact_local_image(ref,image_id):
+    try:
+        raw=subprocess.run(["docker","image","inspect","--format","{{json .Id}}",ref],
+                           capture_output=True,text=True,timeout=8,check=True).stdout
+        if json.loads(raw)!=image_id:raise ValueError("Image identity mismatch")
+    except (OSError,ValueError,TypeError,subprocess.SubprocessError):
+        raise RuntimeError("Exact local image identity unavailable") from None
+
+
 def command(ident, *args):
     if ident not in catalog():
         raise ValueError("Unknown module")
@@ -125,6 +156,18 @@ def command(ident, *args):
         cmd.extend(("--file",str(override)))
         if args and args[0] in {"pull","build"}:raise ValueError("Offline recovery forbids image downloads and builds")
         if args and args[0]=="up":args=(*args,"--no-build")
+    elif ident=="kiwix":
+        hold=kiwix_rollback_override()
+        if hold:
+            override,image_id,tag=hold
+            cmd.extend(("--file",str(override)))
+            if args and args[0] in {"pull","build","restart"}:
+                raise ValueError("Reader rollback hold; use Start to recover the exact local reader")
+            if args and args[0]=="up":
+                exact_local_image(tag,image_id)
+                if "--pull" not in args or args[args.index("--pull")+1]!="never":
+                    raise ValueError("Rollback hold requires no pull")
+                if "--no-build" not in args:args=(*args,"--no-build")
     return [*cmd,*args]
 
 def module_secrets(ident, create=False):
@@ -240,9 +283,21 @@ def init():
         """)
         conn.execute("UPDATE jobs SET state='interrupted',stage='Worker restarted; inspect service and retry' WHERE state='running'")
 
+def kiwix_lifecycle_admission(ident,action):
+    if ident!="kiwix" or RECOVERY_OFFLINE or action not in {"install","update","start","restart"}:return
+    hold=kiwix_rollback_override()
+    if hold and action!="start":raise ValueError("Reader rollback hold; inspect recovery evidence")
+    if hold:return
+    with db() as conn:
+        last=conn.execute("SELECT state FROM jobs WHERE module='kiwix' AND action='guarded-update' ORDER BY id DESC LIMIT 1").fetchone()
+    if last and last["state"] in {"failed","interrupted"}:
+        raise ValueError("Unresolved guarded reader update; inspect recovery evidence before lifecycle changes")
+
+
 def enqueue(ident, action, backup_confirmed=False, source_job=None, protect=False):
     if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
     if RECOVERY_OFFLINE:offline_admission(ident,action)
+    kiwix_lifecycle_admission(ident,action)
     manifest = catalog().get(ident)
     if not manifest or action not in ACTIONS:
         raise ValueError("Unsupported module or action")
@@ -1507,7 +1562,11 @@ def update_eligibility(ident,online=False,own_job=None):
     if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE:
         result.update(status="blocked",blockers=["Recovery mode disables update checks"])
         return result
-    try:candidate=approved_update_candidate(ident)
+    try:
+        if kiwix_rollback_override():
+            result.update(status="blocked",blockers=["Previous reader rollback hold; inspect recovery evidence"])
+            return result
+        candidate=approved_update_candidate(ident)
     except (OSError,ValueError,TypeError):
         result.update(status="blocked",blockers=["Reviewed candidate file invalid"])
         return result
@@ -1577,6 +1636,7 @@ def validate_update_preparation(value):
 def enqueue_update_preparation(value,guarded=False):
     if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE or "kiwix" not in catalog():raise ValueError("Update preparation unavailable")
     value=validate_update_preparation(value)
+    if kiwix_rollback_override():raise ValueError("Reader rollback hold")
     candidate=approved_update_candidate("kiwix")
     approval=candidate["platforms"].get(value["platform"]) if candidate else None
     if (not approval or candidate["image"]!=value["candidate"] or approval["to"]!=value["target_image_id"]
@@ -1736,6 +1796,80 @@ def kiwix_catalog_sample():
         raise RuntimeError("Kiwix native catalog sample unavailable or empty") from None
 
 
+def reader_compose_fingerprint():
+    path=MODULES/"kiwix"/"compose.yaml"
+    info=path.lstat()
+    if not stat.S_ISREG(info.st_mode) or not 0<info.st_size<=65536:
+        raise ValueError("Reviewed reader configuration unavailable")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def publish_reader_rollback(image_id):
+    """Persist the old image selection before any restoration Compose up."""
+    tag=rollback_tag(image_id)
+    path=STATE/"kiwix-rollback.json"
+    existing=kiwix_rollback_override()
+    if existing:
+        if existing[1]!=image_id:raise RuntimeError("Different reader rollback hold exists")
+        return existing
+    value={"services":{"kiwix":{"image":tag,"pull_policy":"never"}}}
+    fd,tmp=tempfile.mkstemp(prefix=".kiwix-rollback-",dir=STATE)
+    try:
+        with os.fdopen(fd,"w") as out:
+            json.dump(value,out,sort_keys=True)
+            out.flush()
+            os.fsync(out.fileno())
+        os.link(tmp,path)  # do not overwrite another hold
+        directory=os.open(STATE,os.O_DIRECTORY)
+        try:os.fsync(directory)
+        finally:os.close(directory)
+    finally:Path(tmp).unlink(missing_ok=True)
+    return kiwix_rollback_override()
+
+
+def rollback_reader(job,expected,evidence):
+    """Image-only rollback for the reviewed read-only Kiwix reader."""
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE or evidence.get("recreation_attempted") is not True:
+        raise ValueError("Reader rollback unavailable")
+    image=expected["previous_image_id"]
+    if evidence.get("compose_sha256")!=reader_compose_fingerprint():
+        raise RuntimeError("Reader Compose configuration changed; automatic rollback refused")
+    folder=STATE/"previous-images"/("kiwix-"+image.split(":")[1])
+    metadata=verify_previous_archive(folder,image)
+    if metadata!=evidence["previous_image_archive"]:
+        raise RuntimeError("Previous image archive differs from preparation evidence")
+    _,stats=read_snapshot_manifest(CONTENT_SOURCES["kiwix"],evidence["snapshot_id"])
+    if stats.get("aftergrid_pinned") is not True:raise RuntimeError("Protected recovery snapshot unavailable")
+    # Load only the verified local archive. Never pull a recovery image.
+    try:exact_local_image(image,image)
+    except RuntimeError:
+        subprocess.run(["docker","image","load","--input",str(folder/"image.tar")],
+                       capture_output=True,timeout=900,check=True)
+        exact_local_image(image,image)
+    tag=rollback_tag(image)
+    # Reserved deterministic tag; do not overwrite an unexpected image.
+    try:
+        raw=subprocess.run(["docker","image","inspect","--format","{{json .Id}}",tag],
+                           capture_output=True,text=True,timeout=8,check=True).stdout
+        if json.loads(raw)!=image:raise RuntimeError("Unexpected existing rollback image tag")
+    except subprocess.CalledProcessError:
+        subprocess.run(["docker","image","tag",image,tag],capture_output=True,timeout=20,check=True)
+    exact_local_image(tag,image)
+    publish_reader_rollback(image)
+    change(job,stage="Restore exact previous reader without pull or build")
+    run(job,"kiwix","config","-q")
+    run(job,"kiwix","up","-d","--wait","--wait-timeout","90","--pull","never","--no-build")
+    wait_ready("kiwix")
+    services=version_report("kiwix")["services"]
+    if (len(services)!=1 or services[0]["service"]!="kiwix"
+        or services[0]["configured_image"]!=tag or services[0]["installed_image_ids"]!=[image]):
+        raise RuntimeError("Restored reader image identity not confirmed")
+    sample=kiwix_catalog_sample()
+    if hashlib.sha256(json.dumps(sample).encode()).hexdigest()!=evidence["catalog_sample_sha256"]:
+        raise RuntimeError("Restored reader catalog differs from pre-update sample")
+    evidence.update(rollback_status="restored",rollback_image_id=image,rollback_checked_at=int(time.time()))
+
+
 def guarded_compose_update(job,expected,evidence):
     """Run only the reviewed Compose target under the caller's content guard."""
     sample=kiwix_catalog_sample()
@@ -1749,7 +1883,7 @@ def guarded_compose_update(job,expected,evidence):
     # Persist verified pre-update evidence and the mutation boundary before
     # recreation. Failed/interrupted jobs retain it for operator recovery.
     evidence.update(catalog_sample_before=len(sample),catalog_sample_sha256=hashlib.sha256(json.dumps(sample).encode()).hexdigest(),
-                    recreation_attempted=True)
+                    compose_sha256=reader_compose_fingerprint(),recreation_attempted=True)
     with db() as conn:
         conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
     change(job,completed=6,stage="Recreate reviewed Kiwix service")
@@ -1808,7 +1942,23 @@ def prepare_update(job,guarded=False):
             evidence["recreation_attempted"]=False
             with db() as conn:
                 conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
-            guarded_compose_update(job,expected,evidence)
+            try:
+                guarded_compose_update(job,expected,evidence)
+            except Exception:
+                if evidence.get("recreation_attempted") is True:
+                    evidence["rollback_status"]="attempting"
+                    with db() as conn:
+                        conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
+                    try:
+                        rollback_reader(job,expected,evidence)
+                        log(job,"\nPrevious reader restored and catalog sample confirmed; update remains failed and paused.\n")
+                    except Exception:
+                        evidence["rollback_status"]="unconfirmed"
+                        log(job,"\nReader rollback not confirmed; inspect local image archive, snapshot and rollback hold before further changes.\n")
+                    finally:
+                        with db() as conn:
+                            conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
+                raise
         change(job,completed=8 if guarded else 5,stage="Release content maintenance")
     finally:
         content_guard("end",job)
@@ -1903,6 +2053,7 @@ def execute(row):
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
         if RECOVERY_OFFLINE:offline_admission(ident,action)
+        kiwix_lifecycle_admission(ident,action)
         pin_args={}
         if action in {"snapshot","core-snapshot","worker-snapshot","content-snapshot"} and protected_snapshot_requested(job):
             if RECOVERY_OFFLINE or ident=="tak":raise ValueError("Protected capture unavailable")

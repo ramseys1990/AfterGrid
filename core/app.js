@@ -187,7 +187,7 @@ async function renderModules(){
                 const guarded=document.createElement("button");guarded.type="button";guarded.textContent="Run guarded approved update";
                 eligibility.append(prep,guarded);
                 guarded.addEventListener("click",async()=>{
-                  if(!confirm("Run the reviewed Kiwix update? A fresh pinned backup, full content verification and prior image archive must succeed first. The reader may be interrupted. Failures require inspection; automatic rollback is not enabled."))return;
+                  if(!confirm("Run the reviewed Kiwix update? A fresh pinned backup, full content verification and prior image archive must succeed first. The reader may be interrupted. If recreation fails, AfterGrid attempts image-only local reader recovery. The update remains failed and paused for review."))return;
                   guarded.disabled=prep.disabled=true;
                   try{
                     const job=await api("/api/admin/modules/kiwix/guarded-update",{candidate:r.candidate,platform:r.platform,previous_image_id:r.installed_image_ids[0],target_image_id:r.expected_target_image_id,confirmed:true});
@@ -209,7 +209,7 @@ async function renderModules(){
               if(!status?.admin||!card.isConnected)return;
               if(history.latest){
                 const p=document.createElement("p"),h=history.latest;
-                p.textContent="Latest "+(h.action||"preparation")+": job "+h.job+" · "+h.state+(h.evidence?" · protected snapshot "+h.evidence.snapshot_id+" · exact content read passed"+(h.evidence.previous_image_archive?" · previous image archive recorded":"")+(h.state==="succeeded"&&h.evidence.update_performed?" · target identity and catalog verified":h.evidence.recreation_attempted?" · recreation attempted; inspect outcome":" · no recreation recorded"):"");
+                p.textContent="Latest "+(h.action||"preparation")+": job "+h.job+" · "+h.state+(h.evidence?" · protected snapshot "+h.evidence.snapshot_id+" · exact content read passed"+(h.evidence.previous_image_archive?" · previous image archive recorded":"")+(h.state==="succeeded"&&h.evidence.update_performed?" · target identity and catalog verified":h.evidence.rollback_status==="restored"?" · previous reader restored; update paused":h.evidence.rollback_status?" · rollback "+h.evidence.rollback_status+"; inspect outcome":h.evidence.recreation_attempted?" · recreation attempted; inspect outcome":" · no recreation recorded"):"");
                 eligibility.append(p);
               }
             }catch(e){if(status?.admin&&card.isConnected)eligibility.textContent=e.message;}

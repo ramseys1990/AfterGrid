@@ -1010,3 +1010,59 @@ def test_guarded_compose_update_records_boundary_and_checks_target(tmp_path,monk
     assert seen==["config","pull"]
     worker.change(job,state="failed")
     with pytest.raises(ValueError,match="Unresolved update"):worker.enqueue_update_preparation(request,guarded=True)
+
+
+def test_reader_rollback_override_persists_and_blocks_pull(tmp_path,monkeypatch):
+    import json
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    image="sha256:"+"a"*64
+    seen=[]
+    monkeypatch.setattr(worker,"exact_local_image",lambda ref,i:seen.append((ref,i)))
+    hold=worker.publish_reader_rollback(image)
+    assert hold[1]==image and hold[0].stat().st_mode&0o777==0o600
+    assert worker.publish_reader_rollback(image)==hold
+    with pytest.raises(RuntimeError):worker.publish_reader_rollback("sha256:"+"b"*64)
+    args=worker.command("kiwix","up","-d","--pull","never")
+    assert str(hold[0]) in args and "--no-build" in args and seen==[(hold[2],image)]
+    with pytest.raises(ValueError):worker.command("kiwix","pull")
+    with pytest.raises(ValueError):worker.command("kiwix","restart")
+    with pytest.raises(ValueError):worker.kiwix_lifecycle_admission("kiwix","update")
+    assert worker.update_eligibility("kiwix")["status"]=="blocked"
+    assert str(hold[0]) not in worker.command("grocy","config","-q")
+    hold[0].write_text(json.dumps({"services":{"kiwix":{"image":hold[2],"pull_policy":"always"}}}))
+    with pytest.raises(ValueError):worker.command("kiwix","config","-q")
+
+
+def test_reader_rollback_checks_archive_pin_and_catalog(tmp_path,monkeypatch):
+    import hashlib,json
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    image="sha256:"+"a"*64
+    expected={"previous_image_id":image}
+    sample=["fixture"]
+    evidence={"recreation_attempted":True,"compose_sha256":"fingerprint","previous_image_archive":{"image_id":image},
+              "snapshot_id":"b"*32,"catalog_sample_sha256":hashlib.sha256(json.dumps(sample).encode()).hexdigest()}
+    monkeypatch.setattr(worker,"reader_compose_fingerprint",lambda:"fingerprint")
+    monkeypatch.setattr(worker,"verify_previous_archive",lambda folder,i:{"image_id":i})
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda source,sid:("root",{"aftergrid_pinned":True}))
+    calls=[]
+    monkeypatch.setattr(worker,"exact_local_image",lambda ref,i:None)
+    tag=worker.rollback_tag(image)
+    monkeypatch.setattr(worker.subprocess,"run",lambda argv,**kw:SimpleNamespace(stdout=json.dumps(image)))
+    monkeypatch.setattr(worker,"publish_reader_rollback",lambda i:calls.append("hold"))
+    monkeypatch.setattr(worker,"change",lambda *a,**kw:None)
+    monkeypatch.setattr(worker,"run",lambda j,i,*a:calls.append(a[0]))
+    monkeypatch.setattr(worker,"wait_ready",lambda i:calls.append("ready"))
+    monkeypatch.setattr(worker,"version_report",lambda i:{"services":[{"service":"kiwix","configured_image":tag,"installed_image_ids":[image]}]})
+    monkeypatch.setattr(worker,"kiwix_catalog_sample",lambda:sample)
+    worker.rollback_reader(1,expected,evidence)
+    assert calls==["hold","config","up","ready"] and evidence["rollback_status"]=="restored"
+    calls.clear()
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda source,sid:("root",{"aftergrid_pinned":False}))
+    with pytest.raises(RuntimeError,match="Protected recovery snapshot"):worker.rollback_reader(1,expected,evidence)
+    assert not calls
