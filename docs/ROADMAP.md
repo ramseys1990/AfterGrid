@@ -464,3 +464,28 @@ reviewed production core activation/handoff. Current-image core recreation and
 all four selected optional application removal/reinstall have now been exercised
 individually with data-preservation evidence. No persistent volumes, application
 data or unrelated workloads were deleted.
+
+
+### Additional acceptance guest authorized and created — 2026-11-25
+
+The user explicitly authorized one additional disposable LXC for interrupted
+installation and clean-host testing. ID 116 was absent from the live inventory
+and selected by Proxmox's creation wizard. Created aftergrid-acceptance from the
+existing Ubuntu 24.04 amd64 template: 2 cores, 1024 MiB RAM, 512 MiB swap,
+20 GiB local-lvm root disk, unprivileged mode, nesting, vmbr0 and IPv4 DHCP.
+Creation and start tasks both returned OK. Guest hostname and DHCP address
+192.168.4.73 were verified in its console. No Docker executable or existing
+/opt/aftergrid root was present.
+
+Initial package preparation stalled because inherited host DNS pointed to
+Tailscale resolvers inaccessible from the fresh guest. Set explicit DNS only
+for CT116 (8.8.8.8 and 1.1.1.1), preserved the guest's prior resolv.conf, and
+applied matching nameservers inside that guest. Resolution and official Ubuntu
+package metadata downloads then worked. Host DNS, CT115 and unrelated workloads
+were not modified. Package preparation is not installer acceptance.
+
+Next test: run pinned unmodified installer preflight, inject a temporary
+port-8080 listener only after the installer publishes its pending installation,
+observe real Compose startup failure, remove only that fixture and resume.
+Compare preserved configuration and setup-token hashes without recording token
+values. Genuine failed-start/resume and clean-host recovery remain pending.
