@@ -705,20 +705,103 @@ def inspect_trial(candidate):
             "production_activation":False}
 
 
-def candidate_trial(root,candidate,probe):
-    """Disposable acceptance only. No production activation or promotion."""
+def disposable_trial_scope(root,candidate):
     if os.geteuid()!=0 or os.environ.get("AFTERGRID_DISPOSABLE_RECOVERY_TEST")!="1":
         raise ValueError("Disposable core update acceptance only")
     root=assets.real_directory(root)
     candidate=assets.real_directory(candidate)
     if not root.parent.name.startswith("aftergrid-guided-ci-") or root.name!="original" or candidate.parent!=root.parent:
         raise ValueError("Expected disposable guided fixture")
+    return root,candidate
+
+
+def candidate_trial(root,candidate,probe):
+    """Disposable acceptance only. No production activation or promotion."""
+    root,candidate=disposable_trial_scope(root,candidate)
     plan=read_json_private(candidate/"candidate.json")
     retained=verify_retention(candidate,plan)
     check_activation(root,candidate)
     if (candidate/"activation.json").exists() or (candidate/"activation.json").is_symlink():
         raise ValueError("Update journal already exists")
     return trial_replacement(root,candidate,plan,retained,probe)
+
+
+def trial_container_inventory(root,candidate,plan):
+    """Inspect only the core project, including partially replaced services."""
+    rows={}
+    base=str(root/"compose.yaml")
+    allowed_files={base,base+","+str(candidate/"trial-compose.json")}
+    for cid in assets.docker("ps","-a","-q","--no-trunc","--filter","label=com.docker.compose.project=aftergrid-core").splitlines():
+        if not SHA.fullmatch(cid):raise ValueError("Invalid core container identity")
+        fmt='{{json .Config.Labels}}|{{json .Image}}|{{json .State.Status}}|{{json .Mounts}}'
+        labels,image,status,mounts=map(json.loads,assets.docker("container","inspect","--format",fmt,cid).split("|"))
+        service=labels.get("com.docker.compose.service")
+        files=labels.get("com.docker.compose.project.config_files")
+        if (service not in {"core","worker"} or service in rows
+            or labels.get("com.docker.compose.project")!="aftergrid-core"
+            or labels.get("com.docker.compose.project.working_dir")!=str(root)
+            or files not in allowed_files or status not in {"running","exited","created","restarting"}):
+            raise ValueError("Unexpected container in core project; inspect manually")
+        trial=files!=base
+        expected=plan["candidate" if trial else "previous"][service]["image"]
+        if image!=expected:raise ValueError("Unexpected core image; inspect manually")
+        target="/data" if service=="core" else "/worker-state"
+        selected=[m for m in mounts if m["Destination"]==target]
+        if len(selected)!=1:raise ValueError("Unexpected state mount")
+        mount=selected[0]
+        if trial or service=="core":
+            source=candidate/(service+"-trial") if trial else root/"data/core"
+            if mount.get("Type")!="bind" or mount.get("Source")!=str(source):
+                raise ValueError("Unexpected core state bind")
+        elif mount.get("Type")!="volume" or mount.get("Name")!="aftergrid-core_worker_state":
+            raise ValueError("Unexpected worker state volume")
+        rows[service]={"container":cid,"state":status,"trial":trial}
+    return rows
+
+
+def reconcile_trial(root,candidate):
+    """Return an interrupted disposable trial to untouched original state.
+
+    Never promote trial state. Require the original persistent maintenance
+    marker and exact project ownership before stopping any container.
+    """
+    root,candidate=disposable_trial_scope(root,candidate)
+    plan=read_json_private(candidate/"candidate.json")
+    if plan.get("root")!=str(root) or assets.local_docker()!=plan.get("platform"):
+        raise ValueError("Trial root or platform changed")
+    check_candidate_source(candidate,plan)
+    if check_scope(root,candidate/"source")!=plan["configuration"]:
+        raise ValueError("Installed configuration changed")
+    retained=verify_retention(candidate,plan)
+    status=inspect_trial(candidate)
+    if status["phase"] in {"not_started","returned_to_previous"}:
+        raise ValueError("No interrupted trial to reconcile")
+    marker=root/"data/core/recovery-maintenance.json"
+    seal=read_json_private(marker,8192)
+    if (seal.get("phase")!="updating" or seal.get("candidate_sha256")!=retained["candidate_sha256"]):
+        raise ValueError("Original maintenance hold changed")
+    rows=trial_container_inventory(root,candidate,plan)
+    path=candidate/"activation.json"
+    state=read_json_private(path)
+    state["phase"]="returning_to_previous"
+    journal(path,state)
+    try:
+        # Only the exact inspected core project containers. Never stop app
+        # projects, remove volumes or bring down the shared network.
+        for row in rows.values():
+            if row["state"] in {"running","restarting"}:
+                assets.docker("stop",row["container"],timeout=90)
+        actual=replace_core(root,retained["previous"])
+        state["returned_containers"]=actual
+        state["trial_verified"]=False
+        state["reconciled_interruption"]=True
+        state["phase"]="returned_to_previous"
+        journal(path,state)
+    except Exception:
+        state["phase"]="rollback_requires_inspection"
+        journal(path,state)
+        raise
+    return state
 
 
 def main():

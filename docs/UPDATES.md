@@ -234,3 +234,8 @@ Native acceptance exercises journaled Compose replacement using candidate refere
 ### Distinct candidate and failed verification acceptance
 
 The disposable fixture now creates distinct local candidate image IDs from the installed images with a harmless fixture label (not a separately released version), executes both a successful probe and an intentional native failed probe, and checks return to the exact original images and state without interrupting Kiwix/Kopia. A read-only `--trial-status CANDIDATE` reports journal phase and whether inspection is required; it never claims production activation. Candidate plans now bind core, worker and module source tree hashes plus Compose identity; changed or legacy unbound candidates must be prepared again. Source hashing does not establish a reproducible or signed build. Actual production promotion, crash reconciliation, and browser handoff remain gated.
+
+
+### Interrupted disposable transaction reconciliation
+
+The guided fixture now preserves candidate entrypoint/command/user/working-directory configuration (the earlier fixture overrode the entrypoint, so the distinct candidate startup failed). It also tests abrupt process exit after healthy candidate replacement using an isolated subprocess, then reconciles back to the original state with exact project, container, image and mount validation. The original maintenance hold must still match; unknown containers or state mounts fail closed. This remains a disposable-only procedure. Production promotion and reconciliation must separately define the authoritative state and installed source transition; do not run this on an installed host.

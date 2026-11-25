@@ -231,3 +231,23 @@ def test_inspect_trial_never_claims_production_activation(tmp_path):
     update.write_private_json(tmp_path/"activation.json",state)
     report=update.inspect_trial(tmp_path)
     assert report["requires_inspection"] and not report["production_activation"]
+
+
+def test_reconcile_trial_refuses_non_disposable_root(tmp_path,monkeypatch):
+    monkeypatch.setenv("AFTERGRID_DISPOSABLE_RECOVERY_TEST","1")
+    with pytest.raises(ValueError,match="Disposable|disposable"):
+        update.reconcile_trial(tmp_path,tmp_path)
+
+
+def test_trial_inventory_rejects_foreign_project_container(tmp_path,monkeypatch):
+    import json
+    plan={"candidate":{"core":{"image":"sha256:"+"a"*64}},"previous":{"core":{"image":"sha256:"+"b"*64}}}
+    def docker(*args,**kwargs):
+        if args[0]=="ps":return "c"*64
+        return "|".join(json.dumps(x) for x in ({"com.docker.compose.project":"other",
+            "com.docker.compose.service":"core","com.docker.compose.project.working_dir":str(tmp_path),
+            "com.docker.compose.project.config_files":str(tmp_path/"compose.yaml")},
+            "sha256:"+"b"*64,"running",[]))
+    monkeypatch.setattr(update.assets,"docker",docker)
+    with pytest.raises(ValueError,match="Unexpected container"):
+        update.trial_container_inventory(tmp_path,tmp_path,plan)

@@ -143,17 +143,21 @@ def main(fixture,exported=None):
             candidate_images={}
             for name in ("core","worker"):
                 tag="aftergrid-candidate/"+name+":"+commit+"-123456789abc"
-                cid=assets.docker("create","--network","none","--entrypoint","/bin/true",prior[name]["image"])
+                cid=assets.docker("create","--network","none",prior[name]["image"])
                 try:
                     assets.docker("commit","--change","LABEL org.aftergrid.update-fixture=true",cid,tag,timeout=120)
                 finally:
                     assets.docker("rm","-v",cid)
                 image=assets.docker("image","inspect","--format","{{.Id}}",tag)
                 assert image!=prior[name]["image"]
+                # Docker commit must preserve the runtime configuration.
+                for field in ("Entrypoint","Cmd","User","WorkingDir"):
+                    fmt="{{json .Config."+field+"}}"
+                    assert assets.docker("image","inspect","--format",fmt,image)==assets.docker("image","inspect","--format",fmt,prior[name]["image"]),field
                 candidate_images[name]={"tag":tag,"image":image}
-            def run_trial(fail=False):
+            def run_trial(fail=False,interrupt=False):
                 prior=core_update.live_core(original)
-                candidate=tmp/("candidate-failure" if fail else "candidate-success")
+                candidate=tmp/("candidate-interruption" if interrupt else "candidate-failure" if fail else "candidate-success")
                 candidate.mkdir(mode=0o700)
                 source=candidate/"source"
                 source.mkdir()
@@ -181,14 +185,26 @@ def main(fixture,exported=None):
                     assert applications=={ident:app_identity(ident) for ident in applications}
                     assert reader_fixture()
                     if fail:raise RuntimeError("Intentional native candidate probe failure")
-                if fail:
+                if interrupt:
+                    # A separate process exits without running its finally
+                    # block after the candidate is healthy and journaled.
+                    code="import os,sys; from pathlib import Path; import core_update as u; u.candidate_trial(Path(sys.argv[1]),Path(sys.argv[2]),lambda:os._exit(87))"
+                    proc=subprocess.run([sys.executable,"-c",code,str(original),str(candidate)],
+                                        cwd=original_source,timeout=300,capture_output=True)
+                    assert proc.returncode==87,"Interrupted trial fixture did not reach probe"
+                    assert core_update.inspect_trial(candidate)["phase"]=="verifying"
+                    assert applications=={ident:app_identity(ident) for ident in applications}
+                    assert reader_fixture()
+                    trial=core_update.reconcile_trial(original,candidate)
+                    assert trial["reconciled_interruption"]
+                elif fail:
                     try:core_update.candidate_trial(original,candidate,probe_candidate)
                     except RuntimeError as exc:
                         if str(exc)!="Intentional native candidate probe failure":raise
                     else:raise AssertionError("Expected failed candidate")
                     trial=json.loads((candidate/"activation.json").read_text())
                 else:trial=core_update.candidate_trial(original,candidate,probe_candidate)
-                assert trial["phase"]=="returned_to_previous" and trial["trial_verified"] is not fail
+                assert trial["phase"]=="returned_to_previous" and trial["trial_verified"] is (not fail and not interrupt)
                 assert core_update.inspect_trial(candidate)["requires_inspection"] is False
                 assert all(trial["trial_containers"][name]["image"]==candidate_images[name]["image"] for name in prior)
                 assert all(core_update.live_core(original)[name]["image"]==prior[name]["image"] for name in prior)
@@ -201,7 +217,8 @@ def main(fixture,exported=None):
                 call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True})
             run_trial()
             run_trial(fail=True)
-            print("Distinct candidate image replacement and native forced-probe-failure return passed; Kiwix and Kopia stayed online.",flush=True)
+            run_trial(interrupt=True)
+            print("Distinct candidate images, forced probe failure and interrupted trial reconciliation passed; Kiwix and Kopia stayed online.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")
             assert "core" in keys and "content/kiwix" in keys and "application/tak" not in keys
             for key in ("global","content/kiwix"):
