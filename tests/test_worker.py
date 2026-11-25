@@ -1230,7 +1230,7 @@ def test_reader_hold_resolution_checks_base_without_mutation(tmp_path,monkeypatc
     result=worker.reader_hold_resolution(report)
     assert result["status"]=="local prerequisites met" and result["base_matches_rollback"]
     assert result["failed_job"]==1 and calls[-1]==(target,image)
-    assert not result["clear_enabled"] and not result["archive_reverified"] and not result["pin_reverified"]
+    assert result["clear_enabled"] and not result["archive_reverified"] and not result["pin_reverified"]
     assert report["rollback_hold"]["status"]=="active"
     def mismatch(*a):raise RuntimeError("different image")
     monkeypatch.setattr(worker,"exact_local_image",mismatch)
@@ -1243,3 +1243,46 @@ def test_reader_hold_resolution_checks_base_without_mutation(tmp_path,monkeypatc
     report["recovery_mode"]=True
     calls.clear()
     assert worker.reader_hold_resolution(report)["status"]=="not applicable" and not calls
+
+
+def test_controlled_reader_hold_resolution(tmp_path,monkeypatch):
+    import hashlib,json
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    worker.init()
+    image="sha256:"+"a"*64
+    archive={"image_id":image,"sha256":"b"*64,"bytes":100,"format":1}
+    sample=["fixture"]
+    evidence={"previous_image_id":image,"previous_image_archive":archive,"snapshot_id":"c"*32,
+              "catalog_sample_sha256":hashlib.sha256(json.dumps(sample).encode()).hexdigest()}
+    with worker.db() as conn:
+        failed=conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix','guarded-update','failed','Fixture',1)").lastrowid
+        conn.execute("INSERT INTO update_preparations(job,request,evidence) VALUES (?,'{}',?)",(failed,json.dumps(evidence)))
+    hold=worker.publish_reader_rollback(image)
+    request={"failed_job":failed,"image_id":image}
+    monkeypatch.setattr(worker,"reader_update_health",lambda job:{"rollback_resolution":{"status":"local prerequisites met",
+        "failed_job":failed,"base_image":"fixture"},"rollback_hold":{"image_id":image}})
+    monkeypatch.setattr(worker,"reader_compose_fingerprint",lambda:"same")
+    guards=[]
+    monkeypatch.setattr(worker,"content_guard",lambda action,job:guards.append((action,job)))
+    monkeypatch.setattr(worker,"verify_previous_archive",lambda *a:archive)
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda *a:("root",{"aftergrid_pinned":False}))
+    job=worker.enqueue_reader_resolution(request)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed" and hold[0].exists()
+    with worker.db() as conn:assert worker.unresolved_guarded_update(conn)
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda *a:("root",{"aftergrid_pinned":True}))
+    monkeypatch.setattr(worker,"verify_content_manifest",lambda *a:3)
+    monkeypatch.setattr(worker,"kiwix_catalog_sample",lambda:sample)
+    job=worker.enqueue_reader_resolution(request)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="succeeded" and not hold[0].exists()
+    assert guards[-2:]==[("begin",job),("end",job)]
+    with worker.db() as conn:
+        assert not worker.unresolved_guarded_update(conn)
+        assert conn.execute("SELECT state FROM jobs WHERE id=?",(failed,)).fetchone()["state"]=="failed"
+    worker.kiwix_lifecycle_admission("kiwix","start")
+    with pytest.raises(ValueError):worker.enqueue_reader_resolution(request)

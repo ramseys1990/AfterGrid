@@ -1355,6 +1355,22 @@ def create_app(data_dir=None):
         if code!=202:raise HTTPException(code if code in {400,409} else 502,"Approved guarded update unavailable")
         return result
 
+    class RollbackResolutionSelection(BaseModel):
+        failed_job: int = Field(strict=True,gt=0)
+        image_id: str = Field(min_length=71,max_length=71)
+        confirmed: bool = Field(strict=True)
+
+    @api.post("/api/admin/modules/kiwix/resolve-rollback",status_code=202)
+    def queue_reader_resolution(payload: RollbackResolutionSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:raise HTTPException(409,"Confirm exact recovered image and protected evidence")
+        maintenance_idle()
+        try:code,result=call("/resolve-rollback",payload.model_dump(exclude={"confirmed"}))
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=202:raise HTTPException(code if code in {400,409} else 502,"Rollback resolution unavailable")
+        return result
+
     @api.post("/api/admin/modules/{ident}/registry-check")
     def module_registry_check(ident: str,request: Request):
         require_admin(request)

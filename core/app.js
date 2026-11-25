@@ -308,7 +308,16 @@ $("update-health-refresh").addEventListener("click",async()=>{
     line(root,"Rollback hold: "+r.rollback_hold.status+(r.rollback_hold.image_id?" · "+r.rollback_hold.image_id:""));
     const resolution=r.rollback_resolution;
     if(resolution&&resolution.status!=="not applicable"){
-      line(root,"Rollback resolution: "+resolution.status+" (hold clearing disabled)");
+      line(root,"Rollback resolution: "+resolution.status);
+      if(resolution.clear_enabled){
+        const resolve=document.createElement("button");resolve.textContent="Verify and resolve rollback hold";
+        resolve.addEventListener("click",async()=>{
+          if(!confirm("Reverify the exact archive, protected snapshot and catalog before removing the override? No image update or data restore will be performed."))return;
+          resolve.disabled=true;
+          try{const job=await api("/api/admin/modules/kiwix/resolve-rollback",{method:"POST",body:JSON.stringify({failed_job:resolution.failed_job,image_id:r.rollback_hold.image_id,confirmed:true})});line(root,"Resolution queued · #"+job.id);}
+          catch(e){line(root,e.message);resolve.disabled=false;}
+        });root.append(resolve);
+      }
       if(resolution.base_image)line(root,"Base Compose target: "+resolution.base_image+" · "+(resolution.base_matches_rollback?"matches recovered image locally":"not confirmed to match recovered image"));
       for(const blocker of resolution.blockers)line(root,"Resolution: "+blocker);
     }

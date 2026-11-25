@@ -283,14 +283,26 @@ def init():
         """)
         conn.execute("UPDATE jobs SET state='interrupted',stage='Worker restarted; inspect service and retry' WHERE state='running'")
 
+def unresolved_guarded_update(conn,exclude=0):
+    row=conn.execute("SELECT j.id,j.state,p.evidence FROM jobs j LEFT JOIN update_preparations p ON p.job=j.id WHERE j.module='kiwix' AND j.action='guarded-update' AND j.id!=? ORDER BY j.id DESC LIMIT 1",(exclude,)).fetchone()
+    if not row or row["state"] not in {"failed","interrupted"}:return False
+    try:
+        evidence=json.loads(row["evidence"] or "{}")
+        resolution=evidence.get("resolution_job")
+        if type(resolution) is not int or resolution<=row["id"]:return True
+        resolved=conn.execute("SELECT j.state,p.request FROM jobs j JOIN update_preparations p ON p.job=j.id WHERE j.id=? AND j.module='kiwix' AND j.action='resolve-rollback'",(resolution,)).fetchone()
+        return not (resolved and resolved["state"]=="succeeded" and json.loads(resolved["request"])=={"failed_job":row["id"],"image_id":evidence["previous_image_id"]})
+    except (ValueError,TypeError,KeyError,AttributeError):return True
+
+
 def kiwix_lifecycle_admission(ident,action):
     if ident!="kiwix" or RECOVERY_OFFLINE or action not in {"install","update","start","restart"}:return
     hold=kiwix_rollback_override()
     if hold and action!="start":raise ValueError("Reader rollback hold; inspect recovery evidence")
     if hold:return
     with db() as conn:
-        last=conn.execute("SELECT state FROM jobs WHERE module='kiwix' AND action='guarded-update' ORDER BY id DESC LIMIT 1").fetchone()
-    if last and last["state"] in {"failed","interrupted"}:
+        blocked=unresolved_guarded_update(conn)
+    if blocked:
         raise ValueError("Unresolved guarded reader update; inspect recovery evidence before lifecycle changes")
 
 
@@ -349,6 +361,7 @@ def enqueue_batch(token, selection):
     # than silently start a future dependent module out of order.
     if any(manifests[i].get("dependencies") for i in selection):
         raise ValueError("Selected module requires dependency support")
+    for ident in selection:kiwix_lifecycle_admission(ident,"install")
     canonical = json.dumps(sorted(selection))
     with db() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -1615,8 +1628,8 @@ def update_eligibility(ident,online=False,own_job=None):
         with db() as conn:
             if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') AND id!=? LIMIT 1",(own_job or 0,)).fetchone():
                 result["blockers"].append("Worker jobs active")
-            last=conn.execute("SELECT state FROM jobs WHERE module=? AND action IN ('update','guarded-update') AND id!=? ORDER BY id DESC LIMIT 1",(ident,own_job or 0)).fetchone()
-            if last and last["state"] in {"failed","interrupted"}:result["blockers"].append("Unresolved previous update outcome")
+            last=conn.execute("SELECT state FROM jobs WHERE module=? AND action='update' AND id!=? ORDER BY id DESC LIMIT 1",(ident,own_job or 0)).fetchone()
+            if unresolved_guarded_update(conn,own_job or 0) or (last and last["state"] in {"failed","interrupted"}):result["blockers"].append("Unresolved previous update outcome")
         if kopia_status()["connection"]!="connected":result["blockers"].append("Connect Kopia repository first")
         if result["blockers"]:
             result["status"]="blocked"
@@ -1665,8 +1678,8 @@ def enqueue_update_preparation(value,guarded=False):
         if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone():
             raise sqlite3.IntegrityError("Worker busy")
         if guarded:
-            prior=conn.execute("SELECT state FROM jobs WHERE module='kiwix' AND action IN ('update','guarded-update') ORDER BY id DESC LIMIT 1").fetchone()
-            if prior and prior["state"] in {"failed","interrupted"}:raise ValueError("Unresolved update outcome")
+            prior=conn.execute("SELECT state FROM jobs WHERE module='kiwix' AND action='update' ORDER BY id DESC LIMIT 1").fetchone()
+            if unresolved_guarded_update(conn) or (prior and prior["state"] in {"failed","interrupted"}):raise ValueError("Unresolved update outcome")
         row=conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix',?,'queued','Queued',?)",("guarded-update" if guarded else "prepare-update",int(time.time())))
         conn.execute("INSERT INTO update_preparations(job,request) VALUES (?,?)",(row.lastrowid,json.dumps(value,sort_keys=True)))
         return row.lastrowid
@@ -1988,7 +2001,7 @@ def prepare_update(job,guarded=False):
 
 def latest_update_preparation():
     with db() as conn:
-        row=conn.execute("SELECT j.id,j.state,j.action,j.created,p.evidence FROM jobs j JOIN update_preparations p ON p.job=j.id ORDER BY j.id DESC LIMIT 1").fetchone()
+        row=conn.execute("SELECT j.id,j.state,j.action,j.created,p.evidence FROM jobs j JOIN update_preparations p ON p.job=j.id WHERE j.action IN ('prepare-update','guarded-update') ORDER BY j.id DESC LIMIT 1").fetchone()
     if not row:return None
     return {"job":row["id"],"state":row["state"],"action":row["action"],"created":row["created"],
             "evidence":json.loads(row["evidence"]) if row["evidence"] and (row["state"]=="succeeded" or row["action"]=="guarded-update") else None}
@@ -2044,11 +2057,12 @@ def reader_hold_resolution(report):
         result["blockers"].append("Reviewed base Compose target must resolve locally to the recovered image")
     if not result["blockers"]:
         result["status"]="local prerequisites met"
-        result["blockers"].append("Explicit archive, pin and catalog re-verification and hold resolution still required")
+        result["clear_enabled"]=True
+        result["blockers"].append("Explicit archive, pin and catalog re-verification required before removal")
     return result
 
 
-def reader_update_health():
+def reader_update_health(own_job=0):
     """Read-only local status. No registry request, archive read or job admission."""
     report={"module":"kiwix","observed_at":int(time.time()),"registry_checked":False,
             "archive_reverified":False,"automatic_execution_enabled":False,
@@ -2083,7 +2097,7 @@ def reader_update_health():
                 result["evidence"]={k:e[k] for k in ("candidate","platform","previous_image_id","target_image_id",
                     "snapshot_id","pin_confirmed","verification","file_objects_read","checked_at",
                     "previous_image_archive","recreation_attempted","update_performed","result_image_id",
-                    "catalog_sample_matched","rollback_status","rollback_image_id","rollback_checked_at") if k in e}
+                    "catalog_sample_matched","rollback_status","rollback_image_id","rollback_checked_at","resolution_job","resolution_checked_at") if k in e}
                 archive=result["evidence"].get("previous_image_archive")
                 if isinstance(archive,dict):
                     result["evidence"]["previous_image_archive"]={k:archive[k] for k in ("image_id","sha256","bytes") if k in archive}
@@ -2095,9 +2109,10 @@ def reader_update_health():
         for key,action in (("latest_preparation","prepare-update"),("latest_guarded_update","guarded-update"),("latest_manual_update","update")):
             row=conn.execute("SELECT j.id,j.action,j.state,j.stage,j.created,p.evidence FROM jobs j LEFT JOIN update_preparations p ON p.job=j.id WHERE j.module='kiwix' AND j.action=? ORDER BY j.id DESC LIMIT 1",(action,)).fetchone()
             report[key]=attempt(row)
-        report["worker_busy"]=bool(conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone())
+        report["worker_busy"]=bool(conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') AND id!=? LIMIT 1",(own_job,)).fetchone())
+        report["unresolved_guarded_update"]=unresolved_guarded_update(conn)
     guarded=report["latest_guarded_update"]
-    if guarded and guarded["state"] in {"failed","interrupted"}:
+    if report["unresolved_guarded_update"]:
         report["blockers"].append("Unresolved guarded update; no automatic retry")
     manual=report["latest_manual_update"]
     if manual and manual["state"] in {"failed","interrupted"}:
@@ -2120,6 +2135,78 @@ def reader_update_health():
     if report["reader_state"]!="running":report["blockers"].append("Reader not confirmed running and ready")
     report["rollback_resolution"]=reader_hold_resolution(report)
     return report
+
+
+def enqueue_reader_resolution(request):
+    if (RECOVERY_CORE_ONLY or RECOVERY_OFFLINE or not isinstance(request,dict)
+        or set(request)!={"failed_job","image_id"} or type(request["failed_job"]) is not int
+        or request["failed_job"]<=0 or not isinstance(request["image_id"],str)
+        or not re.fullmatch(IMAGE_ID_PATTERN,request["image_id"])):
+        raise ValueError("Invalid rollback resolution request")
+    hold=kiwix_rollback_override()
+    if not hold or hold[1]!=request["image_id"]:raise ValueError("Matching rollback hold required")
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone():
+            raise sqlite3.IntegrityError("Worker busy")
+        latest=conn.execute("SELECT id,state FROM jobs WHERE module='kiwix' AND action='guarded-update' ORDER BY id DESC LIMIT 1").fetchone()
+        if not latest or latest["id"]!=request["failed_job"] or latest["state"] not in {"failed","interrupted"}:
+            raise ValueError("Matching failed guarded update required")
+        row=conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix','resolve-rollback','queued','Queued',?)",(int(time.time()),))
+        conn.execute("INSERT INTO update_preparations(job,request) VALUES (?,?)",(row.lastrowid,json.dumps(request,sort_keys=True)))
+        return row.lastrowid
+
+
+def resolve_reader_hold(job):
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE:raise ValueError("Rollback resolution unavailable")
+    change(job,state="running",total=5,completed=0,stage="Recheck rollback resolution prerequisites")
+    with db() as conn:
+        request=json.loads(conn.execute("SELECT request FROM update_preparations WHERE job=?",(job,)).fetchone()["request"])
+        row=conn.execute("SELECT evidence FROM update_preparations WHERE job=?",(request["failed_job"],)).fetchone()
+        evidence=json.loads(row["evidence"]) if row else None
+    def preflight():
+        report=reader_update_health(job)
+        result=report["rollback_resolution"]
+        if (result["status"]!="local prerequisites met" or result["failed_job"]!=request["failed_job"]
+            or report["rollback_hold"].get("image_id")!=request["image_id"]):
+            raise RuntimeError("Rollback resolution prerequisites not met")
+        return result["base_image"]
+    base=preflight()
+    image=request["image_id"]
+    change(job,completed=1,stage="Acquire content maintenance")
+    content_guard("begin",job)
+    try:
+        if preflight()!=base:raise RuntimeError("Reviewed base changed")
+        fingerprint=reader_compose_fingerprint()
+        folder=STATE/"previous-images"/("kiwix-"+image.split(":")[1])
+        change(job,completed=2,stage="Reverify exact previous image archive")
+        if verify_previous_archive(folder,image)!=evidence["previous_image_archive"]:
+            raise RuntimeError("Previous image archive differs")
+        sid=evidence["snapshot_id"]
+        change(job,completed=3,stage="Reverify protected native snapshot and recovered catalog")
+        _,stats=read_snapshot_manifest(CONTENT_SOURCES["kiwix"],sid)
+        if stats.get("aftergrid_pinned") is not True:raise RuntimeError("Protected recovery snapshot unavailable")
+        verify_content_manifest(job,sid,stats)
+        _,after=read_snapshot_manifest(CONTENT_SOURCES["kiwix"],sid)
+        if after.get("aftergrid_pinned") is not True:raise RuntimeError("Protected recovery snapshot unavailable")
+        sample=kiwix_catalog_sample()
+        if hashlib.sha256(json.dumps(sample).encode()).hexdigest()!=evidence["catalog_sample_sha256"]:
+            raise RuntimeError("Recovered catalog differs from pre-update evidence")
+        if preflight()!=base or reader_compose_fingerprint()!=fingerprint:raise RuntimeError("Reviewed base changed")
+        hold=kiwix_rollback_override()
+        if not hold or hold[1]!=image:raise RuntimeError("Rollback hold changed")
+        # Record intent before removing the override. A crash before successful
+        # job completion leaves the original failed update unresolved.
+        evidence.update(resolution_job=job,resolution_checked_at=int(time.time()))
+        with db() as conn:
+            conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),request["failed_job"]))
+        change(job,completed=4,stage="Remove verified local override; no container recreation")
+        hold[0].unlink()
+        fd=os.open(STATE,os.O_DIRECTORY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+    finally:content_guard("end",job)
+    change(job,completed=5,state="succeeded",stage="Rollback hold resolved; original failed update retained")
 
 
 def ready(ident):
@@ -2188,6 +2275,10 @@ def execute(row):
     job, ident, action = row["id"], row["module"], row["action"]
     switch_attempted=False
     try:
+        if action=="resolve-rollback":
+            if ident!="kiwix":raise ValueError("Unsupported rollback resolution")
+            resolve_reader_hold(job)
+            return
         if action in {"prepare-update","guarded-update"}:
             if ident!="kiwix" or ident not in catalog():raise ValueError("Unsupported update preparation")
             prepare_update(job,guarded=action=="guarded-update")
@@ -2375,13 +2466,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if RECOVERY_CORE_ONLY:
             return self.send_json(409,{"detail":"Core-only recovery disables module actions"})
-        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation", "/guarded-update"}:
+        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation", "/guarded-update", "/resolve-rollback"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
+            if self.path=="/resolve-rollback":
+                return self.send_json(202,{"id":enqueue_reader_resolution(body)})
             if self.path in {"/update-preparation","/guarded-update"}:
                 return self.send_json(202,{"id":enqueue_update_preparation(body,guarded=self.path=="/guarded-update")})
             if self.path=="/update-eligibility":
