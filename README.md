@@ -2,7 +2,7 @@
 
 **Life beyond the grid.**
 
-AfterGrid is an open-source, self-hosted, offline-first preparedness platform for families, homesteads and communities. It manages existing applications using Docker Compose instead of rebuilding them.
+AfterGrid is an open-source, self-hosted, offline-first preparedness appliance for families, homesteads and communities. It manages existing applications using Docker Compose instead of rebuilding them. The goal is one initial installation command followed by ordinary browser-based use on your home network, without requiring container or Linux administration skills. This is the design target, not a claim that every development workflow is already browser-only.
 
 ## Development status
 
@@ -16,7 +16,7 @@ On a Debian or Ubuntu Linux machine (bare metal or a suitable Proxmox guest), wi
 curl -fsSL https://raw.githubusercontent.com/ramseys1990/AfterGrid/main/install.sh -o /tmp/aftergrid-install.sh && sudo bash /tmp/aftergrid-install.sh
 ```
 
-This development installer downloads the source and builds the core locally. It installs Docker Engine and Compose on supported clean hosts when needed; existing Docker installations are not replaced. The installer normally detects a private LAN address; loopback is the fallback or an explicit choice. On a remote machine, use an SSH tunnel (see installer output). To choose a specific trusted-LAN address, set AFTERGRID_BIND to a private IPv4 address assigned to the server when invoking the installer. HTTP is not encrypted; use a tunnel or a trusted HTTPS reverse proxy for administrative access.
+This development installer downloads the source and builds the core locally. It installs Docker Engine and Compose on supported clean hosts when needed; existing Docker installations are not replaced. The installer normally detects a private LAN address; loopback is the fallback or an explicit choice. On the same trusted home network, use the LAN address printed by the installer. A loopback-only installation or remote administrative access is an advanced case; see installer output for secure access. To choose a specific trusted-LAN address, set AFTERGRID_BIND to a private IPv4 address assigned to the server when invoking the installer. HTTP is not encrypted; use a tunnel or a trusted HTTPS reverse proxy for administrative access.
 
 To inspect a host before installing, use the same downloaded script with `sudo bash /tmp/aftergrid-install.sh --check`. This read-only preflight checks the supported OS, private bind, portal TCP port, local Docker context and existing AfterGrid resources; it does not install packages, download source, or create containers. Choose a different AFTERGRID_PORT if the selected TCP port is already occupied. The check is conservative and cannot reserve the port or guarantee Docker guest compatibility.
 

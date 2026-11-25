@@ -2,6 +2,17 @@
 
 AfterGrid is an offline-first, modular preparedness appliance for ordinary users.
 
+## Appliance-first acceptance
+
+The target operator is a household member with no Docker, Linux, networking or identity-management experience. Optimize for the number of decisions, commands and accounts required to get a working appliance, not the sophistication of its architecture.
+
+- One initial install command, a printed LAN URL, and browser setup. Routine administration must not require SSH, a terminal, custom DNS, a reverse proxy, or a separate identity service.
+- The default dashboard offers only actions a normal operator can use: install, open, configure, update, back up, and remove an application. Show progress and a plain-language next step on failure. Put diagnostics and exceptional recovery in advanced documentation.
+- Keep native read-only resources accessible without needless accounts on the trusted LAN. Keep authentication for administration and private or editable data. Use supported upstream setup and permissions; do not bypass security.
+- Reuse Docker Compose for lifecycle and Kopia for backups. No new daemon, proxy, orchestrator, database, or framework merely to automate an existing command. Add complexity only for a demonstrated user need or concrete safety requirement.
+- Prefer one straightforward, manually approved release update before background or automatic update policies. Only core/worker may restart during a core update; independent applications keep running. Never expose arbitrary host commands to the portal.
+- Each milestone must define a simple user journey, test that journey, and stop adding scope when it works. Defer speculative features and rare failure automation if a safe, documented recovery path exists. Never represent a disposable test as a released feature.
+
 ## Non-negotiable design
 - Compose first: each optional module is a standard, independently named Docker Compose project. Use upstream maintained images and documented settings. Prefer configuration to custom deployment logic.
 - Install only the core by default. The initial CLI bootstraps Docker and core, then hands off to a browser wizard.

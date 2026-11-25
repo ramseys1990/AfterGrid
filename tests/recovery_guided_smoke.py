@@ -221,11 +221,24 @@ def main(fixture,exported=None):
                         run(cmd,"exec","-T","worker","python3","-c",
                             "import sqlite3; c=sqlite3.connect('/worker-state/jobs.sqlite3'); c.execute('CREATE TABLE failed_promotion_fixture (id INTEGER)'); c.commit(); c.close()")
                         raise RuntimeError("Intentional canonical promotion failure")
-                    try:core_update.promote_disposable(original,candidate,bad_promotion)
-                    except RuntimeError as exc:
-                        if str(exc)!="Intentional canonical promotion failure":raise
-                    else:raise AssertionError("Expected canonical promotion failure")
-                    report=json.loads((candidate/"promotion.json").read_text())
+                    # Earlier runs exercised uninterrupted canonical rollback.
+                    # This fixture interrupts the real worker-volume helper after
+                    # moving the original files and recording its durable phase.
+                    # The next invocation must resume using the original helper.
+                    helper=core_update.RESTORE_WORKER
+                    interrupted=helper.replace('mark("extracting")','mark("extracting"); os._exit(87)',1)
+                    assert interrupted!=helper
+                    with patch.object(core_update,"RESTORE_WORKER",interrupted):
+                        try:core_update.promote_disposable(original,candidate,bad_promotion)
+                        except (RuntimeError,subprocess.CalledProcessError):
+                            pending=json.loads((candidate/"promotion.json").read_text())
+                            assert pending["phase"]=="promotion_requires_inspection"
+                            assert pending["resume_phase"]=="restoring_worker_state"
+                        else:raise AssertionError("Expected interrupted worker restoration")
+                    assert applications=={ident:app_identity(ident) for ident in applications}
+                    assert reader_fixture()
+                    report=core_update.resume_disposable_rollback(original,candidate)
+                    assert report["phase"]=="rolled_back"
                     assert report["phase"]=="rolled_back"
                     assert Path(report["failed_core"]).is_dir()
                     assert not (original/"core/update-fixture.txt").exists()
@@ -260,7 +273,7 @@ def main(fixture,exported=None):
             run_trial(interrupt=True)
             run_trial(promotion_failure=True)
             run_trial(promote=True)
-            print("Distinct candidate images, forced probe failure, interrupted trial reconciliation and canonical promotion passed; Kiwix and Kopia stayed online.",flush=True)
+            print("Distinct candidate images, forced probe failure, interrupted trial reconciliation, resumed worker restore and canonical promotion passed; Kiwix and Kopia stayed online.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")
             assert "core" in keys and "content/kiwix" in keys and "application/tak" not in keys
             for key in ("global","content/kiwix"):
