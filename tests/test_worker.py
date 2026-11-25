@@ -1110,3 +1110,64 @@ def test_reader_update_health_reports_missing_image_evidence(tmp_path,monkeypatc
     monkeypatch.setattr(worker,"version_report",lambda i:{"services":[{"service":"kiwix","installed_image_ids":[]}]})
     report=worker.reader_update_health()
     assert "Running reader image identity not confirmed" in report["blockers"]
+
+
+@pytest.mark.parametrize("failure,expected_rollback",[
+    ("capture",None),("before-recreation",None),
+    ("after-recreation","restored"),("rollback","unconfirmed")])
+def test_guarded_update_failure_retains_evidence_and_releases_guard(tmp_path,monkeypatch,failure,expected_rollback):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    worker.init()
+    old="sha256:"+"a"*64
+    new="sha256:"+"b"*64
+    target="ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"c"*64
+    request={"candidate":target,"platform":"linux/amd64","previous_image_id":old,"target_image_id":new}
+    monkeypatch.setattr(worker,"approved_update_candidate",lambda i:{"image":target,"platforms":{"linux/amd64":{"from":[old],"to":new}}})
+    monkeypatch.setattr(worker,"check_preparation_identity",lambda *a:None)
+    monkeypatch.setattr(worker,"native_policy_summary",lambda k:{"policy":{"schedule":{"automatic_policy":False},"ignore_identical":False}})
+    guard=[]
+    monkeypatch.setattr(worker,"content_guard",lambda action,job:guard.append((action,job)))
+    def capture(*a,**kw):
+        assert guard==[("begin",job)]
+        if failure=="capture":raise RuntimeError("fixture capture failure")
+        return "d"*32
+    monkeypatch.setattr(worker,"native_snapshot_source",capture)
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda *a:("root",{"aftergrid_pinned":True}))
+    monkeypatch.setattr(worker,"verify_content_manifest",lambda *a:3)
+    archive={"image_id":old,"sha256":"e"*64,"bytes":100,"format":1}
+    monkeypatch.setattr(worker,"preserve_previous_image",lambda i:archive)
+    attempted=[]
+    def transition(j,expected,evidence):
+        assert guard==[("begin",job)]
+        assert worker.latest_update_preparation()["evidence"]["previous_image_archive"]==archive
+        attempted.append("transition")
+        if failure in {"after-recreation","rollback"}:
+            evidence["recreation_attempted"]=True
+        raise RuntimeError("fixture transition failure")
+    def rollback(j,expected,evidence):
+        assert guard==[("begin",job)]
+        assert worker.latest_update_preparation()["evidence"]["rollback_status"]=="attempting"
+        attempted.append("rollback")
+        if failure=="rollback":raise RuntimeError("fixture rollback failure")
+        evidence.update(rollback_status="restored",rollback_image_id=old)
+    monkeypatch.setattr(worker,"guarded_compose_update",transition)
+    monkeypatch.setattr(worker,"rollback_reader",rollback)
+    job=worker.enqueue_update_preparation(request,guarded=True)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed"
+    assert guard==[("begin",job),("end",job)]
+    evidence=worker.latest_update_preparation()["evidence"]
+    if failure=="capture":
+        assert evidence is None and not attempted
+    else:
+        assert evidence["snapshot_id"]=="d"*32 and evidence["pin_confirmed"]
+        assert evidence["previous_image_archive"]==archive
+        assert evidence["update_performed"] is False
+        assert evidence.get("rollback_status")==expected_rollback
+        assert attempted==(["transition","rollback"] if expected_rollback else ["transition"])
+    with pytest.raises(ValueError,match="Unresolved update outcome"):
+        worker.enqueue_update_preparation(request,guarded=True)
