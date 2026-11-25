@@ -1277,6 +1277,32 @@ def create_app(data_dir=None):
         if code!=200:raise HTTPException(code if code in {400,503} else 502,"Update eligibility unavailable")
         return result
 
+    class UpdatePreparationSelection(BaseModel):
+        candidate: str = Field(min_length=1,max_length=256)
+        platform: str = Field(min_length=1,max_length=32)
+        previous_image_id: str = Field(min_length=71,max_length=71)
+        target_image_id: str = Field(min_length=71,max_length=71)
+        confirmed: bool = Field(strict=True)
+
+    @api.get("/api/admin/modules/kiwix/update-preparation")
+    def update_preparation_status(request: Request):
+        require_admin(request)
+        try:code,result=call("/update-preparation/kiwix")
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=200:raise HTTPException(503,"Update preparation history unavailable")
+        return result
+
+    @api.post("/api/admin/modules/kiwix/update-preparation",status_code=202)
+    def queue_update_preparation(payload: UpdatePreparationSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:raise HTTPException(409,"Confirm protected capture and verification")
+        maintenance_idle()
+        try:code,result=call("/update-preparation",payload.model_dump(exclude={"confirmed"}))
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=202:raise HTTPException(code if code in {400,409} else 502,"Approved update preparation unavailable")
+        return result
+
     @api.post("/api/admin/modules/{ident}/registry-check")
     def module_registry_check(ident: str,request: Request):
         require_admin(request)

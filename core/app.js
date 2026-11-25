@@ -182,6 +182,26 @@ async function renderModules(){
               for(const value of [r.status,"Approved target: "+(r.candidate||"none"),"Registry checked: "+(r.registry_checked?"yes":"no"),...(r.blockers||[]),"Advisory only. No automatic update execution enabled."]){
                 const p=document.createElement("p");p.textContent=value;eligibility.append(p);
               }
+              if(online&&r.status==="reviewed candidate confirmed"){
+                const prep=document.createElement("button");prep.type="button";prep.textContent="Prepare protected pre-update backup";
+                eligibility.append(prep);
+                prep.addEventListener("click",async()=>{
+                  if(!confirm("Create a new pinned Kiwix snapshot and read every file? Content operations are paused during preparation. This may take hours and consume storage. No update will be installed."))return;
+                  prep.disabled=true;
+                  try{
+                    const job=await api("/api/admin/modules/kiwix/update-preparation",{candidate:r.candidate,platform:r.platform,previous_image_id:r.installed_image_ids[0],target_image_id:r.expected_target_image_id,confirmed:true});
+                    if(status?.admin&&card.isConnected){eligibility.textContent="Preparation job "+job.id+" queued. Check installation activity.";await renderJobs();}
+                  }catch(e){if(status?.admin&&card.isConnected)eligibility.textContent=e.message;}
+                  finally{prep.disabled=false;}
+                });
+              }
+              const history=await api("/api/admin/modules/kiwix/update-preparation");
+              if(!status?.admin||!card.isConnected)return;
+              if(history.latest){
+                const p=document.createElement("p"),h=history.latest;
+                p.textContent="Latest preparation: job "+h.job+" · "+h.state+(h.evidence?" · protected snapshot "+h.evidence.snapshot_id+" · exact content read passed; no update performed":"");
+                eligibility.append(p);
+              }
             }catch(e){if(status?.admin&&card.isConnected)eligibility.textContent=e.message;}
             finally{localButton.disabled=onlineButton.disabled=false;}
           }

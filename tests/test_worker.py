@@ -890,3 +890,41 @@ def test_candidate_validation_is_narrow_and_fail_closed(tmp_path,monkeypatch):
     candidate["image"]="ghcr.io/kiwix/kiwix-serve:latest"
     path.write_text(json.dumps({"format":1,"candidate":candidate}))
     with pytest.raises(ValueError):worker.approved_update_candidate("kiwix")
+
+def test_preupdate_preparation_reuses_exact_native_read_and_guard(tmp_path,monkeypatch):
+    from pathlib import Path
+    import json
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    worker.init()
+    old="sha256:"+"a"*64
+    new="sha256:"+"b"*64
+    target="ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"c"*64
+    request={"candidate":target,"platform":"linux/amd64","previous_image_id":old,"target_image_id":new}
+    with pytest.raises(ValueError):worker.enqueue_update_preparation(request)
+    monkeypatch.setattr(worker,"approved_update_candidate",lambda ident:{"image":target,"platforms":{"linux/amd64":{"from":[old],"to":new}}})
+    seen=[]
+    monkeypatch.setattr(worker,"check_preparation_identity",lambda job,expected,online:seen.append(("identity",online)))
+    monkeypatch.setattr(worker,"native_policy_summary",lambda key:{"policy":{"schedule":{"automatic_policy":False},"ignore_identical":False}})
+    monkeypatch.setattr(worker,"content_guard",lambda action,job:seen.append((action,job)))
+    def snap(source,seconds,protect):
+        assert source==worker.CONTENT_SOURCES["kiwix"] and protect is True
+        seen.append(("snapshot",source))
+        return "a"*32
+    monkeypatch.setattr(worker,"native_snapshot_source",snap)
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda source,sid:("root",{"aftergrid_pinned":True,"fileCount":3}))
+    monkeypatch.setattr(worker,"verify_content_manifest",lambda job,sid,stats:seen.append(("verify",sid)) or 3)
+    job=worker.enqueue_update_preparation(request)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="succeeded"
+    assert seen==[("identity",True),("begin",job),("identity",False),("snapshot",worker.CONTENT_SOURCES["kiwix"]),("verify","a"*32),("identity",False),("end",job)]
+    evidence=worker.latest_update_preparation()["evidence"]
+    assert evidence["snapshot_id"]=="a"*32 and evidence["pin_confirmed"] and not evidence["reusable_authorization"] and not evidence["update_performed"]
+    def fail(*args):raise RuntimeError("verification failure")
+    monkeypatch.setattr(worker,"verify_content_manifest",fail)
+    job=worker.enqueue_update_preparation(request)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed" and seen[-1]==("end",job)
+    assert worker.latest_update_preparation()["evidence"] is None

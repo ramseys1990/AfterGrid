@@ -502,3 +502,24 @@ def test_update_eligibility_admin_and_same_origin(tmp_path,monkeypatch):
         assert c.post("/api/admin/modules/grocy/update-eligibility",json={},headers=ORIGIN).status_code==400
         assert c.post(path,json={},headers=ORIGIN).json()["status"]=="no approved update"
         assert ("/update-eligibility",{"module":"kiwix"}) in calls
+
+def test_update_preparation_requires_admin_and_explicit_confirmation(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def call(path,payload=None,**kwargs):
+        calls.append((path,payload))
+        if path=="/jobs":return 200,[]
+        if path=="/update-preparation/kiwix":return 200,{"latest":None}
+        return 202,{"id":9}
+    monkeypatch.setattr(core_app,"call",call)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/modules/kiwix/update-preparation"
+    payload={"candidate":"ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"c"*64,"platform":"linux/amd64",
+             "previous_image_id":"sha256:"+"a"*64,"target_image_id":"sha256:"+"b"*64,"confirmed":True}
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.get(path).status_code==401
+        assert c.post("/api/setup",json={"username":"admin","password":"long test password","token":"token"},headers=ORIGIN).status_code==201
+        assert c.post(path,json=payload).status_code==403
+        assert c.post(path,json={**payload,"confirmed":False},headers=ORIGIN).status_code==409
+        assert c.post(path,json=payload,headers=ORIGIN).json()=={"id":9}
+        assert calls[-1]==("/update-preparation",{k:v for k,v in payload.items() if k!="confirmed"})

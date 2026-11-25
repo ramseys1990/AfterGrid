@@ -161,6 +161,9 @@ def main(fixture,exported=None):
             assert core_health["schedule"]["status"]=="disabled"
             eligibility=call(old,"/api/admin/modules/kiwix/update-eligibility")
             assert eligibility["status"]=="no approved update" and not eligibility["automatic_execution_enabled"]
+            assert call(old,"/api/admin/modules/kiwix/update-preparation")["latest"] is None
+            call(old,"/api/admin/modules/kiwix/update-preparation",{"candidate":"ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"c"*64,
+                 "platform":"linux/amd64","previous_image_id":"sha256:"+"a"*64,"target_image_id":"sha256:"+"b"*64,"confirmed":True},400)
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)

@@ -228,6 +228,7 @@ def init():
           CREATE TABLE IF NOT EXISTS batches (
             token TEXT PRIMARY KEY, selection TEXT NOT NULL, job_ids TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS protected_snapshots (job INTEGER PRIMARY KEY);
+          CREATE TABLE IF NOT EXISTS update_preparations (job INTEGER PRIMARY KEY, request TEXT NOT NULL, evidence TEXT);
           CREATE TABLE IF NOT EXISTS retention_requests (job INTEGER PRIMARY KEY, request TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS exact_verifications (
             job INTEGER PRIMARY KEY, source_job INTEGER NOT NULL);
@@ -603,6 +604,14 @@ def verify_content(job,ident,source_job=None):
     snapshot_id=latest_content_snapshot(ident) if source_job is None else latest_content_snapshot(ident,source_job)
     _,stats=read_snapshot_manifest(CONTENT_SOURCES[ident],snapshot_id)
     change(job,completed=1,stage="Read every file in native snapshot")
+    verify_content_manifest(job,snapshot_id,stats)
+    change(job,completed=2,state="succeeded",stage="Native content read verification passed; restore not tested")
+
+
+def verify_content_manifest(job,snapshot_id,stats):
+    """Shared exact-manifest full read; never changes parent job state."""
+    if not isinstance(snapshot_id,str) or not re.fullmatch(r"[a-f0-9]{32,64}",snapshot_id):
+        raise ValueError("Invalid native snapshot ID")
     try:
         raw=subprocess.run(command("kopia","exec","-T","kopia","timeout","--kill-after=10s",str(CONTENT_TIMEOUT)+"s",
             "/bin/kopia","snapshot","verify","--json","--verify-files-percent=100","--parallel=2","--file-parallelism=2",snapshot_id),
@@ -619,7 +628,7 @@ def verify_content(job,ident,source_job=None):
     except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError):
         raise RuntimeError("Native content verification failed or incomplete; inspect Kopia") from None
     log(job,"\nContent snapshot "+snapshot_id+" verified: "+str(result["readFileCount"])+" distinct file objects read; zero reported errors. No files restored.\n")
-    change(job,completed=2,state="succeeded",stage="Native content read verification passed; restore not tested")
+    return result["readFileCount"]
 
 def recovery_sources():
     sources=[
@@ -1485,7 +1494,7 @@ def approved_update_candidate(ident):
     return candidate
 
 
-def update_eligibility(ident,online=False):
+def update_eligibility(ident,online=False,own_job=None):
     """Advisory only: no backup, pull, Compose mutation or update admission."""
     if ident not in catalog():raise ValueError("Unknown module")
     result={"module":ident,"pilot_supported":ident=="kiwix","automatic_execution_enabled":False,
@@ -1524,7 +1533,7 @@ def update_eligibility(ident,online=False):
             result["blockers"].append("Installed image is not an approved starting point")
         if state(ident)!="running":result["blockers"].append("Reader must be running and ready")
         with db() as conn:
-            if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone():
+            if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') AND id!=? LIMIT 1",(own_job or 0,)).fetchone():
                 result["blockers"].append("Worker jobs active")
             last=conn.execute("SELECT state FROM jobs WHERE module=? AND action IN ('update','guarded-update') ORDER BY id DESC LIMIT 1",(ident,)).fetchone()
             if last and last["state"] in {"failed","interrupted"}:result["blockers"].append("Unresolved previous update outcome")
@@ -1549,6 +1558,97 @@ def update_eligibility(ident,online=False):
     except (OSError,ValueError,TypeError,KeyError,RuntimeError,sqlite3.Error,subprocess.SubprocessError):
         result.update(status="blocked",blockers=["Local or registry eligibility evidence unavailable or invalid"])
     return result
+
+
+def validate_update_preparation(value):
+    if (not isinstance(value,dict) or set(value)!={"candidate","platform","previous_image_id","target_image_id"}
+        or not isinstance(value["candidate"],str)
+        or not re.fullmatch(r"ghcr\.io/kiwix/kiwix-serve:[A-Za-z0-9_.-]{1,100}@"+IMAGE_ID_PATTERN,value["candidate"])
+        or value["platform"] not in {"linux/amd64","linux/arm64"}
+        or any(not isinstance(value[k],str) or not re.fullmatch(IMAGE_ID_PATTERN,value[k]) for k in ("previous_image_id","target_image_id"))
+        or value["previous_image_id"]==value["target_image_id"]):
+        raise ValueError("Invalid reviewed transition")
+    return value
+
+
+def enqueue_update_preparation(value):
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE or "kiwix" not in catalog():raise ValueError("Update preparation unavailable")
+    value=validate_update_preparation(value)
+    candidate=approved_update_candidate("kiwix")
+    approval=candidate["platforms"].get(value["platform"]) if candidate else None
+    if (not approval or candidate["image"]!=value["candidate"] or approval["to"]!=value["target_image_id"]
+        or value["previous_image_id"] not in approval["from"]):
+        raise ValueError("No matching approved transition")
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone():
+            raise sqlite3.IntegrityError("Worker busy")
+        row=conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix','prepare-update','queued','Queued',?)",(int(time.time()),))
+        conn.execute("INSERT INTO update_preparations(job,request) VALUES (?,?)",(row.lastrowid,json.dumps(value,sort_keys=True)))
+        return row.lastrowid
+
+
+def check_preparation_identity(job,expected,online):
+    result=update_eligibility("kiwix",online=online,own_job=job)
+    if (result["status"]!=("reviewed candidate confirmed" if online else "registry check required")
+        or result.get("candidate")!=expected["candidate"] or result.get("platform")!=expected["platform"]
+        or result.get("installed_image_ids")!=[expected["previous_image_id"]]
+        or result.get("expected_target_image_id")!=expected["target_image_id"]):
+        raise RuntimeError("Approved update identity or admission changed; inspect eligibility")
+    # Check the installed old image by ID, not a mutable tag.
+    try:
+        raw=subprocess.run(["docker","image","inspect","--format","{{json .Id}}",expected["previous_image_id"]],
+                           capture_output=True,text=True,timeout=5,check=True).stdout
+        if json.loads(raw)!=expected["previous_image_id"]:raise ValueError("Image changed")
+    except (OSError,ValueError,TypeError,subprocess.SubprocessError):
+        raise RuntimeError("Previous Docker image unavailable") from None
+    return result
+
+
+def prepare_update(job):
+    """Standalone rehearsal/evidence only; never an authorization to update later."""
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE:raise ValueError("Update preparation unavailable")
+    with db() as conn:
+        row=conn.execute("SELECT request FROM update_preparations WHERE job=?",(job,)).fetchone()
+    if not row:raise ValueError("Reviewed transition request missing")
+    expected=validate_update_preparation(json.loads(row["request"]))
+    change(job,state="running",total=5,completed=0,stage="Recheck approved transition and registry")
+    check_preparation_identity(job,expected,True)
+    source=CONTENT_SOURCES["kiwix"]
+    policy=native_policy_summary("content/kiwix")["policy"]
+    if policy["schedule"]["automatic_policy"] or policy["ignore_identical"] is not False:
+        raise RuntimeError("Review native source scheduling and identical snapshot policy first")
+    change(job,completed=1,stage="Acquire content maintenance")
+    content_guard("begin",job)
+    try:
+        check_preparation_identity(job,expected,False)
+        change(job,completed=2,stage="Capture new protected Kiwix content snapshot")
+        sid=native_snapshot_source(source,seconds=CONTENT_TIMEOUT,protect=True)
+        log(job,"\nPre-update protected snapshot: "+sid+"; verification pending.\n")
+        _,stats=read_snapshot_manifest(source,sid)
+        if stats.get("aftergrid_pinned") is not True:raise RuntimeError("Pre-update native pin not confirmed")
+        change(job,completed=3,stage="Read every file from exact protected snapshot")
+        count=verify_content_manifest(job,sid,stats)
+        _,after=read_snapshot_manifest(source,sid)
+        if after.get("aftergrid_pinned") is not True:raise RuntimeError("Pre-update pin no longer confirmed")
+        check_preparation_identity(job,expected,False)
+        evidence={**expected,"snapshot_id":sid,"file_objects_read":count,"checked_at":int(time.time()),
+                  "pin_confirmed":True,"verification":"read-only","update_performed":False,"reusable_authorization":False}
+        change(job,completed=4,stage="Release content maintenance")
+    finally:
+        content_guard("end",job)
+    with db() as conn:
+        conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
+    log(job,"\nPrevious image confirmed: "+expected["previous_image_id"]+"; preparation only, no pull or update. Repeat backup and verification inside future guarded update.\n")
+    change(job,completed=5,state="succeeded",stage="Protected preparation verified; no update performed")
+
+
+def latest_update_preparation():
+    with db() as conn:
+        row=conn.execute("SELECT j.id,j.state,j.created,p.evidence FROM jobs j JOIN update_preparations p ON p.job=j.id ORDER BY j.id DESC LIMIT 1").fetchone()
+    if not row:return None
+    return {"job":row["id"],"state":row["state"],"created":row["created"],
+            "evidence":json.loads(row["evidence"]) if row["state"]=="succeeded" and row["evidence"] else None}
 
 
 def ready(ident):
@@ -1617,6 +1717,10 @@ def execute(row):
     job, ident, action = row["id"], row["module"], row["action"]
     switch_attempted=False
     try:
+        if action=="prepare-update":
+            if ident!="kiwix" or ident not in catalog():raise ValueError("Unsupported update preparation")
+            prepare_update(job)
+            return
         if action=="set-retention":
             if ident!="kopia" or ident not in catalog():raise ValueError("Unsupported retention job")
             apply_retention(job)
@@ -1769,6 +1873,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})
             try:return self.send_json(200,backup_plan(ident))
             except RuntimeError:return self.send_json(503,{"detail":"Reviewed backup sources unavailable"})
+        if self.path=="/update-preparation/kiwix":
+            return self.send_json(200,{"latest":latest_update_preparation()})
         if self.path.startswith("/update-eligibility/"):
             ident=self.path.removeprefix("/update-eligibility/")
             if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})
@@ -1793,13 +1899,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if RECOVERY_CORE_ONLY:
             return self.send_json(409,{"detail":"Core-only recovery disables module actions"})
-        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility"}:
+        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
+            if self.path=="/update-preparation":
+                return self.send_json(202,{"id":enqueue_update_preparation(body)})
             if self.path=="/update-eligibility":
                 if not isinstance(body,dict) or set(body)!={"module"} or body["module"]!="kiwix":
                     raise ValueError("Unsupported update pilot")

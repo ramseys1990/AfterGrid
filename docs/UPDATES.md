@@ -88,3 +88,20 @@ identities do not authorize an update. Local inspection does not contact
 the registry. The portal serializes the explicit online check with its
 existing maintenance/content admission. Results are advisory; no image
 pull, backup, update execution or automatic scheduling is exposed here.
+
+### Protected preparation rehearsal
+
+An explicit administrator-confirmed preparation is accepted only for a
+repository-approved Kiwix transition. The worker rechecks online registry
+and installed image identity, verifies the old image exists by ID, holds
+the existing content guard throughout new pin-at-creation snapshot and full
+exact-manifest read verification, rechecks the native pin and local identity,
+and records evidence only after successful guard release. No image pulls,
+tags, service recreation, pruning or data replacement occur. Preparation
+evidence is historical, **never reusable authorization**: the eventual
+guarded update must repeat capture and verification under its own continuous
+guard. External content writers remain the operator's responsibility.
+The approved candidate remains null; the native fixture confirms rejection
+in that state, while focused regression tests cover the mocked successful
+and failed preparation sequences. Actual positive native transition acceptance
+and preservation of the prior image against pruning are still outstanding.
