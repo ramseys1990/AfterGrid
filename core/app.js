@@ -199,7 +199,7 @@ async function renderModules(){
               if(!status?.admin||!card.isConnected)return;
               if(history.latest){
                 const p=document.createElement("p"),h=history.latest;
-                p.textContent="Latest preparation: job "+h.job+" · "+h.state+(h.evidence?" · protected snapshot "+h.evidence.snapshot_id+" · exact content read passed; no update performed":"");
+                p.textContent="Latest preparation: job "+h.job+" · "+h.state+(h.evidence?" · protected snapshot "+h.evidence.snapshot_id+" · exact content read passed"+(h.evidence.previous_image_archive?" · previous image archive recorded":"")+"; no update performed":"");
                 eligibility.append(p);
               }
             }catch(e){if(status?.admin&&card.isConnected)eligibility.textContent=e.message;}

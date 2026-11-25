@@ -164,6 +164,18 @@ def main(fixture,exported=None):
             assert call(old,"/api/admin/modules/kiwix/update-preparation")["latest"] is None
             call(old,"/api/admin/modules/kiwix/update-preparation",{"candidate":"ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"c"*64,
                  "platform":"linux/amd64","previous_image_id":"sha256:"+"a"*64,"target_image_id":"sha256:"+"b"*64,"confirmed":True},400)
+            # Exercise the local image preservation helper in the disposable
+            # worker against the real running reader, without approving a
+            # production update candidate or deleting any image.
+            saved=json.loads(run(cmd,"exec","-T","worker","python3","-c",
+                "import worker,json; i=worker.version_report('kiwix')['services'][0]['installed_image_ids'][0]; print(json.dumps(worker.preserve_previous_image(i)))",
+                timeout=180))
+            assert saved["image_id"] in {r["image_id"] for r in recover.source_containers(original).values()}
+            assert saved["bytes"]>0 and re.fullmatch(r"[a-f0-9]{64}",saved["sha256"])
+            # Load the exact saved archive without deleting or pruning anything.
+            run(cmd,"exec","-T","worker","python3","-c",
+                "import worker,sys,subprocess; i=sys.argv[1]; p=worker.STATE/'previous-images'/('kiwix-'+i.split(':')[1]); worker.verify_previous_archive(p,i); subprocess.run(['docker','image','load','--input',str(p/'image.tar')],check=True); assert subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',i],text=True).strip()==i",
+                saved["image_id"],timeout=180)
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)

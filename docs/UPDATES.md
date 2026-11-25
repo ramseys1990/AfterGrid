@@ -105,3 +105,22 @@ The approved candidate remains null; the native fixture confirms rejection
 in that state, while focused regression tests cover the mocked successful
 and failed preparation sequences. Actual positive native transition acceptance
 and preservation of the prior image against pruning are still outstanding.
+
+### Previous image preservation
+
+Preparation now saves the exact prior Kiwix image ID as a native Docker
+archive in the private worker state volume, deduplicated by image ID.
+An archive is independently useful even if local Docker images are pruned;
+a tag alone is not sufficient. Before publication, verify the archive
+checksum and the saved image configuration's SHA-256 against the expected
+image ID. Writes are staged and synchronized; invalid existing archives
+are not silently overwritten. Space preflight, a 4 GiB archive limit and
+a bounded save time apply. An interrupted save can leave private staging
+files for operator inspection. No automatic archive removal or load
+endpoint is exposed. Preparation evidence records archive bytes and
+checksum, not authorization for a later update. The worker-state volume
+is local, not an independent off-host backup; these archives are not
+included in the current worker recovery export. Preserve important
+portable packages separately. The disposable native fixture checks actual
+save and load without deleting any image. Positive approved-transition
+acceptance remains outstanding.

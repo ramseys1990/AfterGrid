@@ -916,15 +916,60 @@ def test_preupdate_preparation_reuses_exact_native_read_and_guard(tmp_path,monke
     monkeypatch.setattr(worker,"native_snapshot_source",snap)
     monkeypatch.setattr(worker,"read_snapshot_manifest",lambda source,sid:("root",{"aftergrid_pinned":True,"fileCount":3}))
     monkeypatch.setattr(worker,"verify_content_manifest",lambda job,sid,stats:seen.append(("verify",sid)) or 3)
+    monkeypatch.setattr(worker,"preserve_previous_image",lambda image:seen.append(("archive",image)) or {"image_id":image,"sha256":"e"*64,"bytes":100,"format":1})
     job=worker.enqueue_update_preparation(request)
     worker.execute(worker.jobs()[0])
     assert worker.jobs()[0]["state"]=="succeeded"
-    assert seen==[("identity",True),("begin",job),("identity",False),("snapshot",worker.CONTENT_SOURCES["kiwix"]),("verify","a"*32),("identity",False),("end",job)]
+    assert seen==[("identity",True),("begin",job),("identity",False),("snapshot",worker.CONTENT_SOURCES["kiwix"]),("verify","a"*32),("identity",False),("archive",old),("identity",False),("end",job)]
     evidence=worker.latest_update_preparation()["evidence"]
     assert evidence["snapshot_id"]=="a"*32 and evidence["pin_confirmed"] and not evidence["reusable_authorization"] and not evidence["update_performed"]
+    assert evidence["previous_image_archive"]["image_id"]==old
     def fail(*args):raise RuntimeError("verification failure")
     monkeypatch.setattr(worker,"verify_content_manifest",fail)
     job=worker.enqueue_update_preparation(request)
     worker.execute(worker.jobs()[0])
     assert worker.jobs()[0]["state"]=="failed" and seen[-1]==("end",job)
     assert worker.latest_update_preparation()["evidence"] is None
+
+
+def test_previous_image_archive_validation_and_reuse(tmp_path,monkeypatch):
+    import hashlib,io,json,tarfile
+    from types import SimpleNamespace
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    config=b'{"fixture":true}'
+    digest=hashlib.sha256(config).hexdigest()
+    image="sha256:"+digest
+    buffer=io.BytesIO()
+    with tarfile.open(fileobj=buffer,mode="w") as tar:
+        for name,data in (("manifest.json",json.dumps([{"Config":digest+".json","Layers":[]}]).encode()),(digest+".json",config)):
+            member=tarfile.TarInfo(name)
+            member.size=len(data)
+            tar.addfile(member,io.BytesIO(data))
+    payload=buffer.getvalue()
+    calls=[]
+    def run(argv,**kwargs):
+        calls.append(argv)
+        assert argv==["docker","image","inspect","--format","{{json .Size}}",image]
+        return SimpleNamespace(stdout="1024")
+    class Proc:
+        def __init__(self,argv,**kwargs):
+            calls.append(argv)
+            assert argv==["docker","image","save",image]
+            self.stdout=io.BytesIO(payload)
+        def __enter__(self):return self
+        def __exit__(self,*args):self.stdout.close()
+        def wait(self):return 0
+        def poll(self):return 0
+        def kill(self):pass
+    monkeypatch.setattr(worker.subprocess,"run",run)
+    monkeypatch.setattr(worker.subprocess,"Popen",Proc)
+    monkeypatch.setattr(worker.shutil,"disk_usage",lambda path:SimpleNamespace(free=2*1024**3))
+    result=worker.preserve_previous_image(image)
+    assert result["sha256"]==hashlib.sha256(payload).hexdigest() and len(calls)==2
+    folder=tmp_path/"previous-images"/("kiwix-"+digest)
+    assert worker.preserve_previous_image(image)==result and len(calls)==2
+    assert (folder/"image.tar").stat().st_mode&0o777==0o600
+    with (folder/"image.tar").open("ab") as out:out.write(b"corruption")
+    with pytest.raises(RuntimeError,match="Existing previous image archive invalid"):worker.preserve_previous_image(image)
+    assert len(calls)==2
+    with pytest.raises(ValueError):worker.preserve_previous_image("latest")

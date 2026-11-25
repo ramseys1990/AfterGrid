@@ -9,6 +9,8 @@ import json
 import os
 import re
 import secrets
+import shutil
+import tarfile
 import socketserver
 import sqlite3
 import stat
@@ -1605,6 +1607,111 @@ def check_preparation_identity(job,expected,online):
     return result
 
 
+PREVIOUS_IMAGE_LIMIT=4*1024**3
+
+def verify_previous_archive(folder,image_id):
+    """Verify archive identity and saved checksum without extracting files."""
+    if not isinstance(image_id,str) or not re.fullmatch(IMAGE_ID_PATTERN,image_id):
+        raise ValueError("Invalid previous image ID")
+    folder=Path(folder)
+    if not stat.S_ISDIR(folder.lstat().st_mode) or folder.stat().st_mode&0o077:
+        raise ValueError("Invalid previous image directory")
+    archive=folder/"image.tar"
+    metadata=folder/"image.json"
+    for path,limit in ((archive,PREVIOUS_IMAGE_LIMIT),(metadata,4096)):
+        info=path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_mode&0o077 or not 0<info.st_size<=limit:
+            raise ValueError("Invalid private image archive")
+    value=json.loads(metadata.read_text())
+    if (not isinstance(value,dict) or set(value)!={"format","image_id","sha256","bytes"}
+        or type(value["format"]) is not int or value["format"]!=1 or value["image_id"]!=image_id
+        or type(value["bytes"]) is not int or value["bytes"]!=archive.stat().st_size
+        or not isinstance(value["sha256"],str) or not re.fullmatch(r"[a-f0-9]{64}",value["sha256"])):
+        raise ValueError("Previous image metadata mismatch")
+    with archive.open("rb") as stream:
+        if hashlib.file_digest(stream,"sha256").hexdigest()!=value["sha256"]:
+            raise ValueError("Previous image archive checksum mismatch")
+    with tarfile.open(archive,"r:") as bundle:
+        def read_member(name,limit):
+            matches=[m for m in bundle.getmembers() if m.name==name]
+            if len(matches)!=1 or not matches[0].isfile() or not 0<matches[0].size<=limit:
+                raise ValueError("Invalid image archive member")
+            with bundle.extractfile(matches[0]) as stream:return stream.read(limit+1)
+        manifest=json.loads(read_member("manifest.json",1024*1024))
+        if not isinstance(manifest,list) or len(manifest)!=1 or not isinstance(manifest[0],dict):
+            raise ValueError("Expected a single saved image")
+        config=manifest[0].get("Config")
+        if not isinstance(config,str) or not re.fullmatch(r"(?:blobs/sha256/[a-f0-9]{64}|[a-f0-9]{64}\.json)",config):
+            raise ValueError("Invalid image config member")
+        if "sha256:"+hashlib.sha256(read_member(config,4*1024*1024)).hexdigest()!=image_id:
+            raise ValueError("Saved image config identity mismatch")
+    return value
+
+
+def preserve_previous_image(image_id):
+    """Private native archive per exact prior Kiwix image, not an off-host backup."""
+    if not isinstance(image_id,str) or not re.fullmatch(IMAGE_ID_PATTERN,image_id):
+        raise ValueError("Invalid previous image ID")
+    root=STATE/"previous-images"
+    root.mkdir(mode=0o700,exist_ok=True)
+    if not stat.S_ISDIR(root.lstat().st_mode) or root.stat().st_mode&0o077:
+        raise RuntimeError("Invalid previous image storage")
+    target=root/("kiwix-"+image_id.split(":")[1])
+    if target.exists() or target.is_symlink():
+        try:return verify_previous_archive(target,image_id)
+        except (OSError,ValueError,TypeError,tarfile.TarError):
+            raise RuntimeError("Existing previous image archive invalid; inspect before retry") from None
+    try:
+        raw=subprocess.run(["docker","image","inspect","--format","{{json .Size}}",image_id],
+                           capture_output=True,text=True,timeout=5,check=True).stdout
+        size=json.loads(raw)
+        if type(size) is not int or not 0<size<=PREVIOUS_IMAGE_LIMIT//2:
+            raise ValueError("Image size exceeds preservation limit")
+        if shutil.disk_usage(root).free<2*size+512*1024**2:
+            raise ValueError("Insufficient free space to preserve previous image")
+        with tempfile.TemporaryDirectory(prefix=".kiwix-",dir=root) as tmp:
+            stage=Path(tmp)
+            archive=stage/"image.tar"
+            archive.touch(mode=0o600,exist_ok=False)
+            # Bound streamed output before writing it; never extract image members.
+            with archive.open("wb") as out:
+                with subprocess.Popen(["docker","image","save",image_id],stdout=subprocess.PIPE,
+                                      stderr=subprocess.DEVNULL) as proc:
+                    timer=threading.Timer(900,proc.kill)
+                    timer.start()
+                    try:
+                        count=0
+                        while chunk:=proc.stdout.read(1024*1024):
+                            count+=len(chunk)
+                            if count>PREVIOUS_IMAGE_LIMIT:raise ValueError("Saved image exceeds preservation limit")
+                            out.write(chunk)
+                        if proc.wait()!=0 or not count:raise RuntimeError("Native image save failed")
+                    finally:
+                        timer.cancel()
+                        if proc.poll() is None:proc.kill();proc.wait()
+                out.flush()
+                os.fsync(out.fileno())
+            with archive.open("rb") as stream:digest=hashlib.file_digest(stream,"sha256").hexdigest()
+            metadata={"format":1,"image_id":image_id,"sha256":digest,"bytes":count}
+            fd=os.open(stage/"image.json",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(fd,"w") as stream:
+                json.dump(metadata,stream,sort_keys=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            verify_previous_archive(stage,image_id)
+            directory=os.open(stage,os.O_DIRECTORY)
+            try:os.fsync(directory)
+            finally:os.close(directory)
+            if target.exists() or target.is_symlink():raise ValueError("Previous image archive appeared concurrently")
+            os.rename(stage,target)
+            directory=os.open(root,os.O_DIRECTORY)
+            try:os.fsync(directory)
+            finally:os.close(directory)
+        return metadata
+    except (OSError,ValueError,TypeError,RuntimeError,subprocess.SubprocessError,tarfile.TarError):
+        raise RuntimeError("Previous image preservation failed; inspect storage and Docker before retry") from None
+
+
 def prepare_update(job):
     """Standalone rehearsal/evidence only; never an authorization to update later."""
     if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE:raise ValueError("Update preparation unavailable")
@@ -1612,7 +1719,7 @@ def prepare_update(job):
         row=conn.execute("SELECT request FROM update_preparations WHERE job=?",(job,)).fetchone()
     if not row:raise ValueError("Reviewed transition request missing")
     expected=validate_update_preparation(json.loads(row["request"]))
-    change(job,state="running",total=5,completed=0,stage="Recheck approved transition and registry")
+    change(job,state="running",total=6,completed=0,stage="Recheck approved transition and registry")
     check_preparation_identity(job,expected,True)
     source=CONTENT_SOURCES["kiwix"]
     policy=native_policy_summary("content/kiwix")["policy"]
@@ -1632,15 +1739,19 @@ def prepare_update(job):
         _,after=read_snapshot_manifest(source,sid)
         if after.get("aftergrid_pinned") is not True:raise RuntimeError("Pre-update pin no longer confirmed")
         check_preparation_identity(job,expected,False)
+        change(job,completed=4,stage="Preserve exact previous Docker image")
+        archive=preserve_previous_image(expected["previous_image_id"])
+        check_preparation_identity(job,expected,False)
         evidence={**expected,"snapshot_id":sid,"file_objects_read":count,"checked_at":int(time.time()),
-                  "pin_confirmed":True,"verification":"read-only","update_performed":False,"reusable_authorization":False}
-        change(job,completed=4,stage="Release content maintenance")
+                  "pin_confirmed":True,"verification":"read-only","previous_image_archive":archive,
+                  "update_performed":False,"reusable_authorization":False}
+        change(job,completed=5,stage="Release content maintenance")
     finally:
         content_guard("end",job)
     with db() as conn:
         conn.execute("UPDATE update_preparations SET evidence=? WHERE job=?",(json.dumps(evidence,sort_keys=True),job))
-    log(job,"\nPrevious image confirmed: "+expected["previous_image_id"]+"; preparation only, no pull or update. Repeat backup and verification inside future guarded update.\n")
-    change(job,completed=5,state="succeeded",stage="Protected preparation verified; no update performed")
+    log(job,"\nPrevious image archived: "+expected["previous_image_id"]+"; preparation only, no pull or update. Repeat backup and verification inside future guarded update.\n")
+    change(job,completed=6,state="succeeded",stage="Protected preparation and previous image archive verified; no update performed")
 
 
 def latest_update_preparation():
