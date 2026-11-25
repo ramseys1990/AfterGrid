@@ -18,10 +18,10 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){$("update-health-result").replaceChildren();$("backup-health-result").replaceChildren();$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("update-health-result").replaceChildren();$("backup-health-result").replaceChildren();$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("installation-summary").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
-    if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
+    if(status.admin){await renderJobs();await renderInstallationSummary();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
     await renderModules();
     await refreshPreparedness();
     await refreshHouseholds();
@@ -789,6 +789,38 @@ async function renderDownloads(){
   if(!rows.length)root.textContent="No downloads queued.";
 }
 
+async function renderInstallationSummary(){
+  const root=$("installation-summary");
+  try{
+    const report=await api("/api/admin/installation-summary");
+    if(!status?.admin)return;
+    root.replaceChildren();
+    const rows=report.applications;
+    if(!rows.length){root.textContent="No optional applications have been selected for installation.";return;}
+    const counts={queued:0,running:0,succeeded:0,failed:0,interrupted:0};
+    for(const item of rows)if(Object.hasOwn(counts,item.state))counts[item.state]++;
+    const total=document.createElement("p");
+    total.textContent=counts.succeeded+" completed · "+counts.running+" installing · "+counts.queued+" queued · "+(counts.failed+counts.interrupted)+" need attention";
+    root.append(total);
+    for(const item of rows){
+      const row=document.createElement("article"),title=document.createElement("strong"),stage=document.createElement("p");
+      title.textContent=item.name+" · "+({succeeded:"Installation completed",running:"Installing",queued:"Queued",failed:"Installation failed",interrupted:"Interrupted"}[item.state]||"Unknown");
+      stage.textContent=item.stage+" · Job #"+item.id;
+      row.append(title,stage);
+      if(item.total>0){const p=document.createElement("progress");p.max=item.total;p.value=item.completed;p.setAttribute("aria-label","Completed stages for "+item.name);row.append(p);}
+      if(item.retry_available&&!status.recovery_maintenance&&!status.recovery_core_only&&!status.recovery_offline){
+        const b=document.createElement("button");b.type="button";b.textContent="Retry "+item.name;
+        b.addEventListener("click",async()=>{
+          if(!confirm("Retry "+item.name+" using existing data?"))return;
+          b.disabled=true;
+          try{await api("/api/admin/modules/"+item.module+"/install",{});await renderJobs();await renderInstallationSummary();await renderModules();}
+          catch(e){error(e.message);b.disabled=false;}
+        });row.append(b);
+      }
+      root.append(row);
+    }
+  }catch(e){if(status?.admin)root.textContent="Installation summary unavailable: "+e.message;}
+}
 async function renderJobs(){
   const jobs=await api("/api/admin/jobs");
   const parent=$("jobs");
@@ -817,7 +849,7 @@ const refreshModules=document.createElement("button");refreshModules.textContent
 setInterval(async()=>{
   if(polling||!status?.admin||$("dashboard").hidden)return;
   polling=true;
-  try{if(await renderJobs())await renderModules();await renderDownloads();await refreshMaps();await refreshRoutingData();}catch(e){error(e.message);}finally{polling=false;}
+  try{if(await renderJobs())await renderModules();await renderInstallationSummary();await renderDownloads();await refreshMaps();await refreshRoutingData();}catch(e){error(e.message);}finally{polling=false;}
 },2000);
 
 for(const [id,path] of [["setup-form","/api/setup"],["login-form","/api/login"]]){

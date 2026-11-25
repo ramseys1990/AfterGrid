@@ -377,6 +377,25 @@ def enqueue_batch(token, selection):
         conn.execute("INSERT INTO batches VALUES (?,?,?)", (token,canonical,json.dumps(ids)))
         return ids
 
+def installation_summary():
+    """One latest installation result per reviewed module, independent of log history."""
+    manifests=catalog()
+    with db() as conn:
+        rows=conn.execute("""SELECT j.id,j.module,j.state,j.stage,j.completed,j.total,j.created
+            FROM jobs j WHERE j.action='install' AND j.id=(SELECT max(k.id) FROM jobs k
+            WHERE k.module=j.module AND k.action='install') ORDER BY j.id""").fetchall()
+        active={r["module"] for r in conn.execute("SELECT module FROM jobs WHERE state IN ('queued','running')")}
+        latest={r["module"]:r["id"] for r in conn.execute("SELECT module,max(id) AS id FROM jobs GROUP BY module")}
+    results=[]
+    for row in rows:
+        item=dict(row)
+        if item["module"] not in manifests:continue
+        item["name"]=manifests[item["module"]]["name"]
+        item["retry_available"]=not (RECOVERY_CORE_ONLY or RECOVERY_OFFLINE) and item["state"] in {"failed","interrupted"} and item["module"] not in active and latest[item["module"]]==item["id"]
+        results.append(item)
+    return {"applications":results}
+
+
 def jobs():
     with db() as conn:
         return [dict(x) for x in conn.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 30")]
@@ -2414,6 +2433,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_json(200, [public_module(i,m) for i,m in catalog().items()])
         if self.path == "/jobs":
             return self.send_json(200, jobs())
+        if self.path=="/installation-summary":
+            try:return self.send_json(200,installation_summary())
+            except (OSError,ValueError,KeyError,sqlite3.Error):return self.send_json(503,{"detail":"Installation history unavailable"})
         if self.path=="/recovery-manifest":
             try:return self.send_json(200,load_recovery_manifest())
             except RuntimeError:return self.send_json(404,{"detail":"No confirmed recovery inventory; generate one first"})

@@ -823,6 +823,15 @@ def create_app(data_dir=None):
             con.execute("UPDATE first_run SET result=? WHERE id=1 AND selection=?",(json.dumps(result),canonical))
         return result
 
+    @api.get("/api/admin/installation-summary")
+    def installation_summary(request: Request):
+        require_admin(request)
+        try:code,result=call("/installation-summary")
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=200 or not isinstance(result,dict) or not isinstance(result.get("applications"),list):
+            raise HTTPException(503,"Installation history unavailable")
+        return result
+
     @api.get("/api/admin/jobs")
     def list_jobs(request: Request):
         require_admin(request)

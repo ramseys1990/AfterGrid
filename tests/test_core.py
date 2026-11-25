@@ -596,3 +596,14 @@ def test_first_run_lost_response_preserves_selection_across_restart(tmp_path,mon
         assert client.post("/api/admin/first-run",json={"modules":["grocy","kiwix"]},headers=ORIGIN).json()=={"ids":[11,12]}
         assert calls[0]["token"]==calls[1]["token"]
         assert not client.get("/api/status").json()["selection_pending"]
+
+
+def test_installation_summary_is_admin_only(tmp_path,monkeypatch):
+    from core import app as core_app
+    monkeypatch.setattr(core_app,"call",lambda path: (200,{"applications":[]}))
+    (tmp_path/"setup-token").write_text("test-token")
+    with TestClient(create_app(tmp_path)) as client:
+        path="/api/admin/installation-summary"
+        assert client.get(path).status_code==401
+        assert client.post("/api/setup",json={"username":"admin","password":"long test password","token":"test-token"},headers=ORIGIN).status_code==201
+        assert client.get(path).json()=={"applications":[]}

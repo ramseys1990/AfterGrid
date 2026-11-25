@@ -1286,3 +1286,24 @@ def test_controlled_reader_hold_resolution(tmp_path,monkeypatch):
         assert conn.execute("SELECT state FROM jobs WHERE id=?",(failed,)).fetchone()["state"]=="failed"
     worker.kiwix_lifecycle_admission("kiwix","start")
     with pytest.raises(ValueError):worker.enqueue_reader_resolution(request)
+
+
+def test_installation_summary_outlives_recent_jobs(tmp_path,monkeypatch):
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    monkeypatch.setattr(worker,"catalog",lambda:{"kiwix":{"name":"Kiwix"},"grocy":{"name":"Grocy"}})
+    worker.init()
+    with worker.db() as conn:
+        def job(module,action,state):
+            return conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES (?,?,?,'fixture',1)",(module,action,state)).lastrowid
+        first=job("kiwix","install","succeeded")
+        failed=job("grocy","install","failed")
+        for i in range(35):job("kopia","snapshot","succeeded")
+    assert all(j["id"]!=first for j in worker.jobs())
+    rows=worker.installation_summary()["applications"]
+    assert [j["id"] for j in rows]==[first,failed]
+    assert rows[1]["retry_available"] and "log" not in rows[1]
+    with worker.db() as conn:
+        job("grocy","start","running")
+    assert not worker.installation_summary()["applications"][1]["retry_available"]
