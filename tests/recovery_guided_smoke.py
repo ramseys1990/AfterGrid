@@ -203,9 +203,36 @@ def main(fixture,exported=None):
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)
+            # Report only fixed diagnostic categories for failed capture jobs.
+            # Never emit raw worker logs, paths, native credentials or snapshots.
+            reported_failures=set()
             def capture_call(path,payload=None):
                 status=202 if payload is not None and "/recovery-maintenance/" not in path else 200
                 result=call(old,path,payload,status)
+                if path=="/api/admin/jobs" and payload is None:
+                    for row in result:
+                        if row["state"] not in {"failed","interrupted"} or row["id"] in reported_failures:
+                            continue
+                        reported_failures.add(row["id"])
+                        output=row.get("log","") or ""
+                        categories=(("Content maintenance guard refused","content guard"),
+                            ("Connect Kopia repository first","repository connection"),
+                            ("Reviewed source directory unavailable in Kopia","source directory"),
+                            ("Native Kopia snapshot exited with code","native snapshot exit"),
+                            ("Native Kopia snapshot timed out","native snapshot timeout"),
+                            ("Native Kopia snapshot JSON missing or invalid","snapshot JSON"),
+                            ("Kopia manifest omitted required snapshot statistics","snapshot statistics"),
+                            ("Kopia reported an incomplete snapshot","incomplete snapshot"),
+                            ("Kopia snapshot source did not match","snapshot source"),
+                            ("Kopia snapshot ID missing or invalid","snapshot ID"),
+                            ("Kopia snapshot root missing","snapshot root"),
+                            ("Kopia snapshot counter unavailable","snapshot counter"),
+                            ("Kopia snapshot reports","snapshot completeness"),
+                            ("Kopia snapshot is empty or file count unavailable","snapshot file count"),
+                            ("Native content verification failed or incomplete","content verification"))
+                        category=next((label for marker,label in categories if marker in output),"unclassified")
+                        print(f"Capture failure: job {row['id']} {row['module']}/{row['action']} "
+                              f"progress {row['completed']}/{row['total']}; category={category}",flush=True)
                 if path.endswith("/recovery-maintenance/begin"):
                     assert call(other,"/api/admin/backups/core/snapshot",{"confirmed":True},409)["detail"]
                     assert call(old,"/api/admin/households",{"name":"Must be blocked"},409)["detail"]
