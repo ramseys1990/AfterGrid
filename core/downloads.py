@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 HOST = "download.kiwix.org"
+METADATA_HOST = "lb.download.kiwix.org"
 KEY = re.compile(r"/zim/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.zim")
 RESERVE = 512 * 1024**2
 LIMIT = 512 * 1024**3
@@ -57,7 +58,9 @@ def metadata(key):
     if key_for_url("https://"+HOST+key)!=key:
         raise ValueError("Invalid official archive path")
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
-    with opener.open("https://"+HOST+key+".meta4",timeout=20) as response:
+    # The public download origin redirects metadata to Kiwix's load balancer.
+    # Request that canonical origin directly; keep arbitrary redirects blocked.
+    with opener.open("https://"+METADATA_HOST+key+".meta4",timeout=20) as response:
         return parse_metalink(response.read(2_000_001),Path(key).name)
 
 def checksum(path):

@@ -4,6 +4,30 @@ from core.downloads import key_for_url,parse_metalink,Downloads
 
 KEY="/zim/wikipedia/test.zim"
 
+def test_metadata_uses_official_canonical_origin(monkeypatch):
+    import io
+    import urllib.error
+    from core import downloads
+
+    digest=hashlib.sha256(b"abc").hexdigest()
+    raw=f'<metalink xmlns="urn:ietf:params:xml:ns:metalink"><file name="test.zim"><size>3</size><hash type="sha-256">{digest}</hash></file></metalink>'.encode()
+
+    class OfficialMetadata:
+        def open(self,url,timeout):
+            assert timeout == 20
+            if url == "https://download.kiwix.org"+KEY+".meta4":
+                raise urllib.error.HTTPError(url,301,"Moved Permanently",{},None)
+            assert url == "https://lb.download.kiwix.org"+KEY+".meta4"
+            return io.BytesIO(raw)
+
+    def opener(*handlers):
+        assert any(isinstance(handler,downloads.NoRedirect) for handler in handlers)
+        return OfficialMetadata()
+
+    monkeypatch.setattr(downloads.urllib.request,"build_opener",opener)
+    assert downloads.metadata(KEY) == (3,digest)
+
+
 def test_keys_and_metadata():
     assert key_for_url("https://download.kiwix.org"+KEY+".meta4")==KEY
     assert key_for_url("https://download.kiwix.org/zim/../test.zim") is None
