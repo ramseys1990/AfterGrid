@@ -200,6 +200,72 @@ def main(fixture,exported=None):
             run(cmd,"exec","-T","worker","python3","-c","import worker; worker.kiwix_rollback_override()[0].unlink()")
             post_job(old,"/api/admin/modules/kiwix/start")
             assert reader_fixture()
+            # Positive version transition on this exclusive disposable host.
+            # The repository's production candidate remains null. Resolve the
+            # fixed older test release to its actual local identity and use a
+            # temporary override only to start the old container. The normal
+            # guarded job must use the original reviewed digest-pinned target.
+            module_dir=original/"modules/kiwix"
+            candidate_path=module_dir/"update-candidate.json"
+            original_candidate=candidate_path.read_bytes()
+            assert json.loads(original_candidate)["candidate"] is None
+            override=module_dir/"ci-prior-image.json"
+            versions=call(old,"/api/admin/modules/kiwix/versions")["services"]
+            assert len(versions)==1 and versions[0]["service"]=="kiwix"
+            target=versions[0]["configured_image"]
+            target_id=versions[0]["installed_image_ids"][0]
+            assert re.fullmatch(r"ghcr[.]io/kiwix/kiwix-serve:3[.]8[.]2@sha256:[a-f0-9]{64}",target)
+            prior="ghcr.io/kiwix/kiwix-serve:3.8.1"
+            run(["docker"],"pull",prior,timeout=180)
+            prior_info=json.loads(run(["docker"],"image","inspect",prior))[0]
+            prior_id=prior_info["Id"]
+            prior_refs=[ref for ref in prior_info["RepoDigests"] if re.fullmatch(
+                r"ghcr[.]io/kiwix/kiwix-serve@sha256:[a-f0-9]{64}",ref)]
+            assert len(prior_refs)==1 and prior_id!=target_id
+            assert re.fullmatch(r"sha256:[a-f0-9]{64}",prior_id)
+            platform=run(["docker"],"version","--format","{{.Server.Os}}/{{.Server.Arch}}").decode().strip()
+            assert platform in {"linux/amd64","linux/arm64"}
+            content_root=original/"content/kiwix"
+            before_content={name:assets.sha256_file(content_root/name) for name in ("fixture.zim","library.xml")}
+            before_catalog=sorted(entry.findtext("{http://www.w3.org/2005/Atom}id") for entry in reader_fixture())
+            assert before_catalog
+            try:
+                override.write_text(json.dumps({"services":{"kiwix":{"image":prior_refs[0],"pull_policy":"never"}}}))
+                run(["docker","compose","--project-name","aftergrid-kiwix","--project-directory",str(module_dir),
+                     "--env-file",str(original/".env"),"--file",str(module_dir/"compose.yaml"),"--file",str(override)],
+                    "up","-d","--no-build","--pull","never","--wait","--wait-timeout","90")
+                deadline=time.monotonic()+90
+                while time.monotonic()<deadline:
+                    try:
+                        if reader_fixture():break
+                    except OSError:pass
+                    time.sleep(2)
+                else:raise RuntimeError("Prior version reader not ready")
+                override.unlink()
+                local=call(old,"/api/admin/modules/kiwix/versions")["services"][0]
+                assert local["configured_image"]==target and local["installed_image_ids"]==[prior_id]
+                candidate_path.write_text(json.dumps({"format":1,"candidate":{"image":target,
+                    "platforms":{platform:{"from":[prior_id],"to":target_id}}}}))
+                eligibility=call(old,"/api/admin/modules/kiwix/update-eligibility",{})
+                assert eligibility["status"]=="reviewed candidate confirmed" and eligibility["platform"]==platform
+                assert eligibility["installed_image_ids"]==[prior_id] and eligibility["expected_target_image_id"]==target_id
+                guarded=post_job(old,"/api/admin/modules/kiwix/guarded-update",{"candidate":target,
+                    "platform":platform,"previous_image_id":prior_id,"target_image_id":target_id,"confirmed":True})
+                history=call(old,"/api/admin/updates/health")
+                attempt=history["latest_guarded_update"]
+                assert attempt["id"]==guarded["id"] and attempt["state"]=="succeeded"
+                evidence=attempt["evidence"]
+                assert evidence["pin_confirmed"] and evidence["verification"]=="read-only"
+                assert evidence["previous_image_archive"]["image_id"]==prior_id
+                assert evidence["update_performed"] and evidence["catalog_sample_matched"]
+                assert evidence["result_image_id"]==target_id and history["rollback_hold"]["status"]=="none"
+                assert history["local_images"][0]["installed_image_ids"]==[target_id]
+                assert sorted(entry.findtext("{http://www.w3.org/2005/Atom}id") for entry in reader_fixture())==before_catalog
+                assert {name:assets.sha256_file(content_root/name) for name in before_content}==before_content
+                print("Positive native Kiwix version transition and exact recovery evidence passed.",flush=True)
+            finally:
+                override.unlink(missing_ok=True)
+                candidate_path.write_bytes(original_candidate)
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)
