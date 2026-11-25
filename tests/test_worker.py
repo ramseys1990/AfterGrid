@@ -664,3 +664,38 @@ def test_offline_worker_uses_exact_reviewed_override(tmp_path,monkeypatch):
     with pytest.raises(RuntimeError):worker.registry_report("kiwix")
     override.write_text(json.dumps({"services":{"kiwix":{"image":tag,"pull_policy":"always"}}}))
     with pytest.raises(ValueError):worker.command("kiwix","ps")
+
+def test_native_policy_summary_allowlisted_and_redacted(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    calls=[]
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected"})
+    monkeypatch.setattr(worker,"command",lambda ident,*args:[ident,*args])
+    monkeypatch.setattr(worker,"compose_env",lambda ident:{})
+    def run(args,**kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=json.dumps({
+            "scheduling":{"intervalSeconds":3600,"timeOfDay":[{"hour":2,"min":30}],"cron":["0 3 * * * # private"],"runMissed":True},
+            "retention":{"keepLatest":10,"keepDaily":7,"ignoreIdenticalSnapshots":False},
+            "actions":{"beforeSnapshotRoot":{"command":"secret-command"}}
+        }))
+    monkeypatch.setattr(worker.subprocess,"run",run)
+    result=worker.native_policy_summary("content/kiwix")
+    assert calls[0][-4:]==["policy","show","--json","/source/content/kiwix"]
+    assert result["policy"]["schedule"]["times_utc"]==["02:30"]
+    assert result["policy"]["schedule"]["automatic_policy"] is True
+    assert result["policy"]["retention"]["keepDaily"]==7
+    assert result["managed_scheduling_enabled"] is False
+    assert "secret-command" not in json.dumps(result) and "private" not in json.dumps(result)
+    worker.native_policy_summary("global")
+    assert calls[-1][-1]=="--global"
+    for key in ("application/tak","/repository","../../etc","content/unknown"):
+        with pytest.raises(ValueError):worker.native_policy_summary(key)
+    assert len(calls)==2
+
+
+@pytest.mark.parametrize("value",[{"scheduling":{"manual":"true"}},{"scheduling":{"intervalSeconds":-1}},
+    {"scheduling":{"timeOfDay":[{"hour":24,"min":0}]}},{"retention":{"keepDaily":True}}])
+def test_native_policy_rejects_malformed_values(value):
+    with pytest.raises(ValueError):worker.summarize_native_policy(value)

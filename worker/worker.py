@@ -595,6 +595,67 @@ def recovery_sources():
     sources.extend(("content/"+ident,ident,"content-snapshot","content-verify",source,r"Native content snapshot: ([a-f0-9]{32,64});","read-only") for ident,source in sorted(CONTENT_SOURCES.items()))
     return sources
 
+def backup_policy_sources():
+    # No arbitrary native policy target, no repository self-backup, and no
+    # MicroTAK coverage. Global is read-only context, not a managed source.
+    return {"global":None,**{key:source for key,_,_,_,source,_,_ in recovery_sources()
+                            if key!="application/tak"}}
+
+
+def summarize_native_policy(value):
+    if not isinstance(value,dict):raise ValueError("Invalid native policy")
+    schedule=value.get("scheduling",{})
+    retention=value.get("retention",{})
+    if not isinstance(schedule,dict) or not isinstance(retention,dict):raise ValueError("Invalid native policy")
+    manual=schedule.get("manual",False)
+    interval=schedule.get("intervalSeconds",0)
+    times=schedule.get("timeOfDay",[]) or []
+    cron=schedule.get("cron",[]) or []
+    missed=schedule.get("runMissed")
+    if (type(manual) is not bool or type(interval) is not int or not 0<=interval<2**63
+        or not isinstance(times,list) or len(times)>1440 or not isinstance(cron,list) or len(cron)>1440
+        or any(not isinstance(x,str) or not x or len(x)>4096 for x in cron)
+        or (missed is not None and type(missed) is not bool)):
+        raise ValueError("Invalid native schedule")
+    tod=[]
+    for t in times:
+        if (not isinstance(t,dict) or type(t.get("hour")) is not int or not 0<=t["hour"]<=23
+            or type(t.get("min")) is not int or not 0<=t["min"]<=59):
+            raise ValueError("Invalid native schedule time")
+        tod.append(f"{t['hour']:02d}:{t['min']:02d}")
+    counts={}
+    for k in ("keepLatest","keepHourly","keepDaily","keepWeekly","keepMonthly","keepAnnual"):
+        n=retention.get(k)
+        if n is not None and (type(n) is not int or not 0<=n<=2147483647):raise ValueError("Invalid native retention")
+        counts[k]=n
+    identical=retention.get("ignoreIdenticalSnapshots")
+    if identical is not None and type(identical) is not bool:raise ValueError("Invalid native retention")
+    configured=bool(interval or times or cron)
+    return {"schedule":{"manual":manual,"configured":configured,"interval_seconds":interval,
+                        "times_utc":tod,"cron_count":len(cron),"run_missed":missed,
+                        "automatic_policy":configured and not manual},
+            "retention":counts,"ignore_identical":identical}
+
+
+def native_policy_summary(key):
+    sources=backup_policy_sources()
+    if key not in sources:raise ValueError("Unknown reviewed policy source")
+    if RECOVERY_CORE_ONLY:raise RuntimeError("Policy inspection unavailable in core-only recovery")
+    if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
+    source=sources[key]
+    try:
+        raw=subprocess.run(command("kopia","exec","-T","kopia","/bin/kopia","policy","show","--json",
+                          source if source is not None else "--global"),
+                           env=compose_env("kopia"),capture_output=True,text=True,timeout=8,check=True).stdout
+        if len(raw)>1024*1024:raise ValueError("Oversized native response")
+        result=summarize_native_policy(json.loads(raw))
+    except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError):
+        raise RuntimeError("Native effective policy unavailable") from None
+    return {"key":key,"source":source,"policy":result,
+            "managed_scheduling_enabled":False,"consistency":"managed snapshot operations required",
+            "retention_changes_enabled":False}
+
+
 def recovery_manifest_records():
     records=[]
     with db() as conn:
@@ -1390,6 +1451,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except RuntimeError:return self.send_json(404,{"detail":"No confirmed recovery inventory; generate one first"})
         if self.path=="/kopia/status":
             return self.send_json(200,kopia_status())
+        if self.path=="/backup-policy/sources":
+            return self.send_json(200,sorted(backup_policy_sources()))
+        if self.path.startswith("/backup-policy/effective/"):
+            key=self.path.removeprefix("/backup-policy/effective/")
+            if key not in backup_policy_sources():return self.send_json(404,{"detail":"Unknown reviewed policy source"})
+            try:return self.send_json(200,native_policy_summary(key))
+            except RuntimeError:return self.send_json(503,{"detail":"Native effective policy unavailable; connect Kopia first"})
         if self.path.startswith("/backup-plan/"):
             ident=self.path.removeprefix("/backup-plan/")
             if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})

@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -206,6 +206,38 @@ $("kopia-status-check").addEventListener("click",async()=>{
     create.disabled=result.connection!=="not connected";
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{button.disabled=false;}
+});
+$("backup-policy-sources").addEventListener("click",async()=>{
+  const select=$("backup-policy-source"),root=$("backup-policy-result"),button=$("backup-policy-sources");
+  button.disabled=true;select.disabled=true;$("backup-policy-check").disabled=true;select.replaceChildren();
+  try{
+    const keys=await api("/api/admin/backups/policy-sources");
+    if(!status?.admin)return;
+    for(const key of keys){const option=document.createElement("option");option.value=key;option.textContent=key;select.append(option);}
+    if(keys.includes("global"))select.value="global";
+    select.disabled=!keys.length;$("backup-policy-check").disabled=!keys.length;
+    root.textContent="Select a reviewed source to inspect native policy.";
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
+$("backup-policy-check").addEventListener("click",async()=>{
+  const root=$("backup-policy-result"),button=$("backup-policy-check"),select=$("backup-policy-source");
+  button.disabled=true;select.disabled=true;root.textContent="Reading native effective policy…";
+  try{
+    const result=await api("/api/admin/backups/effective-policy/"+select.value.split("/").map(encodeURIComponent).join("/"));
+    if(!status?.admin)return;
+    root.replaceChildren();
+    const line=text=>{const p=document.createElement("p");p.textContent=text;root.append(p);};
+    const p=result.policy,s=p.schedule;
+    line("Source: "+result.key+(result.source?" · "+result.source:""));
+    line("Native scheduling policy: "+(s.manual?"manual only":s.automatic_policy?"automatic settings present":"no interval or time configured")+". Not proof that a native job is running or application-consistent.");
+    if(s.interval_seconds)line("Interval: "+s.interval_seconds+" seconds");
+    if(s.times_utc.length)line("Scheduled times (Kopia UTC): "+s.times_utc.join(", "));
+    if(s.cron_count)line("Cron entries: "+s.cron_count+" (inspect native Kopia for expressions)");
+    line("Retention: "+Object.entries(p.retention).map(([k,v])=>k.replace("keep","")+": "+(v===null?"not reported":v)).join(" · "));
+    line("Managed scheduling and retention changes are not enabled. Protect recovery snapshots and verify consistency before changing policies.");
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{if(status?.admin){button.disabled=false;select.disabled=false;}}
 });
 $("kopia-initialize").addEventListener("click",async()=>{
   if(!confirm("Create a NEW encrypted repository in the configured empty /repository directory? Confirm the intended backup destination is mounted and the generated repository password is stored securely off-server. Do not use this to connect existing storage."))return;

@@ -112,6 +112,12 @@ def main(fixture,exported=None):
                 time.sleep(1)
             password=call(old,"/api/admin/kopia/credentials",{})["repository_password"]
             post_job(old,"/api/admin/kopia/initialize",{"confirmed":True})
+            keys=call(old,"/api/admin/backups/policy-sources")
+            assert "core" in keys and "content/kiwix" in keys and "application/tak" not in keys
+            for key in ("global","content/kiwix"):
+                policy=call(old,"/api/admin/backups/effective-policy/"+key)
+                assert policy["key"]==key and policy["managed_scheduling_enabled"] is False
+                assert policy["policy"]["retention"]["keepLatest"] is not None
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)

@@ -847,6 +847,24 @@ def create_app(data_dir=None):
             raise HTTPException(502,"Native Kopia status unavailable")
         return result
 
+    @api.get("/api/admin/backups/policy-sources")
+    def backup_policy_sources(request: Request):
+        require_admin(request)
+        try:code,result=call("/backup-policy/sources")
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=200:raise HTTPException(502,"Reviewed policy sources unavailable")
+        return result
+
+    @api.get("/api/admin/backups/effective-policy/{key:path}")
+    def effective_backup_policy(key: str,request: Request):
+        require_admin(request)
+        if not re.fullmatch(r"(?:global|core|worker|(?:application|content)/[a-z][a-z0-9-]{0,39})",key):
+            raise HTTPException(404,"Unknown reviewed policy source")
+        try:code,result=call("/backup-policy/effective/"+key)
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=200:raise HTTPException(code if code in {404,503} else 502,"Native effective policy unavailable")
+        return result
+
     class RepositoryConfirmation(BaseModel):
         confirmed: bool = Field(strict=True)
 
