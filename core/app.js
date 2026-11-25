@@ -303,7 +303,7 @@ $("update-health-refresh").addEventListener("click",async()=>{
     root.replaceChildren();
     const line=(parent,value)=>{const p=document.createElement("p");p.textContent=value;parent.append(p);};
     const date=v=>Number.isFinite(v)?new Date(v*1000).toISOString():"not recorded";
-    line(root,"Automatic execution disabled; separate activation required.");
+    line(root,r.automatic_execution_enabled?"Automatic execution active for reviewed candidates.":"Automatic execution disabled; separate activation required.");
     line(root,"Reader: "+r.reader_state+" · Approved candidate: "+(r.approved_candidate||"none"));
     line(root,"Rollback hold: "+r.rollback_hold.status+(r.rollback_hold.image_id?" · "+r.rollback_hold.image_id:""));
     const resolution=r.rollback_resolution;
@@ -314,7 +314,7 @@ $("update-health-refresh").addEventListener("click",async()=>{
         resolve.addEventListener("click",async()=>{
           if(!confirm("Reverify the exact archive, protected snapshot and catalog before removing the override? No image update or data restore will be performed."))return;
           resolve.disabled=true;
-          try{const job=await api("/api/admin/modules/kiwix/resolve-rollback",{method:"POST",body:JSON.stringify({failed_job:resolution.failed_job,image_id:r.rollback_hold.image_id,confirmed:true})});line(root,"Resolution queued · #"+job.id);}
+          try{const job=await api("/api/admin/modules/kiwix/resolve-rollback",{failed_job:resolution.failed_job,image_id:r.rollback_hold.image_id,confirmed:true});line(root,"Resolution queued · #"+job.id);}
           catch(e){line(root,e.message);resolve.disabled=false;}
         });root.append(resolve);
       }
@@ -329,6 +329,16 @@ $("update-health-refresh").addEventListener("click",async()=>{
       line(root,"Installed image: "+(s.installed_image_ids.join(", ")||"none"));
     }
     const pref=r.preferences;
+    if(pref.dispatch)line(root,"Last scheduled admission: "+pref.dispatch.status+(pref.dispatch.job?" · #"+pref.dispatch.job:""));
+    if(pref.release_enabled&&pref.preference?.enabled){
+      const activate=document.createElement("button");activate.textContent=pref.execution_enabled?"Deactivate automatic updates":"Activate automatic updates";
+      activate.addEventListener("click",async()=>{
+        if(!confirm(pref.execution_enabled?"Disable future automatic admissions? Running jobs will continue.":"Allow reviewed Kiwix updates in the configured UTC window, with protected backup and rollback?"))return;
+        activate.disabled=true;
+        try{await api("/api/admin/modules/kiwix/update-activation",{enabled:!pref.execution_enabled,confirmed:true});button.click();}
+        catch(e){line(root,e.message);activate.disabled=false;}
+      });root.append(activate);
+    }
     if(pref.preference?.enabled){
       const p=pref.preference,days=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
       line(root,"Future update preference: "+days[p.weekday]+" "+String(Math.floor(p.start_minute/60)).padStart(2,"0")+":"+String(p.start_minute%60).padStart(2,"0")+" UTC · "+p.duration_minutes+" min");

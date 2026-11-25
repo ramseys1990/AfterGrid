@@ -195,9 +195,20 @@ def main(fixture,exported=None):
                 "import worker,json,sys,hashlib; a=json.loads(sys.argv[1]); i=a['image_id']; sample=worker.kiwix_catalog_sample(); e={'recreation_attempted':True,'compose_sha256':worker.reader_compose_fingerprint(),'previous_image_archive':a,'snapshot_id':sys.argv[2],'catalog_sample_sha256':hashlib.sha256(json.dumps(sample).encode()).hexdigest()}; worker.rollback_reader(999999,{'previous_image_id':i},e); assert e['rollback_status']=='restored'; assert worker.kiwix_rollback_override()[1]==i",
                 json.dumps(saved),rb["snapshot_id"],timeout=240)
             assert reader_fixture()
-            # Fixture-only cleanup: restore unchanged reviewed config before
-            # recovery package acceptance. No production hold-clear endpoint.
-            run(cmd,"exec","-T","worker","python3","-c","import worker; worker.kiwix_rollback_override()[0].unlink()")
+            # Seed a disposable failed-job record for the native rollback
+            # helper above, then exercise the actual resolution endpoint.
+            # This is not a claim that a real failed transition was injected.
+            failed=int(run(cmd,"exec","-T","worker","python3","-c",
+                "import worker,json,sys,hashlib; a=json.loads(sys.argv[1]); i=a['image_id']; e={'previous_image_id':i,'recreation_attempted':True,'rollback_status':'restored','rollback_image_id':i,'pin_confirmed':True,'snapshot_id':sys.argv[2],'previous_image_archive':a,'catalog_sample_sha256':hashlib.sha256(json.dumps(worker.kiwix_catalog_sample()).encode()).hexdigest()}; c=worker.db(); db=c.__enter__(); j=db.execute(\\\"INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix','guarded-update','failed','Disposable native rollback fixture',1)\\\").lastrowid; db.execute(\\\"INSERT INTO update_preparations(job,request,evidence) VALUES (?,'{}',?)\\\",(j,json.dumps(e))); c.__exit__(None,None,None); print(j)",
+                json.dumps(saved),rb["snapshot_id"]).decode().strip())
+            health=call(old,"/api/admin/updates/health")
+            assert health["rollback_resolution"]["clear_enabled"]
+            resolution=post_job(old,"/api/admin/modules/kiwix/resolve-rollback",{"failed_job":failed,
+                "image_id":saved["image_id"],"confirmed":True})
+            health=call(old,"/api/admin/updates/health")
+            assert health["rollback_hold"]["status"]=="none" and not health["unresolved_guarded_update"]
+            assert health["latest_guarded_update"]["state"]=="failed"
+            assert health["latest_guarded_update"]["evidence"]["resolution_job"]==resolution["id"]
             post_job(old,"/api/admin/modules/kiwix/start")
             assert reader_fixture()
             # Positive version transition on this exclusive disposable host.

@@ -155,6 +155,7 @@ def create_app(data_dir=None):
                 try:
                     if maintenance() is None:
                         await asyncio.to_thread(schedules.tick,call,maintenance_idle)
+                        await asyncio.to_thread(update_preferences.tick,call,maintenance_idle)
                 except (HTTPException,WorkerUnavailable,OSError,ValueError,TypeError,KeyError,sqlite3.Error):
                     # Fail closed; never schedule on a corrupt file or busy host.
                     continue
@@ -1293,7 +1294,7 @@ def create_app(data_dir=None):
         except (OSError,ValueError,TypeError):
             raise HTTPException(409,"Update preference or maintenance state invalid; inspect host") from None
         return {**result,"preferences":prefs,"maintenance_active":active,
-                "automatic_execution_enabled":False,"activation_required":True}
+                "automatic_execution_enabled":prefs["execution_enabled"],"activation_required":prefs["activation_required"]}
 
     class UpdatePreferenceSelection(BaseModel):
         enabled: bool = Field(strict=True)
@@ -1317,6 +1318,20 @@ def create_app(data_dir=None):
         if not payload.confirmed:raise HTTPException(409,"Confirm update preference and UTC window")
         try:return update_preferences.configure("kiwix",payload.model_dump(exclude={"confirmed"}))
         except (OSError,ValueError,TypeError):raise HTTPException(409,"Invalid or unavailable UTC update preferences") from None
+
+    class UpdateActivationSelection(BaseModel):
+        enabled: bool = Field(strict=True)
+        confirmed: bool = Field(strict=True)
+
+    @api.post("/api/admin/modules/kiwix/update-activation")
+    def activate_reader_updates(payload: UpdateActivationSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:raise HTTPException(409,"Confirm separate automatic update activation")
+        try:
+            if payload.enabled:maintenance_idle()
+            return update_preferences.activate(payload.enabled)
+        except (OSError,ValueError,TypeError):raise HTTPException(409,"Automatic update activation unavailable") from None
 
     class UpdatePreparationSelection(BaseModel):
         candidate: str = Field(min_length=1,max_length=256)
