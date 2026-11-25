@@ -226,3 +226,26 @@ Core update closeout: dashboard Python regression passed (45541062798), canonica
 Full CI passed on commits 856a9f1 (45540553164), 0070483 (45541062798), and b010d7c (45541686525): Python regression, guided native recovery including canonical promotion and schema rollback, disconnected replacement archive acceptance, and Compose lifecycle. Kiwix and Kopia remained available during scoped core operations in guided CI. These are disposable tests with local fixture images, not a released production updater or real-machine acceptance.
 
 The next deliverable is a manually approved, single-action core update for a reviewed release, using the existing Compose/Kopia workflow. Do not expand the automatic update system, add a new permanent service, or implement speculative recovery frameworks. Verify the existing restore resume behavior, authorize a fixed host-side execution/handoff and test an actual release build before exposing the update action. The current status UI is read-only. Rare ambiguous failures may remain safely held with a clear documented recovery procedure rather than requiring automatic repair of every possible state. Then move to non-destructive uninstall/reinstall, LAN first-run and module authentication, followed by clean-host acceptance. Treat an SSH-only setup workflow as a usability gap, not a successful end-user design.
+
+
+## Phase 3 master checklist — installation and deployment
+
+Baseline: **8 of 13 implementation items complete**. A checked row preserves the existing development checklist; it does not imply clean-host or browser acceptance. Runtime evidence is recorded separately below. Production core activation remains gated.
+
+| # | Checklist item | Implementation status | Real-machine acceptance |
+|---|---|---|---|
+| 1 | Installer audit | Complete | Installer reviewed; clean-guest installation acceptance pending |
+| 2 | Read-only installation preflight | Complete | Passed on fresh Ubuntu 24.04 unprivileged Proxmox guest |
+| 3 | Existing Docker workload protection | Complete | Shared Docker-host acceptance pending; no unrelated workloads modified |
+| 4 | Interrupted installation recovery | Complete | Real failed-start/resume acceptance pending |
+| 5 | First-run setup improvements | Complete | Browser setup and account persistence pending |
+| 6 | Application selection validation | Complete | Browser selection and independent retry pending |
+| 7 | Installation progress reporting | Complete | Real application installation progress pending |
+| 8 | Application port conflict handling | Complete | Real conflict/retry acceptance pending |
+| 9 | AfterGrid core updating | Open — production activation gated | Native disposable tests passed; reviewed production release/handoff pending |
+| 10 | Safe uninstall and reinstall | Open | Data-preserving removal/reinstallation pending |
+| 11 | LAN deployment validation | Open | Guest DHCP verified; portal and native application access pending |
+| 12 | Module authentication and simplified onboarding | Open | Native browser setup required; SSH-only initial setup remains a usability gap |
+| 13 | System requirements and clean-host acceptance | Open | 4-core/4-GiB/100-GiB guest verified; full install, resource and disconnected acceptance pending |
+
+The test guest is disposable, but acceptance must preserve installed application data unless a distinct test explicitly calls for deletion. Keep all infrastructure changes confined to the designated guest. Retain native application permissions, use Compose and Kopia, and defer the major UI overhaul until the approach to 1.0.
