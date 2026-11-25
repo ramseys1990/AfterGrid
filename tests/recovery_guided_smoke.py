@@ -144,6 +144,15 @@ def main(fixture,exported=None):
             protected_record=next(r for r in call(old,"/api/admin/backups/recovery-manifest")["records"] if r["key"]=="core")
             assert protected_record["snapshot_job"]==protected["id"]
             assert protected_record["aftergrid_pinned"] is True and protected_record["verification"]=="isolated"
+            # Change one source only after fresh protected verification.
+            effective=call(old,"/api/admin/backups/effective-policy/core")["policy"]
+            expected=effective["retention"]
+            counts={**expected,"keepLatest":expected["keepLatest"]+1}
+            post_job(old,"/api/admin/backups/retention",{"key":"core","expected":expected,"counts":counts,"confirmed":True})
+            assert call(old,"/api/admin/backups/effective-policy/core")["policy"]["retention"]==counts
+            post_job(old,"/api/admin/backups/recovery-manifest",{"confirmed":True})
+            retained=next(r for r in call(old,"/api/admin/backups/recovery-manifest")["records"] if r["key"]=="core")
+            assert retained["snapshot_id"]==protected_record["snapshot_id"] and retained["aftergrid_pinned"] is True
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)

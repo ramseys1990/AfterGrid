@@ -758,3 +758,47 @@ def test_protected_capture_job_is_fixed_scope(tmp_path,monkeypatch):
     monkeypatch.setattr(worker,"core_snapshot",lambda j,protect=False:seen.append((j,protect)))
     worker.execute(worker.jobs()[0])
     assert seen==[(job,True)]
+
+def test_retention_requires_verified_native_pin_and_exact_readback(tmp_path,monkeypatch):
+    from pathlib import Path
+    import copy
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    worker.init()
+    old={k:10 for k in worker.RETENTION_FLAGS}
+    counts={**old,"keepLatest":5}
+    value={"key":"core","expected":old,"counts":counts}
+    policy={"retention":old,"schedule":{"automatic_policy":False},"ignore_identical":False}
+    monkeypatch.setattr(worker,"native_policy_summary",lambda key:{"policy":copy.deepcopy(policy)})
+    calls=[]
+    monkeypatch.setattr(worker,"command",lambda ident,*args:list(args))
+    monkeypatch.setattr(worker,"compose_env",lambda ident:{})
+    def run(argv,**kwargs):
+        calls.append(argv)
+        policy["retention"]=counts
+    monkeypatch.setattr(worker.subprocess,"run",run)
+    with pytest.raises(ValueError):worker.enqueue_retention({**value,"key":"global"})
+    with pytest.raises(ValueError):worker.enqueue_retention({**value,"counts":{**counts,"keepLatest":2}})
+    j=worker.enqueue_retention(value)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed" and not calls
+    snapshot=worker.enqueue("kopia","core-snapshot",protect=True)
+    worker.log(snapshot,"Core database export snapshot: "+"a"*32+";")
+    worker.change(snapshot,state="succeeded")
+    verify=worker.enqueue("kopia","core-verify-snapshot")
+    worker.log(verify,"Snapshot "+"a"*32+" restored; fixture")
+    worker.change(verify,state="succeeded")
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda source,sid:("root",{"aftergrid_pinned":False}))
+    worker.enqueue_retention(value)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed" and not calls
+    monkeypatch.setattr(worker,"read_snapshot_manifest",lambda source,sid:("root",{"aftergrid_pinned":True}))
+    worker.enqueue_retention(value)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="succeeded"
+    assert len(calls)==1 and "--keep-latest=5" in calls[0] and calls[0][-1]=="/source/data/core/recovery-export"
+    worker.enqueue_retention(value)
+    worker.execute(worker.jobs()[0])
+    assert worker.jobs()[0]["state"]=="failed" and len(calls)==1

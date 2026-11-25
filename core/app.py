@@ -934,6 +934,24 @@ def create_app(data_dir=None):
         if code!=202:raise HTTPException(code if code in {400,409} else 502,"Protected snapshot unavailable")
         return result
 
+    class RetentionSelection(BaseModel):
+        key: str = Field(min_length=1,max_length=80)
+        expected: dict[str,int] = Field(max_length=6)
+        counts: dict[str,int] = Field(max_length=6)
+        confirmed: bool = Field(strict=True)
+
+    @api.post("/api/admin/backups/retention",status_code=202)
+    def configure_retention(payload: RetentionSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed or payload.key not in SCHEDULE_SOURCES:
+            raise HTTPException(409,"Confirm source-specific retention and protected recovery point")
+        maintenance_idle()
+        try:code,result=call("/backup-policy/retention",{"key":payload.key,"expected":payload.expected,"counts":payload.counts})
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=202:raise HTTPException(code if code in {400,409} else 502,"Retention change unavailable")
+        return result
+
     class RepositoryConfirmation(BaseModel):
         confirmed: bool = Field(strict=True)
 

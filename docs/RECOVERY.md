@@ -311,6 +311,20 @@ rewrites the manifest on such an update, potentially replacing its ID.
 AfterGrid does not expose post-capture pin edits or automatic unpinning.
 Protected snapshots consume storage and remain until deliberately managed
 in Kopia. Always retain an independent portable package; a native pin is not
-an off-server backup. Retention writes remain disabled in AfterGrid pending
-recovery-point coverage and native policy acceptance. Full representative
+an off-server backup. Source-specific retention writes require a fresh verified protected capture and native policy readback; native acceptance is pending. Full representative
 recovery CI run 45513492158 passed, including the final general lifecycle smoke.
+
+### Guarded source retention
+
+The administrator can read effective policy and queue changes to the six native
+retention counts of one reviewed source only. Keep at least three latest
+snapshots; each tier is bounded to 3650. The worker refuses stale settings,
+native automatic raw schedules or enabled ignore-identical settings, unverified
+or unpinned latest managed snapshots, and recovery-mode changes. It checks the
+native pin before and after the policy write and verifies effective retention
+and scheduling readback. It never calls expiration, deletes snapshots, changes
+global policy or edits existing pins. Subsequent Kopia maintenance/captures can
+expire unpinned snapshots, including older recovery inventories; preserve
+independent packages. A failed or uncertain policy write requires inspection,
+not automatic rollback or retry. Native UI/CLI changes by outside administrators
+are outside AfterGrid's admission guarantees.

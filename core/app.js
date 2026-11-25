@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -220,9 +220,10 @@ $("backup-policy-sources").addEventListener("click",async()=>{
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{button.disabled=false;}
 });
+$("backup-policy-source").addEventListener("change",()=>{$("backup-retention-controls").replaceChildren();$("backup-policy-result").textContent="Read effective policy for selected source.";});
 $("backup-policy-check").addEventListener("click",async()=>{
   const root=$("backup-policy-result"),button=$("backup-policy-check"),select=$("backup-policy-source");
-  button.disabled=true;select.disabled=true;root.textContent="Reading native effective policy…";
+  button.disabled=true;select.disabled=true;$("backup-retention-controls").replaceChildren();root.textContent="Reading native effective policy…";
   try{
     const result=await api("/api/admin/backups/effective-policy/"+select.value.split("/").map(encodeURIComponent).join("/"));
     if(!status?.admin)return;
@@ -235,7 +236,28 @@ $("backup-policy-check").addEventListener("click",async()=>{
     if(s.times_utc.length)line("Scheduled times (Kopia UTC): "+s.times_utc.join(", "));
     if(s.cron_count)line("Cron entries: "+s.cron_count+" (inspect native Kopia for expressions)");
     line("Retention: "+Object.entries(p.retention).map(([k,v])=>k.replace("keep","")+": "+(v===null?"not reported":v)).join(" · "));
-    line("Native policy changes are read-only here. Use managed schedules separately; protect recovery snapshots before changing retention.");
+    line("Use managed schedules separately. Retention affects unpinned backups; no global changes.");
+    if(result.retention_changes_enabled && Object.values(p.retention).every(Number.isInteger)){
+      const controls=$("backup-retention-controls"),fields={};
+      for(const [key,value] of Object.entries(p.retention)){
+        const label=document.createElement("label");label.textContent=key.replace("keep","")+" ";
+        const input=document.createElement("input");input.type="number";input.min=key==="keepLatest"?"3":"0";input.max="3650";input.step="1";input.value=value;input.required=true;
+        label.append(input);controls.append(label);fields[key]=input;
+      }
+      const apply=document.createElement("button");apply.type="button";apply.textContent="Queue retention change for "+result.key;controls.append(apply);
+      apply.addEventListener("click",async()=>{
+        if(select.value!==result.key){controls.replaceChildren();root.textContent="Reload policy for selected source.";return;}
+        if(!Object.values(fields).every(input=>input.checkValidity())){root.textContent="Enter valid retention counts; keep at least three latest snapshots.";return;}
+        if(!confirm("Change retention for "+result.key+"? Older unpinned snapshots may expire. Confirm a fresh verified protected snapshot and independent recovery package."))return;
+        apply.disabled=true;
+        try{
+          const counts=Object.fromEntries(Object.entries(fields).map(([k,input])=>[k,input.valueAsNumber]));
+          const job=await api("/api/admin/backups/retention",{key:result.key,expected:p.retention,counts,confirmed:true});
+          if(status?.admin){controls.replaceChildren();root.textContent="Retention job "+job.id+" queued. Check activity and reload effective policy after completion.";await renderJobs();}
+        }catch(e){if(status?.admin)root.textContent=e.message;}
+        finally{apply.disabled=false;}
+      });
+    }
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{if(status?.admin){button.disabled=false;select.disabled=false;}}
 });

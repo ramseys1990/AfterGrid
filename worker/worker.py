@@ -36,6 +36,8 @@ OFFLINE_ACTIONS={"start","stop","restart","uninstall","share","unshare"}
 OFFLINE_BACKUP_ACTIONS={"snapshot","verify-snapshot","content-snapshot","content-verify","core-snapshot","core-verify-snapshot","worker-snapshot","worker-verify-snapshot","recovery-manifest"}
 MAX_LOG = 24000
 RECOVERY_PIN = "aftergrid-recovery"
+RETENTION_FLAGS={"keepLatest":"--keep-latest","keepHourly":"--keep-hourly","keepDaily":"--keep-daily",
+                 "keepWeekly":"--keep-weekly","keepMonthly":"--keep-monthly","keepAnnual":"--keep-annual"}
 SECRET_LOCK = threading.Lock()
 REGISTRY_LOCK = threading.Lock()
 
@@ -226,6 +228,7 @@ def init():
           CREATE TABLE IF NOT EXISTS batches (
             token TEXT PRIMARY KEY, selection TEXT NOT NULL, job_ids TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS protected_snapshots (job INTEGER PRIMARY KEY);
+          CREATE TABLE IF NOT EXISTS retention_requests (job INTEGER PRIMARY KEY, request TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS exact_verifications (
             job INTEGER PRIMARY KEY, source_job INTEGER NOT NULL);
           CREATE UNIQUE INDEX IF NOT EXISTS one_pending_per_module
@@ -685,7 +688,84 @@ def native_policy_summary(key):
         raise RuntimeError("Native effective policy unavailable") from None
     return {"key":key,"source":source,"policy":result,
             "managed_scheduling_enabled":False,"consistency":"managed snapshot operations required",
-            "retention_changes_enabled":False}
+            "retention_changes_enabled":key!="global" and not (RECOVERY_CORE_ONLY or RECOVERY_OFFLINE)}
+
+
+def validate_retention_request(value):
+    if (not isinstance(value,dict) or set(value)!={"key","expected","counts"}
+        or not isinstance(value["key"],str) or value["key"]=="global"
+        or value["key"] not in backup_policy_sources()):
+        raise ValueError("Unsupported retention source")
+    for name in ("expected","counts"):
+        counts=value[name]
+        if (not isinstance(counts,dict) or set(counts)!=set(RETENTION_FLAGS)
+            or any(type(n) is not int or not 0<=n<=2147483647 for n in counts.values())):
+            raise ValueError("Invalid retention counts")
+    if value["counts"]["keepLatest"]<3 or any(n>3650 for n in value["counts"].values()):
+        raise ValueError("Retain at least three latest snapshots; maximum 3650 per tier")
+    return value
+
+
+def enqueue_retention(value):
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE or "kopia" not in catalog():
+        raise ValueError("Retention changes unavailable")
+    value=validate_retention_request(value)
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone():
+            raise sqlite3.IntegrityError("Worker busy")
+        cursor=conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kopia','set-retention','queued','Queued',?)",
+                            (int(time.time()),))
+        conn.execute("INSERT INTO retention_requests(job,request) VALUES (?,?)",
+                     (cursor.lastrowid,json.dumps(value,sort_keys=True)))
+        return cursor.lastrowid
+
+
+def apply_retention(job):
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE:raise ValueError("Retention changes unavailable")
+    with db() as conn:
+        row=conn.execute("SELECT request FROM retention_requests WHERE job=?",(job,)).fetchone()
+    if not row:raise ValueError("Reviewed retention request missing")
+    request=validate_retention_request(json.loads(row["request"]))
+    key=request["key"]
+    source=backup_policy_sources()[key]
+    change(job,state="running",total=4,completed=0,stage="Check current native policy and recovery point")
+    before=native_policy_summary(key)["policy"]
+    if before["retention"]!=request["expected"]:
+        raise RuntimeError("Native retention changed; reload policy before retrying")
+    if before["schedule"]["automatic_policy"] or before["ignore_identical"] is not False:
+        raise RuntimeError("Review native automatic scheduling and identical-snapshot settings first")
+    # Require the latest managed source to be a verified, explicitly protected
+    # capture, not merely an older or unrelated pinned manifest.
+    record=next(r for r in recovery_manifest_records() if r["key"]==key)
+    sid=record["snapshot_id"]
+    source_job=record["snapshot_job"]
+    expected_kind="read-only" if key.startswith("content/") else "isolated"
+    if (not isinstance(sid,str) or not re.fullmatch(r"[a-f0-9]{32,64}",sid)
+        or record["verification"]!=expected_kind or not record["verification_job"]
+        or not protected_snapshot_requested(source_job)):
+        raise RuntimeError("Create and verify a fresh protected snapshot of this source first")
+    _,stats=read_snapshot_manifest(source,sid)
+    if stats.get("aftergrid_pinned") is not True:
+        raise RuntimeError("Native recovery pin no longer confirmed")
+    change(job,completed=1,stage="Apply only reviewed native retention counts")
+    args=[flag+"="+str(request["counts"][key]) for key,flag in RETENTION_FLAGS.items()]
+    try:
+        subprocess.run(command("kopia","exec","-T","kopia","/bin/kopia","policy","set",*args,source),
+                       env=compose_env("kopia"),capture_output=True,text=True,timeout=30,check=True)
+    except (OSError,ValueError,subprocess.SubprocessError):
+        raise RuntimeError("Native policy change unconfirmed; inspect effective policy before retrying") from None
+    change(job,completed=2,stage="Read back native policy")
+    after=native_policy_summary(key)["policy"]
+    if (after["retention"]!=request["counts"] or after["schedule"]!=before["schedule"]
+        or after["ignore_identical"]!=before["ignore_identical"]):
+        raise RuntimeError("Native policy readback differs; inspect before retrying")
+    change(job,completed=3,stage="Recheck exact protected recovery manifest")
+    _,stats=read_snapshot_manifest(source,sid)
+    if stats.get("aftergrid_pinned") is not True:
+        raise RuntimeError("Policy applied but protected snapshot readback failed; inspect repository")
+    log(job,"\\nNative retention policy readback confirmed for "+key+"; verified protected manifest "+sid+" remains pinned. Other unpinned snapshots may expire under native retention. No explicit expiration run.\\n".replace("\\n","\n"))
+    change(job,completed=4,state="succeeded",stage="Native retention and recovery pin confirmed")
 
 
 def recovery_manifest_records():
@@ -1385,6 +1465,10 @@ def execute(row):
     job, ident, action = row["id"], row["module"], row["action"]
     switch_attempted=False
     try:
+        if action=="set-retention":
+            if ident!="kopia" or ident not in catalog():raise ValueError("Unsupported retention job")
+            apply_retention(job)
+            return
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
         if RECOVERY_OFFLINE:offline_admission(ident,action)
@@ -1549,13 +1633,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if RECOVERY_CORE_ONLY:
             return self.send_json(409,{"detail":"Core-only recovery disables module actions"})
-        if self.path not in {"/jobs", "/jobs/batch", "/registry-check"}:
+        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
+            if self.path=="/backup-policy/retention":
+                return self.send_json(202,{"id":enqueue_retention(body)})
             if self.path == "/registry-check":
                 if not isinstance(body,dict) or set(body)!={"module"} or not isinstance(body["module"],str) or body["module"] not in catalog():
                     raise ValueError("Unsupported module")
