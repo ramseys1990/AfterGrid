@@ -22,7 +22,21 @@ check_local_docker(){
   projects=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}') || die "Cannot inspect Docker containers."
   networks=$(docker network ls --format '{{.Name}}') || die "Cannot inspect Docker networks."
   volumes=$(docker volume ls --format '{{.Name}}') || die "Cannot inspect Docker volumes."
-  if grep -Eq '^aftergrid([-_]|$)' <<<"$projects" || die "Run with sudo."
+  if grep -Eq '^aftergrid([-_]|$)' <<<"$projects"$'\n'"$networks"$'\n'"$volumes"; then
+    die "Existing AfterGrid Docker resources detected. Inspect the existing installation; nothing was removed."
+  fi
+  ports=$(docker ps --format '{{.Ports}}') || die "Cannot inspect published Docker ports."
+  if grep -Eq ":$1->" <<<"$ports"; then die "Docker already publishes host port $1. Choose AFTERGRID_PORT."; fi
+}
+main(){
+local check_only=false
+case ${1:-} in
+  "") ;;
+  --check) check_only=true ;;
+  *) die "Usage: install.sh [--check]" ;;
+esac
+(( $# <= 1 )) || die "Usage: install.sh [--check]"
+[[ $EUID == 0 ]] || die "Run with sudo."
 [[ -r /etc/os-release ]] || die "Unsupported Linux host."
 . /etc/os-release
 [[ $ID == debian || $ID == ubuntu ]] || die "Use Debian or Ubuntu."
