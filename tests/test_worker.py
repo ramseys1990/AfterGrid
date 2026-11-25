@@ -1204,3 +1204,42 @@ def test_snapshot_statistics_uses_logical_directory_summary_for_cached_files():
     bad=copy.deepcopy(manifest)
     bad["stats"]["excludedFileCount"]=1
     with pytest.raises(RuntimeError):worker.snapshot_statistics(bad,source)
+
+
+def test_reader_hold_resolution_checks_base_without_mutation(tmp_path,monkeypatch):
+    import json
+    from types import SimpleNamespace
+    image="sha256:"+"a"*64
+    target="ghcr.io/kiwix/kiwix-serve:3.8.1@sha256:"+"b"*64
+    monkeypatch.setattr(worker,"MODULES",tmp_path)
+    monkeypatch.setattr(worker,"compose_env",lambda ident:{})
+    calls=[]
+    def run(argv,**kw):
+        calls.append(argv)
+        assert argv[-3:]==["config","--format","json"]
+        assert argv.count("--file")==1 and argv[argv.index("--file")+1]==str(tmp_path/"kiwix/compose.yaml")
+        return SimpleNamespace(stdout=json.dumps({"services":{"kiwix":{"image":target}}}))
+    monkeypatch.setattr(worker.subprocess,"run",run)
+    monkeypatch.setattr(worker,"exact_local_image",lambda ref,expected: calls.append((ref,expected)))
+    report={"rollback_hold":{"status":"active","image_id":image},"recovery_mode":False,
+            "reader_state":"running","local_images":[{"configured_image":worker.rollback_tag(image),
+            "installed_image_ids":[image]}],"worker_busy":False,
+            "latest_guarded_update":{"id":1,"state":"failed","evidence":{"recreation_attempted":True,
+            "rollback_status":"restored","rollback_image_id":image,"previous_image_id":image,
+            "pin_confirmed":True,"snapshot_id":"c"*32,"previous_image_archive":{"image_id":image}}}}
+    result=worker.reader_hold_resolution(report)
+    assert result["status"]=="local prerequisites met" and result["base_matches_rollback"]
+    assert result["failed_job"]==1 and calls[-1]==(target,image)
+    assert not result["clear_enabled"] and not result["archive_reverified"] and not result["pin_reverified"]
+    assert report["rollback_hold"]["status"]=="active"
+    def mismatch(*a):raise RuntimeError("different image")
+    monkeypatch.setattr(worker,"exact_local_image",mismatch)
+    result=worker.reader_hold_resolution(report)
+    assert result["status"]=="blocked" and not result["base_matches_rollback"]
+    report["latest_guarded_update"]["evidence"]["rollback_status"]="unconfirmed"
+    report["worker_busy"]=True
+    result=worker.reader_hold_resolution(report)
+    assert len(result["blockers"])==3
+    report["recovery_mode"]=True
+    calls.clear()
+    assert worker.reader_hold_resolution(report)["status"]=="not applicable" and not calls

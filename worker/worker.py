@@ -1994,6 +1994,60 @@ def latest_update_preparation():
             "evidence":json.loads(row["evidence"]) if row["evidence"] and (row["state"]=="succeeded" or row["action"]=="guarded-update") else None}
 
 
+def reader_hold_resolution(report):
+    """Local advisory only: never clear the hold or authorize another update."""
+    hold=report["rollback_hold"]
+    result={"status":"not applicable","failed_job":None,"base_image":None,
+            "base_matches_rollback":False,"blockers":[],
+            "archive_reverified":False,"pin_reverified":False,"clear_enabled":False}
+    if report["recovery_mode"] or hold["status"] not in {"active","invalid"}:return result
+    result["status"]="blocked"
+    if hold["status"]!="active":
+        result["blockers"].append("Invalid rollback override; inspect host")
+        return result
+    image=hold["image_id"]
+    prior=report["latest_guarded_update"]
+    evidence=prior.get("evidence") if prior else None
+    if prior:result["failed_job"]=prior["id"]
+    if (not prior or prior["state"] not in {"failed","interrupted"} or not isinstance(evidence,dict)
+        or evidence.get("recreation_attempted") is not True
+        or evidence.get("rollback_status")!="restored" or evidence.get("rollback_image_id")!=image
+        or evidence.get("previous_image_id")!=image or evidence.get("pin_confirmed") is not True
+        or not isinstance(evidence.get("snapshot_id"),str)
+        or not re.fullmatch(r"[a-f0-9]{32,64}",evidence["snapshot_id"])
+        or not isinstance(evidence.get("previous_image_archive"),dict)
+        or evidence["previous_image_archive"].get("image_id")!=image):
+        result["blockers"].append("Matching failed update and confirmed rollback evidence required")
+    if report["worker_busy"]:result["blockers"].append("Worker jobs active")
+    services=report["local_images"]
+    if (report["reader_state"]!="running" or not isinstance(services,list) or len(services)!=1
+        or services[0].get("configured_image")!=rollback_tag(image)
+        or services[0].get("installed_image_ids")!=[image]):
+        result["blockers"].append("Exact recovered reader must be running")
+    try:
+        # Inspect the base Compose definition WITHOUT the recovery override.
+        # Never use this command for up, pull or build while the hold exists.
+        folder=MODULES/"kiwix"
+        raw=subprocess.run(["docker","compose","--project-name","aftergrid-kiwix",
+                            "--project-directory",str(folder),"--file",str(folder/"compose.yaml"),
+                            "config","--format","json"],env=compose_env("kiwix"),
+                           capture_output=True,text=True,timeout=8,check=True).stdout
+        definitions=json.loads(raw)["services"]
+        target=definitions["kiwix"]["image"]
+        if (set(definitions)!={"kiwix"} or not isinstance(target,str)
+            or not re.fullmatch(r"ghcr\.io/kiwix/kiwix-serve:[A-Za-z0-9_.-]{1,100}@"+IMAGE_ID_PATTERN,target)):
+            raise ValueError("Base Compose target invalid")
+        result["base_image"]=target
+        exact_local_image(target,image)
+        result["base_matches_rollback"]=True
+    except (OSError,ValueError,TypeError,KeyError,RuntimeError,subprocess.SubprocessError):
+        result["blockers"].append("Reviewed base Compose target must resolve locally to the recovered image")
+    if not result["blockers"]:
+        result["status"]="local prerequisites met"
+        result["blockers"].append("Explicit archive, pin and catalog re-verification and hold resolution still required")
+    return result
+
+
 def reader_update_health():
     """Read-only local status. No registry request, archive read or job admission."""
     report={"module":"kiwix","observed_at":int(time.time()),"registry_checked":False,
@@ -2064,6 +2118,7 @@ def reader_update_health():
         elif report["reader_state"]=="running" and len(report["local_images"][0]["installed_image_ids"])!=1:
             report["blockers"].append("Running reader image identity not confirmed")
     if report["reader_state"]!="running":report["blockers"].append("Reader not confirmed running and ready")
+    report["rollback_resolution"]=reader_hold_resolution(report)
     return report
 
 

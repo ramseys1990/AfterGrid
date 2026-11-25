@@ -187,3 +187,7 @@ preparation cannot conceal an unresolved guarded update. Refresh is
 read-only, performs no registry check, full archive read, backup or
 container mutation, and labels previous backup and archive evidence as
 historical. No unattended dispatch or rollback hold clearing is exposed.
+
+### Rollback resolution preflight
+
+The health dashboard now explains local prerequisites for hold resolution: a matching failed guarded job and recorded restored image/pin/archive, an idle worker, actual readiness and the exact installed rollback image, and the unoverridden digest-pinned base Compose target resolving locally to that same recovered image. Base inspection is config-only; no registry lookup or pull. A mismatched base target must not be reactivated by deleting the override. Local prerequisites are advisory only, not clearance: explicit fresh native archive/pin/catalog checks and a controlled resolution operation remain required. No hold mutation or retry is enabled by this slice.

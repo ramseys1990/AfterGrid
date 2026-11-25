@@ -306,6 +306,12 @@ $("update-health-refresh").addEventListener("click",async()=>{
     line(root,"Automatic execution disabled; separate activation required.");
     line(root,"Reader: "+r.reader_state+" · Approved candidate: "+(r.approved_candidate||"none"));
     line(root,"Rollback hold: "+r.rollback_hold.status+(r.rollback_hold.image_id?" · "+r.rollback_hold.image_id:""));
+    const resolution=r.rollback_resolution;
+    if(resolution&&resolution.status!=="not applicable"){
+      line(root,"Rollback resolution: "+resolution.status+" (hold clearing disabled)");
+      if(resolution.base_image)line(root,"Base Compose target: "+resolution.base_image+" · "+(resolution.base_matches_rollback?"matches recovered image locally":"not confirmed to match recovered image"));
+      for(const blocker of resolution.blockers)line(root,"Resolution: "+blocker);
+    }
     if(r.maintenance_active)line(root,"Recovery maintenance active.");
     if(r.recovery_mode)line(root,"Recovery mode restricts updates.");
     for(const blocker of r.blockers)line(root,"Review: "+blocker);
