@@ -173,7 +173,7 @@ def read_json_private(path, limit=65536):
 
 
 def validate_backup_evidence(plan, seal, inventory, now):
-    if (seal.get("format")!=1 or seal.get("phase")!="sealed" or seal.get("modules")!=[]
+    if (seal.get("format")!=1 or seal.get("phase") not in {"sealed","updating"} or seal.get("modules")!=[]
         or inventory.get("format")!=1 or seal.get("manifest_job")!=inventory.get("manifest_job")):
         raise ValueError("Seal a core-only recovery maintenance capture first")
     checksum=hashlib.sha256(json.dumps(inventory,sort_keys=True,separators=(",",":")).encode()).hexdigest()
@@ -263,6 +263,8 @@ def check_backups(root, candidate):
         raise ValueError("Installed configuration or core identity changed")
     marker=root/"data/core/recovery-maintenance.json"
     seal=read_json_private(marker,8192)
+    if seal.get("phase")=="updating" and seal.get("candidate_sha256")!=assets.sha256_file(candidate/"candidate.json"):
+        raise ValueError("Maintenance claim belongs to another candidate")
     inventory=live_backup_inventory(before["worker"]["container"])
     proof=validate_backup_evidence(plan,seal,inventory,int(time.time()))
     if read_json_private(marker,8192)!=seal or live_core(root)!=before:
@@ -363,6 +365,86 @@ def retain_previous(root,candidate):
         if stage.exists():shutil.rmtree(stage)
 
 
+def verify_retention(candidate,plan):
+    directory=assets.real_directory(candidate/"previous")
+    record=read_json_private(directory/"retention.json")
+    if (record.get("format")!=1 or record.get("candidate_sha256")!=assets.sha256_file(candidate/"candidate.json")
+        or record.get("image_archive_verified") is not True):
+        raise ValueError("Previous image retention record does not match candidate")
+    archive=directory/"images.tar"
+    if archive.is_symlink() or not archive.is_file() or archive.stat().st_size!=record.get("archive_bytes"):
+        raise ValueError("Prior image archive missing or changed")
+    if assets.sha256_file(archive)!=record.get("archive_sha256"):
+        raise ValueError("Prior image archive checksum mismatch")
+    if image_archive_identities(archive)!={plan["previous"][name]["image"] for name in ("core","worker")}:
+        raise ValueError("Prior archive identity mismatch")
+    for name,images in (("previous",record["previous"]),("candidate",plan["candidate"])):
+        expected={}
+        if set(images)!={"core","worker"}:raise ValueError("Unexpected update services")
+        for service in ("core","worker"):
+            image=images[service]
+            if name=="previous":
+                ident=plan["previous"][service]["image"]
+                if image!={"image":ident,"tag":"aftergrid-previous/"+service+":"+ident.removeprefix("sha256:")}:
+                    raise ValueError("Unexpected previous image reference")
+            elif not re.fullmatch(r"aftergrid-candidate/"+service+r":[a-f0-9]{40}-[a-f0-9]{12}",image["tag"]):
+                raise ValueError("Unexpected candidate image reference")
+            image_ref_matches(image["tag"],image["image"])
+            expected[service]={"image":image["tag"],"pull_policy":"never"}
+        if read_json_private(directory/(name+".json"))!={"services":expected}:
+            raise ValueError("Update Compose override changed")
+    return record
+
+
+def check_activation(root,candidate):
+    root=assets.real_directory(root)
+    candidate=assets.real_directory(candidate)
+    plan=read_json_private(candidate/"candidate.json")
+    retained=verify_retention(candidate,plan)
+    # Hashing an image archive can be slow. Check fresh backups last.
+    backups=check_backups(root,candidate)
+    seal=read_json_private(root/"data/core/recovery-maintenance.json",8192)
+    if (seal.get("phase")!="updating" or seal.get("candidate_sha256")!=retained["candidate_sha256"]
+        or seal.get("inventory_sha256")!=backups["inventory_sha256"]):
+        raise ValueError("Acquire matching durable update maintenance claim first")
+    return {"candidate_sha256":retained["candidate_sha256"],"image_archive_verified":True,
+            "backup_evidence":backups,"maintenance_claimed":True,
+            "consistent_local_state_checkpoint":False,"activation_enabled":False}
+
+
+def cancel_claim(root,candidate):
+    """Host-only cancellation before any activation journal or replacement."""
+    root=assets.real_directory(root)
+    candidate=assets.real_directory(candidate)
+    plan=read_json_private(candidate/"candidate.json")
+    if plan.get("root")!=str(root) or assets.local_docker()!=plan["platform"] or live_core(root)!=plan["previous"]:
+        raise ValueError("Original healthy services not confirmed; inspect manually")
+    if (candidate/"activation.json").exists() or (root/".core-update-active").exists():
+        raise ValueError("Activation journal exists; manual reconciliation required")
+    path=root/"data/core/recovery-maintenance.json"
+    seal=read_json_private(path,8192)
+    if seal.get("phase")!="updating" or seal.get("candidate_sha256")!=assets.sha256_file(candidate/"candidate.json"):
+        raise ValueError("Matching update hold required")
+    value={key:seal[key] for key in ("format","modules","inventory_sha256","manifest_job")}
+    value["phase"]="sealed"
+    info=path.stat()
+    fd,tmp=tempfile.mkstemp(prefix=".core-update-cancel-",dir=path.parent)
+    try:
+        with os.fdopen(fd,"w") as out:
+            os.fchown(out.fileno(),info.st_uid,info.st_gid)
+            os.fchmod(out.fileno(),0o600)
+            json.dump(value,out)
+            out.flush()
+            os.fsync(out.fileno())
+        if read_json_private(path,8192)!=seal:raise ValueError("Maintenance marker changed")
+        os.replace(tmp,path)
+        directory_fd=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(directory_fd)
+        finally:os.close(directory_fd)
+    finally:Path(tmp).unlink(missing_ok=True)
+    return {"phase":"sealed","activation_enabled":False}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive",type=Path,nargs="?",help="Local reviewed GitHub commit tar.gz")
@@ -371,10 +453,17 @@ def main():
     modes=parser.add_mutually_exclusive_group()
     modes.add_argument("--check-backups",type=Path,metavar="CANDIDATE",help="Read-only live recovery evidence check")
     modes.add_argument("--retain-previous",type=Path,metavar="CANDIDATE",help="Retain exact prior images without activation")
+    modes.add_argument("--check-activation",type=Path,metavar="CANDIDATE",help="Read-only activation prerequisites")
+    modes.add_argument("--cancel-claim",type=Path,metavar="CANDIDATE",help="Cancel an unactivated update claim")
     args=parser.parse_args()
     if os.geteuid()!=0:parser.error("Run as root on the installed Linux guest")
     if Path("/etc/pve").exists() or shutil.which("pveversion"):parser.error("Do not run on the Proxmox hypervisor")
     try:
+        if args.check_activation is not None or args.cancel_claim is not None:
+            if any((args.archive,args.commit,args.sha256)):parser.error("Use claim commands separately")
+            result=check_activation(ROOT,args.check_activation) if args.check_activation is not None else cancel_claim(ROOT,args.cancel_claim)
+            print(json.dumps(result,indent=2))
+            return
         if args.retain_previous is not None:
             if any((args.archive,args.commit,args.sha256)):parser.error("Use retain-previous separately")
             print(json.dumps(retain_previous(ROOT,args.retain_previous),indent=2))

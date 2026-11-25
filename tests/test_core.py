@@ -607,3 +607,33 @@ def test_installation_summary_is_admin_only(tmp_path,monkeypatch):
         assert client.get(path).status_code==401
         assert client.post("/api/setup",json={"username":"admin","password":"long test password","token":"test-token"},headers=ORIGIN).status_code==201
         assert client.get(path).json()=={"applications":[]}
+
+
+def test_core_update_claim_blocks_mutations_and_survives_restart(tmp_path,monkeypatch):
+    import hashlib,json
+    from core import app as core_app
+    rows=[{"id":5,"state":"succeeded"}]
+    inventory={"manifest_job":5,"records":[{"key":key,"aftergrid_pinned":True,"verification":"isolated","repository_status":"present"} for key in ("core","worker")]}
+    checksum=hashlib.sha256(json.dumps(inventory,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    def fake_call(path,payload=None):
+        if path=="/jobs":return 200,rows
+        if path=="/recovery-manifest":return 200,inventory
+        raise AssertionError(path)
+    monkeypatch.setattr(core_app,"call",fake_call)
+    (tmp_path/"setup-token").write_text("test-token")
+    creds={"username":"admin","password":"long test password"}
+    claim={"confirmed":True,"candidate_sha256":"a"*64,"inventory_sha256":checksum}
+    marker=tmp_path/"recovery-maintenance.json"
+    with TestClient(create_app(tmp_path)) as client:
+        assert client.post("/api/admin/core-update/claim",json=claim,headers=ORIGIN).status_code==401
+        assert client.post("/api/setup",json={**creds,"token":"test-token"},headers=ORIGIN).status_code==201
+        marker.write_text(json.dumps({"format":1,"phase":"sealed","modules":[],"manifest_job":5,"inventory_sha256":checksum}))
+        assert client.post("/api/admin/core-update/claim",json=claim,headers=ORIGIN).json()["phase"]=="updating"
+        cookies=dict(client.cookies)
+        assert client.post("/api/admin/recovery-maintenance/release",json={"confirmed":True},headers=ORIGIN).status_code==409
+        assert client.post("/api/logout",json={},headers=ORIGIN).status_code==409
+    with TestClient(create_app(tmp_path)) as client:
+        client.cookies.update(cookies)
+        assert client.get("/api/admin/recovery-maintenance").json()["phase"]=="updating"
+        assert client.post("/api/login",json=creds,headers=ORIGIN).status_code==409
+        assert client.post("/api/admin/modules/kiwix/install",json={},headers=ORIGIN).status_code==409

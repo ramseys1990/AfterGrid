@@ -111,3 +111,29 @@ def test_prior_image_archive_identity(tmp_path):
     make(b"tampered")
     with pytest.raises(ValueError,match="identity mismatch"):
         update.image_archive_identities(path)
+
+
+def test_activation_gate_rejects_unclaimed_or_wrong_candidate(tmp_path,monkeypatch):
+    import json
+    root=tmp_path/"root"
+    root.mkdir()
+    candidate=tmp_path/"candidate"
+    candidate.mkdir()
+    plan=candidate/"candidate.json"
+    plan.write_text("{}")
+    plan.chmod(0o600)
+    monkeypatch.setattr(update,"verify_retention",lambda *a:{"candidate_sha256":"a"*64})
+    monkeypatch.setattr(update,"check_backups",lambda *a:{"inventory_sha256":"b"*64})
+    marker=root/"data/core/recovery-maintenance.json"
+    marker.parent.mkdir(parents=True)
+    def write(phase,digest):
+        marker.write_text(json.dumps({"phase":phase,"candidate_sha256":digest,"inventory_sha256":"b"*64}))
+        marker.chmod(0o600)
+    write("sealed","a"*64)
+    with pytest.raises(ValueError,match="claim"):
+        update.check_activation(root,candidate)
+    write("updating","c"*64)
+    with pytest.raises(ValueError,match="claim"):
+        update.check_activation(root,candidate)
+    write("updating","a"*64)
+    assert update.check_activation(root,candidate)["activation_enabled"] is False

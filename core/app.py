@@ -116,7 +116,7 @@ def create_app(data_dir=None):
         if not stat.S_ISREG(info.st_mode) or not 0<info.st_size<=8192:
             raise ValueError("Invalid maintenance marker")
         value=json.loads(maintenance_path.read_text())
-        if value.get("format")!=1 or value.get("phase") not in {"capturing","sealed"}:
+        if value.get("format")!=1 or value.get("phase") not in {"capturing","sealed","updating"}:
             raise ValueError("Invalid maintenance marker")
         return value
 
@@ -128,6 +128,9 @@ def create_app(data_dir=None):
                 out.flush()
                 os.fsync(out.fileno())
             os.replace(tmp,maintenance_path)
+            directory_fd=os.open(data,os.O_RDONLY|os.O_DIRECTORY)
+            try:os.fsync(directory_fd)
+            finally:os.close(directory_fd)
         finally:Path(tmp).unlink(missing_ok=True)
 
     def maintenance_owner(request,value):
@@ -218,11 +221,15 @@ def create_app(data_dir=None):
                 try:active=maintenance()
                 except (OSError,ValueError,TypeError):
                     active={"phase":"invalid"}
-                controls={"/api/admin/recovery-maintenance/begin","/api/admin/recovery-maintenance/seal","/api/admin/recovery-maintenance/release"}
+                controls={"/api/admin/recovery-maintenance/begin","/api/admin/recovery-maintenance/seal","/api/admin/recovery-maintenance/release","/api/admin/core-update/claim"}
                 auth=path in {"/api/login","/api/logout"}
                 permitted=not active or auth or path in controls
                 if active and active.get("phase")=="capturing" and (backup_post or (path=="/api/admin/backups/protected-snapshot" and not restricted)):
                     permitted=maintenance_owner(request,active)
+                if active and active.get("phase") in {"updating","invalid"}:
+                    # No login/logout or release during a host-owned update hold.
+                    # Only the host updater may reconcile the persistent marker.
+                    permitted=False
                 if not permitted:
                     response=JSONResponse({"detail":"Recovery maintenance active; operation disabled"},status_code=409)
                 else:
@@ -1093,11 +1100,42 @@ def create_app(data_dir=None):
         save_maintenance(sealed)
         return {"active":True,"phase":"sealed","inventory_sha256":checksum}
 
+    class CoreUpdateClaim(RepositoryConfirmation):
+        candidate_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+        inventory_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @api.post("/api/admin/core-update/claim")
+    def claim_core_update(payload: CoreUpdateClaim,request: Request):
+        require_admin(request)
+        same_origin(request)
+        active=maintenance()
+        if (not payload.confirmed or not active or active["phase"]!="sealed"
+            or active.get("modules")!=[] or active.get("inventory_sha256")!=payload.inventory_sha256):
+            raise HTTPException(409,"Matching sealed core-only recovery capture required")
+        rows=maintenance_idle()
+        if active.get("manifest_job")!=max((r["id"] for r in rows),default=0):
+            raise HTTPException(409,"Recovery inventory changed")
+        try:code,value=call("/recovery-manifest")
+        except WorkerUnavailable:raise HTTPException(409,"Recovery inventory unavailable") from None
+        if code!=200 or not isinstance(value,dict) or value.get("manifest_job")!=active["manifest_job"]:
+            raise HTTPException(409,"Recovery inventory unavailable")
+        checksum=hashlib.sha256(json.dumps(value,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+        if checksum!=payload.inventory_sha256:
+            raise HTTPException(409,"Sealed inventory changed")
+        for key in ("core","worker"):
+            matches=[row for row in value.get("records",[]) if row.get("key")==key]
+            if len(matches)!=1 or matches[0].get("aftergrid_pinned") is not True or matches[0].get("verification")!="isolated" or matches[0].get("repository_status")!="present":
+                raise HTTPException(409,"Protected verified core and worker captures required")
+        save_maintenance({**active,"phase":"updating","candidate_sha256":payload.candidate_sha256,
+                          "claimed_at":int(time.time())})
+        return {"active":True,"phase":"updating","activation_enabled":False}
+
     @api.post("/api/admin/recovery-maintenance/release")
     def release_recovery_maintenance(payload: RepositoryConfirmation,request: Request):
         require_admin(request)
         same_origin(request)
-        if not payload.confirmed or not maintenance():raise HTTPException(409,"Confirm existing maintenance release")
+        active=maintenance()
+        if not payload.confirmed or not active or active["phase"]=="updating":raise HTTPException(409,"Confirm existing maintenance release; update holds require host reconciliation")
         maintenance_idle()
         maintenance_path.unlink()
         return {"active":False}
