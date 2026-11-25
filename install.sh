@@ -19,6 +19,7 @@ check_local_docker(){
   [[ $endpoint == unix:///var/run/docker.sock || $endpoint == unix:///run/docker.sock ]] || die "Default Docker endpoint must be the local system socket."
   docker info >/dev/null || die "Docker is not running or guest does not support it."
   docker compose version >/dev/null || die "Docker Compose v2 is required; install its plugin."
+  if [[ ${2:-fresh} == resume ]]; then return; fi
   projects=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}') || die "Cannot inspect Docker containers."
   networks=$(docker network ls --format '{{.Name}}') || die "Cannot inspect Docker networks."
   volumes=$(docker volume ls --format '{{.Name}}') || die "Cannot inspect Docker volumes."
@@ -28,20 +29,89 @@ check_local_docker(){
   ports=$(docker ps --format '{{.Ports}}') || die "Cannot inspect published Docker ports."
   if grep -Eq ":$1->" <<<"$ports"; then die "Docker already publishes host port $1. Choose AFTERGRID_PORT."; fi
 }
+# A fresh install publishes this root-owned marker before any Compose
+# startup. Resume never downloads, extracts, initializes or rewrites data.
+validate_pending_install(){
+  local root=$1
+  [[ -d $root && ! -L $root && -O $root ]] || die "Invalid installation root."
+  [[ -f $root/.install-pending && ! -L $root/.install-pending && -O $root/.install-pending ]] || die "No unfinished initial installation marker."
+  [[ $(stat -c '%a' "$root/.install-pending") == 600 ]] || die "Invalid installation marker permissions."
+  for file in .env compose.yaml; do
+    [[ -f $root/$file && ! -L $root/$file && -O $root/$file ]] || die "Invalid staged configuration."
+  done
+  local actual expected
+  actual=$(cd "$root" && sha256sum .env compose.yaml)
+  expected=$(cat "$root/.install-pending")
+  [[ $actual == "$expected" ]] || die "Staged configuration changed; inspect manually."
+  [[ -f $root/data/core/setup-token && ! -L $root/data/core/setup-token ]] || die "Setup token is no longer present; use normal Compose management."
+  [[ $(stat -c '%a' "$root/data/core/setup-token") == 600 ]] || die "Invalid setup token permissions."
+  [[ $(cat "$root/data/core/setup-token") =~ ^[a-f0-9]{64}$ ]] || die "Invalid setup token."
+}
+resume_resources(){
+  local root=$1 port=$2 rows project service folder config cid core_found=false
+  rows=$(docker ps -a --format '{{.ID}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.project.working_dir"}}|{{.Label "com.docker.compose.project.config_files"}}') || die "Cannot inspect containers."
+  while IFS='|' read -r cid project service folder config; do
+    [[ $project == aftergrid || $project == aftergrid-* || $project == aftergrid_* ]] || continue
+    [[ $project == aftergrid-core && $folder == "$root" && $config == "$root/compose.yaml" && ( $service == core || $service == worker ) ]] || die "Unexpected AfterGrid container; inspect manually."
+    if [[ $service == core ]]; then core_found=true; fi
+  done <<<"$rows"
+  local ports
+  ports=$(docker ps --filter 'label!=com.docker.compose.project=aftergrid-core' --format '{{.Ports}}') || die "Cannot inspect Docker ports."
+  if grep -Eq ":$port->" <<<"$ports"; then die "Another Docker workload publishes portal port $port."; fi
+  # Existing core may already own the listener; Compose remains the final
+  # binding authority. Never stop a conflicting unrelated process.
+  if ! $core_found; then check_port "$port"; fi
+}
+start_core(){
+  local root=$1
+  cd "$root"
+  export AFTERGRID_ROOT="$root"
+  # Avoid caller-specific settings overriding the preserved installation.
+  unset AFTERGRID_BIND AFTERGRID_PORT AFTERGRID_ORIGIN AFTERGRID_SECURE_COOKIE AFTERGRID_LAN_DOMAIN AFTERGRID_LAN_BIND
+  local -a compose=(docker compose --project-name aftergrid-core --project-directory "$root" --file "$root/compose.yaml" --env-file "$root/.env")
+  echo "[3/4] Building and starting core only"
+  "${compose[@]}" config -q
+  if ! "${compose[@]}" up -d --build --wait --wait-timeout 120; then
+    echo "Core start failed. Inspect: sudo docker compose --project-name aftergrid-core --file $root/compose.yaml --env-file $root/.env logs" >&2
+    echo "After correcting the problem, run sudo bash $root/install.sh --resume. Existing setup token and data are preserved." >&2
+    exit 1
+  fi
+  rm -- "$root/.install-pending"
+  echo "[4/4] Core is healthy"
+}
+resume_install(){
+  local root=/opt/aftergrid port origin
+  [[ $EUID == 0 ]] || die "Run with sudo."
+  [[ ! -d /etc/pve ]] && ! command -v pveversion >/dev/null || die "Install inside a Linux guest, not the Proxmox hypervisor."
+  exec 9>/run/lock/aftergrid-install.lock
+  flock -n 9 || die "Another AfterGrid installer is running."
+  validate_pending_install "$root"
+  port=$(sed -n 's/^AFTERGRID_PORT=//p' "$root/.env")
+  origin=$(sed -n 's/^AFTERGRID_ORIGIN=//p' "$root/.env")
+  [[ $port =~ ^[0-9]{4,5}$ ]] && (( 10#$port >= 1024 && 10#$port <= 65535 )) || die "Invalid preserved port."
+  [[ $origin =~ ^http://[a-z0-9.-]+:[0-9]+$ ]] || die "Invalid preserved origin."
+  check_local_docker "$port" resume
+  resume_resources "$root" "$port"
+  start_core "$root"
+  echo "Open $origin"
+  echo "Retrieve your original one-time setup token with: sudo cat $root/data/core/setup-token"
+}
+
 main(){
 local check_only=false
+(( $# <= 1 )) || die "Usage: install.sh [--check|--resume]"
 case ${1:-} in
   "") ;;
   --check) check_only=true ;;
-  *) die "Usage: install.sh [--check]" ;;
+  --resume) resume_install; return ;;
+  *) die "Usage: install.sh [--check|--resume]" ;;
 esac
-(( $# <= 1 )) || die "Usage: install.sh [--check]"
 [[ $EUID == 0 ]] || die "Run with sudo."
 [[ -r /etc/os-release ]] || die "Unsupported Linux host."
 . /etc/os-release
 [[ $ID == debian || $ID == ubuntu ]] || die "Use Debian or Ubuntu."
 [[ ! -d /etc/pve ]] && ! command -v pveversion >/dev/null || die "Install inside a Linux guest, not the Proxmox hypervisor."
-for cmd in curl tar od tr ip ss awk grep flock; do command -v "$cmd" >/dev/null || die "Missing prerequisite: $cmd"; done
+for cmd in curl tar od tr ip ss awk grep flock sha256sum stat sed; do command -v "$cmd" >/dev/null || die "Missing prerequisite: $cmd"; done
 ROOT=/opt/aftergrid
 BIND=${AFTERGRID_BIND:-}
 LAN_DOMAIN=${AFTERGRID_LAN_DOMAIN:-}
@@ -105,7 +175,7 @@ tmp=$(mktemp -d /opt/.aftergrid-stage.XXXXXXXX)
 trap 'rm -rf -- "$tmp"' EXIT
 curl -fsSL "https://github.com/ramseys1990/AfterGrid/archive/${REF}.tar.gz" -o "$tmp/source.tar.gz"
 mkdir "$tmp/source"
-tar -xzf "$tmp/source.tar.gz" --strip-components=1 -C "$tmp/source"
+tar --no-same-owner -xzf "$tmp/source.tar.gz" --strip-components=1 -C "$tmp/source"
 [[ -f "$tmp/source/compose.yaml" && -f "$tmp/source/core/Dockerfile" ]] || die "Incomplete source archive."
 destination=$ROOT
 ROOT="$tmp/source"
@@ -127,22 +197,14 @@ PORT=$((10#$PORT))
 PORTAL_HOST=$BIND
 if [[ -n $LAN_DOMAIN && $BIND != 127.0.0.1 ]]; then PORTAL_HOST=$LAN_DOMAIN; fi
 printf 'AFTERGRID_BIND=%s\nAFTERGRID_PORT=%s\nAFTERGRID_ORIGIN=http://%s:%s\nAFTERGRID_SECURE_COOKIE=false\nAFTERGRID_LAN_DOMAIN=%s\n' "$BIND" "$PORT" "$PORTAL_HOST" "$PORT" "$LAN_DOMAIN" > "$ROOT/.env"
+(cd "$ROOT" && sha256sum .env compose.yaml > .install-pending)
+chmod 0600 "$ROOT/.install-pending"
 # Publish only a fully staged tree, including existing setup token and env.
 # The rename is on the same filesystem and refuses an existing destination.
 mv -T --no-clobber "$ROOT" "$destination"
 [[ ! -e $ROOT ]] || die "Installation root appeared during staging; refusing overwrite."
 ROOT=$destination
-cd "$ROOT"
-echo "[3/4] Building and starting core only"
-export AFTERGRID_ROOT="$ROOT" AFTERGRID_BIND="$BIND" AFTERGRID_PORT="$PORT" AFTERGRID_ORIGIN="http://$PORTAL_HOST:$PORT" AFTERGRID_SECURE_COOKIE=false AFTERGRID_LAN_DOMAIN="$LAN_DOMAIN"
-compose=(docker compose --project-name aftergrid-core --file "$ROOT/compose.yaml" --env-file "$ROOT/.env")
-"${compose[@]}" config -q
-if ! "${compose[@]}" up -d --build --wait --wait-timeout 120; then
-  echo "Core start failed. Inspect: sudo docker compose --project-name aftergrid-core --file $ROOT/compose.yaml --env-file $ROOT/.env logs" >&2
-  echo "Setup token remains in $ROOT/data/core/setup-token (root-readable)." >&2
-  exit 1
-fi
-echo "[4/4] Core is healthy"
+start_core "$ROOT"
 echo "Open http://$PORTAL_HOST:$PORT"
 if [[ $PORTAL_HOST != "$BIND" ]]; then echo "Create a local DNS record for $PORTAL_HOST pointing to $BIND before signing in."; fi
 if [[ $BIND == 127.0.0.1 ]]; then

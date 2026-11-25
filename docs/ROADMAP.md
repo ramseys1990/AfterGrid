@@ -187,3 +187,5 @@ Installer audit: add read-only preflight and reject conflicting local TCP listen
 
 
 Installer CI repair: reconstruct from the previously passing baseline rather than editing a malformed duplicate shell block. Fresh installation now uses a nonblocking host lock and stages the complete source, token, data directories and configuration under /opt before publishing the root by same-filesystem rename. This addresses partial source publication, not failed Docker startup; explicit safe resume remains pending. Full recovery/update CI at f3b614e passed (45521056086).
+
+Installer resume: preserve staged configuration and original token, require a root-owned pending marker and matching configuration hashes, verify the local Docker context and existing core project labels, and reuse the same core-only Compose startup. No fresh install over existing data; no resume of completed or unmarked installations. Regression tests added, live startup acceptance pending. Fixed preflight test mock for single-argument Docker commands under nounset.
