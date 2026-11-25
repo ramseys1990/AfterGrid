@@ -155,7 +155,7 @@ def main(fixture,exported=None):
                     fmt="{{json .Config."+field+"}}"
                     assert assets.docker("image","inspect","--format",fmt,image)==assets.docker("image","inspect","--format",fmt,prior[name]["image"]),field
                 candidate_images[name]={"tag":tag,"image":image}
-            def run_trial(fail=False,interrupt=False):
+            def run_trial(fail=False,interrupt=False,promote=False):
                 prior=core_update.live_core(original)
                 candidate=tmp/("candidate-interruption" if interrupt else "candidate-failure" if fail else "candidate-success")
                 candidate.mkdir(mode=0o700)
@@ -163,6 +163,7 @@ def main(fixture,exported=None):
                 source.mkdir()
                 shutil.copy2(original/"compose.yaml",source/"compose.yaml")
                 for name in ("core","worker","modules"):shutil.copytree(original/name,source/name)
+                if promote:(source/"core/update-fixture.txt").write_text("Disposable promoted source marker\n")
                 plan={"format":1,"root":str(original),"platform":assets.local_docker(),"commit":commit,
                       "previous":prior,"candidate":candidate_images,"configuration":core_update.check_scope(original,source),
                       "source_sha256":core_update.candidate_source_digest(source),
@@ -210,6 +211,16 @@ def main(fixture,exported=None):
                 assert all(core_update.live_core(original)[name]["image"]==prior[name]["image"] for name in prior)
                 assert applications=={ident:app_identity(ident) for ident in applications}
                 assert call(old,"/api/households")["households"][0]["name"]=="Guided household"
+                if promote:
+                    promoted=core_update.promote_disposable(original,candidate,probe_candidate)
+                    assert promoted["phase"]=="promoted"
+                    assert all(core_update.live_core(original)[name]["image"]==candidate_images[name]["image"] for name in prior)
+                    assert (original/"core/update-fixture.txt").is_file()
+                    # Recreate from base Compose, not the trial override. The
+                    # promoted images and authoritative state must survive.
+                    run(cmd,"up","-d","--no-build","--pull","never","--force-recreate","--wait","--wait-timeout","120","worker","core")
+                    probe_candidate()
+                    assert all(core_update.live_core(original)[name]["image"]==candidate_images[name]["image"] for name in prior)
                 marker=original/"data/core/recovery-maintenance.json"
                 value=json.loads(marker.read_text())
                 value["phase"]="sealed"
@@ -218,7 +229,8 @@ def main(fixture,exported=None):
             run_trial()
             run_trial(fail=True)
             run_trial(interrupt=True)
-            print("Distinct candidate images, forced probe failure and interrupted trial reconciliation passed; Kiwix and Kopia stayed online.",flush=True)
+            run_trial(promote=True)
+            print("Distinct candidate images, forced probe failure, interrupted trial reconciliation and canonical promotion passed; Kiwix and Kopia stayed online.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")
             assert "core" in keys and "content/kiwix" in keys and "application/tak" not in keys
             for key in ("global","content/kiwix"):

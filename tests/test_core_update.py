@@ -251,3 +251,31 @@ def test_trial_inventory_rejects_foreign_project_container(tmp_path,monkeypatch)
     monkeypatch.setattr(update.assets,"docker",docker)
     with pytest.raises(ValueError,match="Unexpected container"):
         update.trial_container_inventory(tmp_path,tmp_path,plan)
+
+
+def test_source_transition_resumes_and_restores(tmp_path):
+    import json
+    root=tmp_path/"root"
+    root.mkdir()
+    stage=root/".core-update-source-fixture"
+    stage.mkdir()
+    for part in ("new","old"):(stage/part).mkdir()
+    records={}
+    for name in ("core","worker"):
+        (root/name).mkdir()
+        (root/name/"file").write_text("old-"+name)
+        (stage/"new"/name).mkdir()
+        (stage/"new"/name/"file").write_text("new-"+name)
+        records[name]={"previous":update.source_tree_digest(root/name),"candidate":update.source_tree_digest(stage/"new"/name)}
+    update.write_private_json(stage/"source-transition.json",{"format":1,"root":str(root),"sources":records,"phase":"staged"})
+    (root/"core").rename(stage/"old/core") # interrupted between renames
+    assert update.source_transition(root,stage,True)["phase"]=="promoted"
+    assert (root/"core/file").read_text()=="new-core"
+    assert (root/"worker/file").read_text()=="new-worker"
+    assert update.source_transition(root,stage,True)["phase"]=="promoted"
+    assert update.source_transition(root,stage,False)["phase"]=="restored"
+    assert (root/"core/file").read_text()=="old-core"
+    assert (stage/"new/worker/file").read_text()=="new-worker"
+    (stage/"new/core/file").write_text("tampered")
+    with pytest.raises(ValueError,match="Unknown source arrangement"):
+        update.source_transition(root,stage,True)

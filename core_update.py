@@ -804,6 +804,148 @@ def reconcile_trial(root,candidate):
     return state
 
 
+def source_tree_digest(path):
+    return hashlib.sha256(json.dumps(tree_hashes(path),sort_keys=True,separators=(",",":")).encode()).hexdigest()
+
+
+def stage_source_transition(root,candidate):
+    """Prepare same-filesystem source moves. Never stage runtime data."""
+    plan=read_json_private(candidate/"candidate.json")
+    check_candidate_source(candidate,plan)
+    if plan["root"]!=str(root) or check_scope(root,candidate/"source")!=plan["configuration"]:
+        raise ValueError("Installed configuration changed")
+    digest=assets.sha256_file(candidate/"candidate.json")
+    stage=root/(".core-update-source-"+digest[:20])
+    stage.mkdir(mode=0o700)
+    new=stage/"new"
+    old=stage/"old"
+    new.mkdir(mode=0o700)
+    old.mkdir(mode=0o700)
+    sources={}
+    for name in ("core","worker"):
+        previous=source_tree_digest(root/name)
+        expected=source_tree_digest(candidate/"source"/name)
+        shutil.copytree(candidate/"source"/name,new/name)
+        if source_tree_digest(new/name)!=expected:raise ValueError("Staged source changed")
+        sources[name]={"previous":previous,"candidate":expected}
+    write_private_json(stage/"source-transition.json",{"format":1,"root":str(root),
+                       "candidate_sha256":digest,"sources":sources,"phase":"staged"})
+    return stage
+
+
+def sync_directory(path):
+    fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY)
+    try:os.fsync(fd)
+    finally:os.close(fd)
+
+
+def source_transition(root,stage,forward):
+    """Idempotent source-only reconciliation using known directory identities.
+
+    Caller must first stop the exact core/worker containers and hold admission.
+    Retain both source trees, never overwrite or remove an unknown directory.
+    """
+    root=assets.real_directory(root)
+    stage=assets.real_directory(stage)
+    record=read_json_private(stage/"source-transition.json")
+    if (stage.parent!=root or not stage.name.startswith(".core-update-source-")
+        or record.get("root")!=str(root) or record.get("format")!=1
+        or set(record.get("sources",{}))!={"core","worker"}
+        or record.get("phase") not in {"staged","promoting","promoted","restoring","restored"}):
+        raise ValueError("Invalid source transition")
+    for name in ("new","old"):assets.real_directory(stage/name)
+    def identity(path):
+        if not path.exists() and not path.is_symlink():return None
+        return source_tree_digest(path)
+    def move(src,dst):
+        if dst.exists() or dst.is_symlink():raise ValueError("Unexpected source destination")
+        src.rename(dst)
+        sync_directory(src.parent)
+        sync_directory(dst.parent)
+    # Check both services before changing either one. An interruption after
+    # either rename is represented by one of three exact path arrangements.
+    for name,row in record["sources"].items():
+        if not all(isinstance(row.get(k),str) and SHA.fullmatch(row[k]) for k in ("previous","candidate")):
+            raise ValueError("Invalid source identity")
+        p,n,o=identity(root/name),identity(stage/"new"/name),identity(stage/"old"/name)
+        before=(row["previous"],row["candidate"],None)
+        middle=(None,row["candidate"],row["previous"])
+        after=(row["candidate"],None,row["previous"])
+        if (p,n,o) not in {before,middle,after}:raise ValueError("Unknown source arrangement; inspect manually")
+    record["phase"]="promoting" if forward else "restoring"
+    journal(stage/"source-transition.json",record)
+    for name,row in record["sources"].items():
+        live=root/name
+        new=stage/"new"/name
+        old=stage/"old"/name
+        if forward:
+            if not old.exists():move(live,old)
+            if not live.exists():move(new,live)
+        else:
+            if old.exists() and live.exists():move(live,new)
+            if old.exists():move(old,live)
+        expected=row["candidate" if forward else "previous"]
+        if identity(live)!=expected:raise ValueError("Source transition verification failed")
+    record["phase"]="promoted" if forward else "restored"
+    journal(stage/"source-transition.json",record)
+    return record
+
+
+def promote_disposable(root,candidate,probe):
+    """Permanent canonical-mount activation in the disposable fixture only.
+
+    A successful isolated trial is mandatory. The original local state is
+    captured again before the candidate is started on canonical mounts.
+    Failed canonical activation remains held for inspection; do not claim
+    automatic data restoration on this path yet.
+    """
+    root,candidate=disposable_trial_scope(root,candidate)
+    plan=read_json_private(candidate/"candidate.json")
+    retained=verify_retention(candidate,plan)
+    check_candidate_source(candidate,plan)
+    if check_scope(root,candidate/"source")!=plan["configuration"] or assets.local_docker()!=plan["platform"]:
+        raise ValueError("Installed configuration or platform changed")
+    status=inspect_trial(candidate)
+    if status["phase"]!="returned_to_previous" or not status["trial_verified"]:
+        raise ValueError("Successful completed trial required")
+    trial=read_json_private(candidate/"activation.json")
+    current=live_core(root)
+    if current!=trial["returned_containers"]:raise ValueError("Returned core identity changed")
+    marker=root/"data/core/recovery-maintenance.json"
+    seal=read_json_private(marker,8192)
+    if seal.get("phase")!="updating" or seal.get("candidate_sha256")!=retained["candidate_sha256"]:
+        raise ValueError("Matching maintenance hold required")
+    proof=validate_backup_evidence(plan,seal,live_backup_inventory(current["worker"]["container"]),int(time.time()))
+    stage=stage_source_transition(root,candidate)
+    path=candidate/"promotion.json"
+    state={"format":1,"phase":"stopping","candidate_sha256":retained["candidate_sha256"],
+           "source_stage":str(stage),"previous":current,"backup_evidence":proof,"disposable_only":True}
+    write_private_json(path,state)
+    try:
+        scoped_compose(root,"stop","core","worker")
+        state["phase"]="checkpointing"
+        journal(path,state)
+        state["checkpoint"]=capture_stopped_checkpoint(root,candidate/"promotion-checkpoint",current)["archives"]
+        state["phase"]="promoting_source"
+        journal(path,state)
+        source_transition(root,stage,True)
+        state["phase"]="starting_candidate"
+        journal(path,state)
+        state["active"]=replace_core(root,plan["candidate"])
+        state["phase"]="verifying"
+        journal(path,state)
+        probe()
+        if candidate_source_digest(root)!=plan["source_sha256"]:
+            raise ValueError("Installed source differs from candidate")
+        state["phase"]="promoted"
+        journal(path,state)
+    except Exception:
+        state["phase"]="promotion_requires_inspection"
+        journal(path,state)
+        raise
+    return state
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive",type=Path,nargs="?",help="Local reviewed GitHub commit tar.gz")
