@@ -17,6 +17,7 @@ from pathlib import Path
 
 HOST = "download.kiwix.org"
 METADATA_HOST = "lb.download.kiwix.org"
+PRIMARY_HOST = "mirror.download.kiwix.org"
 KEY = re.compile(r"/zim/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.zim")
 RESERVE = 512 * 1024**2
 LIMIT = 512 * 1024**3
@@ -307,17 +308,25 @@ class Downloads:
                       "--proto","=https","--proto-redir","=https","--noproxy","*","--connect-timeout","20",
                       "--speed-time","60","--speed-limit","1024","--max-filesize",str(size),
                       "--continue-at","-","--output",str(part),"https://"+HOST+key]
-                proc=subprocess.Popen(args,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-                try:
-                    while proc.poll() is None:
-                        if self.stop.wait(1):
-                            proc.terminate();proc.wait(timeout=5)
-                            self.update(key,"queued","Paused on shutdown");return
-                        if shutil.disk_usage(self.content).free < RESERVE//2:
-                            raise ValueError("Storage reserve reached")
-                    if proc.returncode: raise ValueError("Transfer interrupted; retry to resume")
-                finally:
-                    if proc.poll() is None: proc.kill();proc.wait()
+                # A selected public mirror may be unavailable. Retry once against
+                # Kiwix's official primary, retaining curl resume and exact checks.
+                for origin in (HOST,PRIMARY_HOST):
+                    args[-1]="https://"+origin+key
+                    proc=subprocess.Popen(args,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                    try:
+                        while proc.poll() is None:
+                            if self.stop.wait(1):
+                                proc.terminate();proc.wait(timeout=5)
+                                self.update(key,"queued","Paused on shutdown");return
+                            if shutil.disk_usage(self.content).free < RESERVE//2:
+                                raise ValueError("Storage reserve reached")
+                        if not proc.returncode:
+                            break
+                        if origin==PRIMARY_HOST:
+                            raise ValueError("Download mirror and official primary failed; retry to resume")
+                        self.update(key,"downloading","Selected mirror unavailable; trying official primary")
+                    finally:
+                        if proc.poll() is None: proc.kill();proc.wait()
             self.update(key,"verifying","Checking SHA-256")
             if part.stat().st_size!=size or checksum(part)!=digest:
                 raise ValueError("Size or SHA-256 mismatch; remove bad partial manually")

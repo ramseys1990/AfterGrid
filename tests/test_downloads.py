@@ -52,6 +52,47 @@ def test_persistent_queue(tmp_path):
     with pytest.raises(ValueError):manager.enqueue("/zim/../oops.zim")
 
 
+@pytest.mark.parametrize("primary_succeeds",[True,False])
+def test_unavailable_mirror_uses_one_official_primary(tmp_path,monkeypatch,primary_succeeds):
+    from core import downloads
+    content=tmp_path/"content";content.mkdir()
+    manager=Downloads(tmp_path,content)
+    with manager.db() as con:
+        con.execute("CREATE TABLE downloads (key TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,state TEXT NOT NULL,size INTEGER,digest TEXT,detail TEXT NOT NULL DEFAULT '',updated INTEGER NOT NULL)")
+    manager.enqueue(KEY)
+    with manager.db() as con:
+        row=con.execute("SELECT * FROM downloads").fetchone()
+    monkeypatch.setattr(downloads,"metadata",lambda key:(3,hashlib.sha256(b"abc").hexdigest()))
+    monkeypatch.setattr(downloads,"RESERVE",0)
+    indexed=[]
+    monkeypatch.setattr(downloads,"index_archive",lambda directory,name:indexed.append(name))
+    calls=[]
+
+    class Transfer:
+        def __init__(self,args,**kwargs):
+            calls.append(list(args))
+            self.returncode=28
+            if len(calls)==2 and primary_succeeds:
+                (content/"test.zim.part").write_bytes(b"abc")
+                self.returncode=0
+        def poll(self):return self.returncode
+
+    monkeypatch.setattr(downloads.subprocess,"Popen",Transfer)
+    if primary_succeeds:
+        manager.execute(row)
+        assert (content/"test.zim").read_bytes()==b"abc"
+        assert indexed==["test.zim"]
+        assert manager.list()[0]["state"]=="complete"
+    else:
+        with pytest.raises(ValueError,match="official primary failed"):
+            manager.execute(row)
+        assert not (content/"test.zim").exists()
+        assert not indexed
+    assert [args[-1] for args in calls]==[
+        "https://download.kiwix.org"+KEY,"https://mirror.download.kiwix.org"+KEY]
+    assert all(args[args.index("--continue-at")+1]=="-" for args in calls)
+
+
 def test_verify_before_publish(tmp_path,monkeypatch):
     from core import downloads
     content=tmp_path/"content";content.mkdir()
