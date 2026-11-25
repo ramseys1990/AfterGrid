@@ -896,7 +896,7 @@ def source_transition(root,stage,forward):
 # is never removed. Save failed files by rename before restoring; the
 # quarantine is intentionally retained for inspection.
 RESTORE_WORKER=r"""
-import hashlib,json,os,stat,sys,tarfile
+import hashlib,json,os,stat,sys,tarfile,uuid
 from pathlib import Path,PurePosixPath
 root=Path("/state")
 archive=Path("/checkpoint/worker.tar")
@@ -909,10 +909,37 @@ with tarfile.open(archive,"r:") as tar:
         p=PurePosixPath(m.name)
         if p.is_absolute() or ".." in p.parts or not (m.isdir() or m.isfile()) or quarantine.name in p.parts:
             raise RuntimeError("Unsafe worker checkpoint")
-    quarantine.mkdir(mode=0o700)
-    for child in root.iterdir():
-        if child!=quarantine:child.rename(quarantine/child.name)
-    tar.extractall(root,numeric_owner=True,filter="fully_trusted")
+    # Durable phases distinguish moving original state from extracting a copy.
+    quarantine.mkdir(mode=0o700,exist_ok=True)
+    if quarantine.is_symlink() or not quarantine.is_dir():raise RuntimeError("Invalid worker quarantine")
+    original=quarantine/"original"
+    original.mkdir(mode=0o700,exist_ok=True)
+    phase=quarantine/"phase"
+    def mark(value):
+        tmp=quarantine/(".phase-"+uuid.uuid4().hex)
+        with tmp.open("x") as out:
+            out.write(value)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp,phase)
+        os.sync()
+    current=phase.read_text() if phase.exists() else "moving"
+    if current not in {"moving","extracting","done"}:raise RuntimeError("Invalid worker restore phase")
+    if current=="moving":
+        for child in root.iterdir():
+            if child==quarantine:continue
+            if (original/child.name).exists() or (original/child.name).is_symlink():
+                raise RuntimeError("Worker quarantine collision")
+            child.rename(original/child.name)
+        mark("extracting")
+    if current!="done":
+        remaining=[child for child in root.iterdir() if child!=quarantine]
+        if remaining:
+            partial=quarantine/("partial-"+uuid.uuid4().hex)
+            partial.mkdir(mode=0o700)
+            for child in remaining:child.rename(partial/child.name)
+            os.sync()
+        tar.extractall(root,numeric_owner=True,filter="fully_trusted")
     for m in members:
         p=root/m.name
         info=p.lstat()
@@ -924,23 +951,57 @@ with tarfile.open(archive,"r:") as tar:
         if (info.st_uid,info.st_gid,stat.S_IMODE(info.st_mode))!=(m.uid,m.gid,m.mode):
             raise RuntimeError("Restored worker ownership or mode mismatch")
     os.sync()
+    mark("done")
 """
+
+
+def verify_restored_tree(archive,directory):
+    directory=assets.real_directory(directory)
+    actual={PurePosixPath(p.relative_to(directory).as_posix()) for p in directory.rglob("*")}
+    with tarfile.open(archive,"r:") as tar:
+        expected={PurePosixPath(m.name) for m in tar.getmembers()}-{PurePosixPath(".")}
+        if actual!=expected:raise ValueError("Restored tree contents differ")
+        for m in tar.getmembers():
+            path=directory/m.name
+            info=path.lstat()
+            if (info.st_uid,info.st_gid,stat.S_IMODE(info.st_mode))!=(m.uid,m.gid,m.mode):
+                raise ValueError("Restored ownership or mode differs")
+            if m.isdir():
+                if not stat.S_ISDIR(info.st_mode):raise ValueError("Restored directory differs")
+            elif not stat.S_ISREG(info.st_mode) or assets.sha256_file(path)!=hashlib.file_digest(tar.extractfile(m),"sha256").hexdigest():
+                raise ValueError("Restored file differs")
 
 
 def restore_core_bind(root,checkpoint,report,suffix,seal_digest):
     if not re.fullmatch(r"[a-f0-9]{20}",suffix):raise ValueError("Invalid rollback identity")
     parent=assets.real_directory(root/"data")
-    live=assets.real_directory(parent/"core")
+    live=parent/"core"
     new=parent/(".core-restore-"+suffix)
     failed=parent/(".core-failed-"+suffix)
-    if any(p.exists() or p.is_symlink() for p in (new,failed)):
-        raise ValueError("Existing rollback state; inspect manually")
-    unpack_checkpoint(checkpoint/"core.tar",new,report,"core.sqlite3",{"admin","sessions","first_run"})
+    for path in (live,new,failed):
+        if path.exists() or path.is_symlink():assets.real_directory(path)
+    archive=checkpoint/"core.tar"
+    if checkpoint_archive(archive,"core.sqlite3",{"admin","sessions","first_run"})!=report:
+        raise ValueError("Core checkpoint changed")
+    if failed.exists() and live.exists():
+        if new.exists():raise ValueError("Ambiguous core restore arrangement")
+        verify_restored_tree(archive,live)
+        return failed
+    if not live.exists() and not failed.exists():raise ValueError("Original core state missing")
+    if new.exists():
+        try:verify_restored_tree(archive,new)
+        except ValueError:
+            # A partial extraction is never destroyed; retry into a fresh path.
+            new.rename(parent/(".core-partial-"+suffix+"-"+uuid.uuid4().hex))
+            sync_directory(parent)
+    if not new.exists():unpack_checkpoint(archive,new,report,"core.sqlite3",{"admin","sessions","first_run"})
+    verify_restored_tree(archive,new)
     marker=read_json_private(new/"recovery-maintenance.json",8192)
     if marker.get("phase")!="updating" or marker.get("candidate_sha256")!=seal_digest:
         raise ValueError("Checkpoint maintenance hold mismatch")
-    live.rename(failed)
-    sync_directory(parent)
+    if live.exists():
+        live.rename(failed)
+        sync_directory(parent)
     new.rename(live)
     sync_directory(parent)
     return failed
@@ -948,10 +1009,13 @@ def restore_core_bind(root,checkpoint,report,suffix,seal_digest):
 
 def rollback_disposable_promotion(root,candidate,state,plan,retained):
     root,candidate=disposable_trial_scope(root,candidate)
-    if state.get("phase") not in {"starting_candidate","verifying"} or not state.get("checkpoint"):
+    if state.get("phase") not in {"starting_candidate","verifying","restoring_canonical_state","restoring_worker_state","restoring_source"} or not state.get("checkpoint"):
         raise ValueError("Canonical checkpoint and attempted startup required")
     digest=retained["candidate_sha256"]
-    marker=read_json_private(root/"data/core/recovery-maintenance.json",8192)
+    marker_path=root/"data/core/recovery-maintenance.json"
+    if not marker_path.exists() and state["phase"]=="restoring_canonical_state":
+        marker_path=root/"data"/(".core-failed-"+digest[:20])/"recovery-maintenance.json"
+    marker=read_json_private(marker_path,8192)
     if marker.get("phase")!="updating" or marker.get("candidate_sha256")!=digest:
         raise ValueError("Maintenance hold changed")
     checkpoint=assets.real_directory(candidate/"promotion-checkpoint")
@@ -1051,6 +1115,7 @@ def promote_disposable(root,candidate,probe):
         if state["phase"] in {"starting_candidate","verifying"} and state.get("checkpoint"):
             try:rollback_disposable_promotion(root,candidate,state,plan,retained)
             except Exception:
+                state["resume_phase"]=state["phase"]
                 state["phase"]="promotion_requires_inspection"
                 journal(path,state)
                 raise
@@ -1059,6 +1124,27 @@ def promote_disposable(root,candidate,probe):
             journal(path,state)
         raise
     return state
+
+
+def resume_disposable_rollback(root,candidate):
+    """Resume interrupted canonical restoration before prior startup only."""
+    root,candidate=disposable_trial_scope(root,candidate)
+    plan=read_json_private(candidate/"candidate.json")
+    retained=verify_retention(candidate,plan)
+    check_candidate_source(candidate,plan)
+    if plan["root"]!=str(root) or check_scope(root,candidate/"source")!=plan["configuration"] or assets.local_docker()!=plan["platform"]:
+        raise ValueError("Installed configuration or platform changed")
+    path=candidate/"promotion.json"
+    state=read_json_private(path)
+    digest=retained["candidate_sha256"]
+    if (state.get("format")!=1 or state.get("disposable_only") is not True
+        or state.get("candidate_sha256")!=digest
+        or state.get("source_stage")!=str(root/(".core-update-source-"+digest[:20]))):
+        raise ValueError("Invalid promotion journal")
+    if state["phase"]=="promotion_requires_inspection":state["phase"]=state.get("resume_phase")
+    if state["phase"] not in {"starting_candidate","verifying","restoring_canonical_state","restoring_worker_state","restoring_source"}:
+        raise ValueError("No resumable canonical restoration; inspect manually")
+    return rollback_disposable_promotion(root,candidate,state,plan,retained)
 
 
 def finish_disposable_promotion(root,candidate):

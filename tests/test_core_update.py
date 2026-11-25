@@ -307,3 +307,36 @@ def test_finish_promotion_requires_disposable_scope(tmp_path,monkeypatch):
     monkeypatch.delenv("AFTERGRID_DISPOSABLE_RECOVERY_TEST",raising=False)
     with pytest.raises(ValueError,match="Disposable"):
         update.finish_disposable_promotion(tmp_path,tmp_path)
+
+
+def test_restore_core_bind_resumes_after_first_rename(tmp_path):
+    import sqlite3
+    root=tmp_path/"root"
+    live=root/"data/core"
+    live.mkdir(parents=True)
+    (live/"failed-marker").write_text("keep")
+    source=tmp_path/"source"
+    source.mkdir()
+    with sqlite3.connect(source/"core.sqlite3") as con:
+        for name in ("admin","sessions","first_run"):con.execute("CREATE TABLE "+name+"(id INTEGER)")
+    digest="a"*64
+    update.write_private_json(source/"recovery-maintenance.json",{"phase":"updating","candidate_sha256":digest})
+    checkpoint=tmp_path/"checkpoint"
+    checkpoint.mkdir()
+    archive=checkpoint/"core.tar"
+    with tarfile.open(archive,"w") as tar:tar.add(source,arcname=".")
+    report=update.checkpoint_archive(archive,"core.sqlite3",{"admin","sessions","first_run"})
+    staged=live.parent/(".core-restore-"+digest[:20])
+    update.unpack_checkpoint(archive,staged,report,"core.sqlite3",{"admin","sessions","first_run"})
+    failed=live.parent/(".core-failed-"+digest[:20])
+    live.rename(failed)
+    assert update.restore_core_bind(root,checkpoint,report,digest[:20],digest)==failed
+    assert update.restore_core_bind(root,checkpoint,report,digest[:20],digest)==failed
+    assert (failed/"failed-marker").read_text()=="keep"
+    assert (live/"core.sqlite3").is_file()
+
+
+def test_resume_canonical_rollback_requires_disposable_scope(tmp_path,monkeypatch):
+    monkeypatch.delenv("AFTERGRID_DISPOSABLE_RECOVERY_TEST",raising=False)
+    with pytest.raises(ValueError,match="Disposable"):
+        update.resume_disposable_rollback(tmp_path,tmp_path)
