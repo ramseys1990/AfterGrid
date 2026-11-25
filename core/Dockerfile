@@ -30,7 +30,7 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvkelso/natural-earth-vector/ca
     python -c 'import hashlib; p=open("/app/map-assets/land.geojson","rb").read(); assert hashlib.sha1(b"blob "+str(len(p)).encode()+b"\0"+p).hexdigest()=="04811d72fff2701ec67587e30ad8942675b511e3"'
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && groupadd -g 10001 aftergrid && useradd -u 10001 -g 10001 --no-create-home aftergrid
-COPY app.py backup_schedule.py content_backup_guard.py backup_export.py worker_client.py content.py downloads.py households.py inventory.py map_downloads.py routing.py routing_downloads.py place_search.py waypoints.py communications.py communications.html communications.js maps.html maps.js maps.css region.js index.html style.css app.js ./
+COPY app.py backup_schedule.py update_preferences.py content_backup_guard.py backup_export.py worker_client.py content.py downloads.py households.py inventory.py map_downloads.py routing.py routing_downloads.py place_search.py waypoints.py communications.py communications.html communications.js maps.html maps.js maps.css region.js index.html style.css app.js ./
 LABEL org.aftergrid.recovery-core-only="1"
 USER 10001:10001
 EXPOSE 8080

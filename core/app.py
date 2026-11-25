@@ -28,6 +28,7 @@ try:
     from .content import search_catalog, local_inventory, CatalogUnavailable
     from .content_backup_guard import content_admission
     from .backup_schedule import BackupSchedules, SOURCES as SCHEDULE_SOURCES, INTERVALS as SCHEDULE_INTERVALS
+    from .update_preferences import UpdatePreferences
     from .downloads import Downloads
     from .households import Households
     from .inventory import Inventory, InventoryError
@@ -42,6 +43,7 @@ except ImportError:
     from content import search_catalog, local_inventory, CatalogUnavailable
     from content_backup_guard import content_admission
     from backup_schedule import BackupSchedules, SOURCES as SCHEDULE_SOURCES, INTERVALS as SCHEDULE_INTERVALS
+    from update_preferences import UpdatePreferences
     from downloads import Downloads
     from households import Households
     from inventory import Inventory, InventoryError
@@ -104,6 +106,7 @@ def create_app(data_dir=None):
     mutation_lock = asyncio.Lock()
     maintenance_path = data / "recovery-maintenance.json"
     schedules = BackupSchedules(data)
+    update_preferences = UpdatePreferences(data)
 
     def maintenance():
         try:
@@ -1276,6 +1279,29 @@ def create_app(data_dir=None):
         except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
         if code!=200:raise HTTPException(code if code in {400,503} else 502,"Update eligibility unavailable")
         return result
+
+    class UpdatePreferenceSelection(BaseModel):
+        enabled: bool = Field(strict=True)
+        weekday: int = Field(strict=True,ge=0,le=6)
+        start_minute: int = Field(strict=True,ge=0,lt=1440)
+        duration_minutes: int = Field(strict=True,ge=30,le=360)
+        confirmed: bool = Field(strict=True)
+
+    @api.get("/api/admin/modules/kiwix/update-preferences")
+    def reader_update_preferences(request: Request):
+        require_admin(request)
+        try:report=update_preferences.report("kiwix")
+        except (OSError,ValueError,TypeError):raise HTTPException(409,"Update preferences invalid; inspect host") from None
+        report["recovery_mode"]=recovery_core_only or recovery_offline
+        return report
+
+    @api.post("/api/admin/modules/kiwix/update-preferences")
+    def configure_reader_update_preferences(payload: UpdatePreferenceSelection,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed:raise HTTPException(409,"Confirm update preference and UTC window")
+        try:return update_preferences.configure("kiwix",payload.model_dump(exclude={"confirmed"}))
+        except (OSError,ValueError,TypeError):raise HTTPException(409,"Invalid or unavailable UTC update preferences") from None
 
     class UpdatePreparationSelection(BaseModel):
         candidate: str = Field(min_length=1,max_length=256)

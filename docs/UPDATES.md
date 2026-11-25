@@ -163,3 +163,17 @@ container image separately. This is not database migration rollback.
 Disposable native reader rollback helper coverage and regressions added;
 positive approved-transition acceptance and explicit hold resolution remain
 outstanding.
+
+### Update preferences and maintenance windows
+
+The Kiwix pilot accepts a private, persistent, administrator-confirmed
+preference and weekly UTC admission window (Monday=0; same-day, 30–360
+minutes). Missing preferences are disabled. The report distinguishes an
+open window and the next start. An open window is not an execution
+authorization or a guarantee that a long verification will finish within
+it. No scheduler or registry polling is connected. Saving a preference
+does not consent to future execution: separate activation after positive
+native acceptance is required. Recovery mode disables mutation. These
+local preferences are not included in the current recovery export and
+must be configured again after replacement recovery. No other module
+has automatic-update eligibility.

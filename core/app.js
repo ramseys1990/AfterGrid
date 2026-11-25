@@ -217,7 +217,52 @@ async function renderModules(){
           }
           localButton.addEventListener("click",()=>readEligibility(false));
           onlineButton.addEventListener("click",()=>readEligibility(true));
-          versions.append(localButton,onlineButton,eligibility);
+          const preferences=document.createElement("div"),prefButton=document.createElement("button");
+          prefButton.type="button";prefButton.textContent="Configure future automatic update preference";
+          async function readPreferences(){
+            prefButton.disabled=true;preferences.textContent="Reading update preferences…";
+            try{
+              const report=await api("/api/admin/modules/kiwix/update-preferences");
+              if(!status?.admin||!card.isConnected)return;
+              preferences.replaceChildren();
+              const note=document.createElement("p");
+              note.textContent="Preferences only. Automatic execution is disabled; separate activation will be required after acceptance. Window uses UTC and controls admission, not guaranteed completion.";
+              preferences.append(note);
+              const row=report.preference||{enabled:false,weekday:6,start_minute:120,duration_minutes:120};
+              function control(label,input){
+                const wrap=document.createElement("label");wrap.textContent=label+" ";wrap.append(input);preferences.append(wrap);
+              }
+              const enabled=document.createElement("input");enabled.type="checkbox";enabled.checked=row.enabled;
+              control("Request future automatic updates",enabled);
+              const weekday=document.createElement("select");
+              ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].forEach((day,i)=>{const opt=document.createElement("option");opt.value=i;opt.textContent=day;weekday.append(opt);});
+              weekday.value=row.weekday;control("Day (UTC)",weekday);
+              const start=document.createElement("input");start.type="time";start.required=true;
+              start.value=String(Math.floor(row.start_minute/60)).padStart(2,"0")+":"+String(row.start_minute%60).padStart(2,"0");
+              control("Start (UTC)",start);
+              const duration=document.createElement("input");duration.type="number";duration.min=30;duration.max=360;duration.step=1;duration.required=true;duration.value=row.duration_minutes;
+              control("Duration (minutes)",duration);
+              const save=document.createElement("button");save.type="button";save.textContent="Save preference";save.disabled=report.recovery_mode===true;preferences.append(save);
+              const message=document.createElement("p");preferences.append(message);
+              if(report.window_open)message.textContent="Window open until "+new Date(report.current_window_end*1000).toISOString()+". Execution disabled.";
+              else if(report.next_window_start!==null)message.textContent="Next window: "+new Date(report.next_window_start*1000).toISOString()+". Execution disabled.";
+              save.addEventListener("click",async()=>{
+                if(!start.checkValidity()||!duration.checkValidity())return;
+                const parts=start.value.split(":").map(Number),minute=parts[0]*60+parts[1];
+                if(minute+duration.valueAsNumber>1440){message.textContent="Window must end on the same UTC day.";return;}
+                if(!confirm("Save this preference only? No automatic update will run until separately activated after acceptance."))return;
+                save.disabled=true;
+                try{
+                  await api("/api/admin/modules/kiwix/update-preferences",{enabled:enabled.checked,weekday:Number(weekday.value),start_minute:minute,duration_minutes:duration.valueAsNumber,confirmed:true});
+                  if(status?.admin&&card.isConnected)await readPreferences();
+                }catch(e){if(status?.admin&&card.isConnected)message.textContent=e.message;}
+                finally{save.disabled=false;}
+              });
+            }catch(e){if(status?.admin&&card.isConnected)preferences.textContent=e.message;}
+            finally{prefButton.disabled=false;}
+          }
+          prefButton.addEventListener("click",readPreferences);
+          versions.append(localButton,onlineButton,eligibility,prefButton,preferences);
         }
         card.append(versions);
         if(mod.shared && mod.lan_url){

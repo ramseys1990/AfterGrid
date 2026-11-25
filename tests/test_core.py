@@ -543,3 +543,17 @@ def test_guarded_update_endpoint_requires_confirmation(tmp_path,monkeypatch):
         assert c.post(path,json={**payload,"confirmed":False},headers=ORIGIN).status_code==409
         assert c.post(path,json=payload,headers=ORIGIN).json()=={"id":10}
         assert calls[-1]==("/guarded-update",{k:v for k,v in payload.items() if k!="confirmed"})
+
+def test_update_preferences_admin_and_same_origin(tmp_path):
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/modules/kiwix/update-preferences"
+    payload={"enabled":True,"weekday":6,"start_minute":120,"duration_minutes":120,"confirmed":True}
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.get(path).status_code==401
+        assert c.post("/api/setup",json={"username":"admin","password":"long test password","token":"token"},headers=ORIGIN).status_code==201
+        assert c.get(path).json()["preference"] is None
+        assert c.post(path,json=payload).status_code==403
+        assert c.post(path,json={**payload,"confirmed":False},headers=ORIGIN).status_code==409
+        result=c.post(path,json=payload,headers=ORIGIN).json()
+        assert result["preference"]["enabled"] and not result["execution_enabled"] and result["activation_required"]
+        assert c.get(path).json()["preference"]["weekday"]==6
