@@ -1976,6 +1976,72 @@ def latest_update_preparation():
             "evidence":json.loads(row["evidence"]) if row["evidence"] and (row["state"]=="succeeded" or row["action"]=="guarded-update") else None}
 
 
+def reader_update_health():
+    """Read-only local status. No registry request, archive read or job admission."""
+    report={"module":"kiwix","observed_at":int(time.time()),"registry_checked":False,
+            "archive_reverified":False,"automatic_execution_enabled":False,
+            "recovery_mode":RECOVERY_CORE_ONLY or RECOVERY_OFFLINE,
+            "rollback_hold":{"status":"not checked"},"blockers":[]}
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE:
+        report["blockers"].append("Recovery mode disables update execution")
+    else:
+        try:
+            hold=kiwix_rollback_override()
+            report["rollback_hold"]={"status":"active","image_id":hold[1]} if hold else {"status":"none"}
+            if hold:report["blockers"].append("Previous reader rollback hold; operator review required")
+        except (OSError,ValueError,TypeError):
+            report["rollback_hold"]={"status":"invalid"}
+            report["blockers"].append("Invalid reader rollback hold; inspect host")
+    try:
+        candidate=approved_update_candidate("kiwix")
+        report["approved_candidate"]=candidate["image"] if candidate else None
+        if not candidate:report["blockers"].append("No approved update candidate")
+    except (OSError,ValueError,TypeError):
+        report["approved_candidate"]=None
+        report["blockers"].append("Reviewed candidate file invalid")
+    def attempt(row):
+        if not row:return None
+        result={k:row[k] for k in ("id","action","state","stage","created")}
+        result["evidence"]=None
+        if row["evidence"] and (row["state"]=="succeeded" or row["action"]=="guarded-update"):
+            try:
+                e=json.loads(row["evidence"])
+                if not isinstance(e,dict):raise ValueError("Invalid evidence")
+                # Explicit allowlist; no logs, paths or raw environment.
+                result["evidence"]={k:e[k] for k in ("candidate","platform","previous_image_id","target_image_id",
+                    "snapshot_id","pin_confirmed","verification","file_objects_read","checked_at",
+                    "previous_image_archive","recreation_attempted","update_performed","result_image_id",
+                    "catalog_sample_matched","rollback_status","rollback_image_id","rollback_checked_at") if k in e}
+                archive=result["evidence"].get("previous_image_archive")
+                if isinstance(archive,dict):
+                    result["evidence"]["previous_image_archive"]={k:archive[k] for k in ("image_id","sha256","bytes") if k in archive}
+                elif archive is not None:result["evidence"].pop("previous_image_archive")
+            except (ValueError,TypeError):
+                result["evidence_invalid"]=True
+        return result
+    with db() as conn:
+        for key,action in (("latest_preparation","prepare-update"),("latest_guarded_update","guarded-update"),("latest_manual_update","update")):
+            row=conn.execute("SELECT j.id,j.action,j.state,j.stage,j.created,p.evidence FROM jobs j LEFT JOIN update_preparations p ON p.job=j.id WHERE j.module='kiwix' AND j.action=? ORDER BY j.id DESC LIMIT 1",(action,)).fetchone()
+            report[key]=attempt(row)
+        report["worker_busy"]=bool(conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone())
+    guarded=report["latest_guarded_update"]
+    if guarded and guarded["state"] in {"failed","interrupted"}:
+        report["blockers"].append("Unresolved guarded update; no automatic retry")
+    manual=report["latest_manual_update"]
+    if manual and manual["state"] in {"failed","interrupted"}:
+        report["blockers"].append("Latest manual update requires review")
+    if report["worker_busy"]:report["blockers"].append("Worker jobs active")
+    report["reader_state"]="unavailable"
+    report["local_images"]=None
+    if not RECOVERY_CORE_ONLY:
+        try:
+            report["reader_state"]=state("kiwix")
+            report["local_images"]=version_report("kiwix")["services"]
+        except (RuntimeError,OSError,ValueError,TypeError,KeyError):pass
+    if report["reader_state"]!="running":report["blockers"].append("Reader not confirmed running and ready")
+    return report
+
+
 def ready(ident):
     url = catalog()[ident].get("readiness_url")
     if not url:
@@ -2199,6 +2265,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})
             try:return self.send_json(200,backup_plan(ident))
             except RuntimeError:return self.send_json(503,{"detail":"Reviewed backup sources unavailable"})
+        if self.path=="/update-health/kiwix":
+            try:return self.send_json(200,reader_update_health())
+            except (RuntimeError,OSError,ValueError,TypeError,KeyError,sqlite3.Error):
+                return self.send_json(503,{"detail":"Recorded update health unavailable"})
         if self.path=="/update-preparation/kiwix":
             return self.send_json(200,{"latest":latest_update_preparation()})
         if self.path.startswith("/update-eligibility/"):

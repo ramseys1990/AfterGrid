@@ -177,3 +177,13 @@ native acceptance is required. Recovery mode disables mutation. These
 local preferences are not included in the current recovery export and
 must be configured again after replacement recovery. No other module
 has automatic-update eligibility.
+
+### Administrator update health
+
+The local dashboard combines approved candidate, reader state, effective
+Compose and installed image identity, rollback hold, maintenance preference
+and separate latest guarded, manual and preparation job evidence. A later
+preparation cannot conceal an unresolved guarded update. Refresh is
+read-only, performs no registry check, full archive read, backup or
+container mutation, and labels previous backup and archive evidence as
+historical. No unattended dispatch or rollback hold clearing is exposed.

@@ -1280,6 +1280,21 @@ def create_app(data_dir=None):
         if code!=200:raise HTTPException(code if code in {400,503} else 502,"Update eligibility unavailable")
         return result
 
+    @api.get("/api/admin/updates/health")
+    def reader_update_health(request: Request):
+        require_admin(request)
+        try:code,result=call("/update-health/kiwix",timeout=30)
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=200 or not isinstance(result,dict):
+            raise HTTPException(503,"Recorded update health unavailable")
+        try:
+            prefs=update_preferences.report("kiwix")
+            active=maintenance() is not None
+        except (OSError,ValueError,TypeError):
+            raise HTTPException(409,"Update preference or maintenance state invalid; inspect host") from None
+        return {**result,"preferences":prefs,"maintenance_active":active,
+                "automatic_execution_enabled":False,"activation_required":True}
+
     class UpdatePreferenceSelection(BaseModel):
         enabled: bool = Field(strict=True)
         weekday: int = Field(strict=True,ge=0,le=6)

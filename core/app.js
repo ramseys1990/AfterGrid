@@ -18,7 +18,7 @@ async function refresh(){
   $("version").textContent=status.version;
   $("admin").hidden=!status.admin;
   $("wizard").hidden=!(status.admin && status.selection_pending);
-  if(!status.admin){$("backup-health-result").replaceChildren();$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
+  if(!status.admin){$("update-health-result").replaceChildren();$("backup-health-result").replaceChildren();$("kopia-repository-result").textContent="";$("kopia-initialize").disabled=true;$("backup-policy-source").replaceChildren();$("backup-policy-source").disabled=true;$("backup-policy-check").disabled=true;$("backup-policy-result").replaceChildren();$("backup-retention-controls").replaceChildren();$("backup-schedule-source").replaceChildren();$("backup-schedule-source").disabled=true;$("backup-schedule-interval").disabled=true;$("backup-schedule-enable").disabled=true;$("backup-schedule-disable").disabled=true;$("backup-protected-create").disabled=true;$("backup-schedule-result").replaceChildren();$("backup-core-result").replaceChildren();pending.clear();jobSignature="";$("jobs").replaceChildren();$("local-inventory").replaceChildren();$("content-results").replaceChildren();$("downloads").replaceChildren();$("map-status").replaceChildren();$("map-download").hidden=true;$("routing-status").replaceChildren();$("routing-graph-controls").replaceChildren();$("routing-download").hidden=true;$("content-message").textContent="";}
   view(status.setup_required?"setup":"dashboard");
   if(!status.setup_required){
     if(status.admin){await renderJobs();refreshLocalContent().catch(e=>{$("local-inventory").textContent=e.message;});}
@@ -294,6 +294,51 @@ async function renderModules(){
       $("catalog").append(card);
     }
 }
+$("update-health-refresh").addEventListener("click",async()=>{
+  const button=$("update-health-refresh"),root=$("update-health-result");
+  button.disabled=true;root.textContent="Reading local update health…";
+  try{
+    const r=await api("/api/admin/updates/health");
+    if(!status?.admin)return;
+    root.replaceChildren();
+    const line=(parent,value)=>{const p=document.createElement("p");p.textContent=value;parent.append(p);};
+    const date=v=>Number.isFinite(v)?new Date(v*1000).toISOString():"not recorded";
+    line(root,"Automatic execution disabled; separate activation required.");
+    line(root,"Reader: "+r.reader_state+" · Approved candidate: "+(r.approved_candidate||"none"));
+    line(root,"Rollback hold: "+r.rollback_hold.status+(r.rollback_hold.image_id?" · "+r.rollback_hold.image_id:""));
+    if(r.maintenance_active)line(root,"Recovery maintenance active.");
+    if(r.recovery_mode)line(root,"Recovery mode restricts updates.");
+    for(const blocker of r.blockers)line(root,"Review: "+blocker);
+    for(const s of r.local_images||[]){
+      line(root,"Effective local Compose target: "+s.configured_image);
+      line(root,"Installed image: "+(s.installed_image_ids.join(", ")||"none"));
+    }
+    const pref=r.preferences;
+    if(pref.preference?.enabled){
+      const p=pref.preference,days=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+      line(root,"Future update preference: "+days[p.weekday]+" "+String(Math.floor(p.start_minute/60)).padStart(2,"0")+":"+String(p.start_minute%60).padStart(2,"0")+" UTC · "+p.duration_minutes+" min");
+      line(root,pref.window_open?"Window open until "+date(pref.current_window_end):"Next window: "+date(pref.next_window_start));
+    }else line(root,"Future automatic update preference: disabled");
+    for(const [name,attempt] of [["Latest guarded update",r.latest_guarded_update],["Latest preparation",r.latest_preparation],["Latest manual update",r.latest_manual_update]]){
+      const details=document.createElement("details"),summary=document.createElement("summary");
+      summary.textContent=name+": "+(attempt?attempt.state+" · #"+attempt.id:"none recorded");
+      details.append(summary);root.append(details);
+      if(!attempt)continue;
+      line(details,"Submitted "+date(attempt.created)+" · "+attempt.stage);
+      if(attempt.evidence_invalid)line(details,"Recorded evidence invalid; inspect host.");
+      const e=attempt.evidence;
+      if(!e)continue;
+      if(e.snapshot_id)line(details,"Recorded pre-update snapshot: "+e.snapshot_id+" · "+e.verification+" verification · pin "+(e.pin_confirmed?"recorded":"unconfirmed"));
+      if(e.previous_image_archive)line(details,"Previous archive: "+e.previous_image_archive.image_id+" · "+e.previous_image_archive.bytes+" bytes · checksum "+e.previous_image_archive.sha256);
+      if(e.recreation_attempted)line(details,"Recreation attempted.");
+      if(e.rollback_status)line(details,"Recorded rollback: "+e.rollback_status+" · "+(e.rollback_image_id||"identity not confirmed"));
+      if(attempt.state==="succeeded"&&e.update_performed)line(details,"Result image "+e.result_image_id+" · catalog sample verified.");
+      else if(attempt.action==="guarded-update"&&attempt.state!=="succeeded")line(details,"Update success not confirmed; inspect before further changes.");
+    }
+    line(root,"Recovery evidence is historical; archive and pin are not reverified on refresh. Use the Kiwix application card for explicit online checks and preferences.");
+  }catch(e){if(status?.admin)root.textContent=e.message;}
+  finally{button.disabled=false;}
+});
 $("backup-health-refresh").addEventListener("click",async()=>{
   const button=$("backup-health-refresh"),root=$("backup-health-result");
   button.disabled=true;root.textContent="Reading recorded backup health…";

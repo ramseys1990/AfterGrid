@@ -557,3 +557,18 @@ def test_update_preferences_admin_and_same_origin(tmp_path):
         result=c.post(path,json=payload,headers=ORIGIN).json()
         assert result["preference"]["enabled"] and not result["execution_enabled"] and result["activation_required"]
         assert c.get(path).json()["preference"]["weekday"]==6
+
+def test_reader_update_health_admin_only(tmp_path,monkeypatch):
+    from core import app as core_app
+    def call(path,*args,**kwargs):
+        assert path=="/update-health/kiwix"
+        return 200,{"module":"kiwix","blockers":[]}
+    monkeypatch.setattr(core_app,"call",call)
+    (tmp_path/"setup-token").write_text("token")
+    with TestClient(create_app(tmp_path)) as c:
+        path="/api/admin/updates/health"
+        assert c.get(path).status_code==401
+        assert c.post("/api/setup",json={"username":"admin","password":"long test password","token":"token"},headers=ORIGIN).status_code==201
+        result=c.get(path).json()
+        assert result["preferences"]["preference"] is None
+        assert result["activation_required"] and not result["automatic_execution_enabled"]

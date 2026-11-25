@@ -1066,3 +1066,28 @@ def test_reader_rollback_checks_archive_pin_and_catalog(tmp_path,monkeypatch):
     monkeypatch.setattr(worker,"read_snapshot_manifest",lambda source,sid:("root",{"aftergrid_pinned":False}))
     with pytest.raises(RuntimeError,match="Protected recovery snapshot"):worker.rollback_reader(1,expected,evidence)
     assert not calls
+
+def test_reader_update_health_keeps_failed_update_separate_from_preparation(tmp_path,monkeypatch):
+    import json
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    worker.init()
+    monkeypatch.setattr(worker,"state",lambda i:"running")
+    monkeypatch.setattr(worker,"version_report",lambda i:{"services":[]})
+    image="sha256:"+"a"*64
+    worker.publish_reader_rollback(image)
+    with worker.db() as conn:
+        for action,state,evidence in (("guarded-update","failed",{"rollback_status":"restored","snapshot_id":"b"*32,"secret":"not exposed"}),
+                ("prepare-update","succeeded",{"snapshot_id":"c"*32})):
+            row=conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES ('kiwix',?,?,?,1)",(action,state,"Fixture"))
+            conn.execute("INSERT INTO update_preparations(job,request,evidence) VALUES (?,'{}',?)",(row.lastrowid,json.dumps(evidence)))
+    report=worker.reader_update_health()
+    assert report["latest_guarded_update"]["state"]=="failed"
+    assert report["latest_preparation"]["state"]=="succeeded"
+    assert report["rollback_hold"]=={"status":"active","image_id":image}
+    assert "Unresolved guarded update; no automatic retry" in report["blockers"]
+    assert "not exposed" not in str(report)
+    assert not report["registry_checked"] and not report["archive_reverified"] and not report["automatic_execution_enabled"]

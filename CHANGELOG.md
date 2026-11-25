@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.8.26-dev
+- Add administrator update health view for Kiwix, separate guarded/manual/preparation history, rollback hold and local image identity, historical recovery evidence and future update preferences. No unattended dispatch. CI pending.
 - Add persistent Kiwix update preferences and weekly UTC maintenance-window reporting. No unattended dispatch; separate activation after acceptance is required. CI pending.
 - Add Kiwix image-only recovery attempt after failed guarded recreation, exact prior archive and pin checks, persistent no-pull reader rollback hold and catalog readback. Failed update stays paused. CI pending; no hold-clear endpoint.
 - Add administrator-triggered guarded Kiwix update with fresh verified protected content, prior image archive, exact pulled and resulting image checks, durable mutation evidence and native catalog sample comparison. No approved candidate, unattended execution or automatic rollback yet. CI pending.
