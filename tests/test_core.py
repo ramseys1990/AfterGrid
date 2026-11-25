@@ -483,3 +483,22 @@ def test_backup_health_admin_only_and_due_status(tmp_path,monkeypatch):
         report=c.get(path).json()
         assert report["sources"][0]["schedule"]["status"]=="due; awaiting admission"
         assert report["complete_recovery_certified"] is False
+
+def test_update_eligibility_admin_and_same_origin(tmp_path,monkeypatch):
+    from core import app as core_app
+    calls=[]
+    def call(path,payload=None,**kwargs):
+        calls.append((path,payload))
+        if path=="/jobs":return 200,[]
+        return 200,{"status":"no approved update","blockers":[],"automatic_execution_enabled":False}
+    monkeypatch.setattr(core_app,"call",call)
+    (tmp_path/"setup-token").write_text("token")
+    path="/api/admin/modules/kiwix/update-eligibility"
+    with TestClient(create_app(tmp_path)) as c:
+        assert c.get(path).status_code==401
+        assert c.post("/api/setup",json={"username":"admin","password":"long test password","token":"token"},headers=ORIGIN).status_code==201
+        assert c.get(path).json()["status"]=="no approved update"
+        assert c.post(path,json={}).status_code==403
+        assert c.post("/api/admin/modules/grocy/update-eligibility",json={},headers=ORIGIN).status_code==400
+        assert c.post(path,json={},headers=ORIGIN).json()["status"]=="no approved update"
+        assert ("/update-eligibility",{"module":"kiwix"}) in calls

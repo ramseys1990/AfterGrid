@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.8.26-dev
+- Begin backup-aware update pilot with administrator-only read-only Kiwix eligibility, explicitly reviewed digest-pinned transition and platform identities, and optional registry confirmation. No approved candidate or automatic execution enabled. CI pending.
 - Add administrator backup health overview combining repository connectivity, durable job and exact verification history, protected capture records, matching historical inventory evidence, schedule status and retention activity. No new live verification on refresh; CI pending.
 - Add guarded source-specific Kopia retention count editing through the existing worker; require latest verified protected snapshot and exact native pin/readback, stale-policy guard, no global edits or explicit expiration. Native acceptance pending.
 - Add opt-in native pin-at-creation for reviewed recovery snapshots, exact-ID native pin readback and inventory protection status. No retrospective manifest rewrites, automatic pin accumulation or retention edits. Full prior recovery CI 45513492158 passed; new native fixture pending.

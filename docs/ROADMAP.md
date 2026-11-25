@@ -156,3 +156,5 @@ begin with read-only eligibility and a guarded Kiwix pilot on reviewed
 digest-pinned targets, fresh verified protected pre-update snapshots,
 exact image identity and real readiness, then opt-in scheduling.
 No automatic update implementation or enablement in this documentation slice.
+
+Update pilot first slice: repository-owned Kiwix candidate is deliberately null; narrow digest-pinned reviewed transition and platform image identities, local and explicit online advisory eligibility reports, administrator interface, no auto-execution. Missing candidate, uncertain registry, recovery mode, unapproved starting point and busy or unhealthy service cannot authorize an update. Regression and guided fixture added. Consolidated backup run 45516790640 passed guided native acceptance; disconnected and general lifecycle still pending at review. Native policy full run 45515045817 passed.

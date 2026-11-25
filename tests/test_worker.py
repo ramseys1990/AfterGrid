@@ -832,3 +832,61 @@ def test_backup_health_distinguishes_history_and_matching_inventory(tmp_path,mon
     assert not report["live_manifest_verification"]
     assert "private fixture" not in str(report)
     assert not next(r for r in report["sources"] if r["key"]=="application/tak")["supported"]
+
+def test_approved_update_eligibility_requires_exact_reviewed_transition(tmp_path,monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    worker.init()
+    assert worker.update_eligibility("kiwix",True)["status"]=="no approved update"
+    assert not worker.update_eligibility("grocy",True)["pilot_supported"]
+    old="sha256:"+"a"*64
+    new="sha256:"+"b"*64
+    target="ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"c"*64
+    candidate={"image":target,"platforms":{"linux/amd64":{"from":[old],"to":new}}}
+    monkeypatch.setattr(worker,"approved_update_candidate",lambda ident:candidate)
+    service={"service":"kiwix","configured_image":target,"installed_image_ids":[old],"local_target_image_id":None}
+    monkeypatch.setattr(worker,"version_report",lambda ident:{"services":[service]})
+    monkeypatch.setattr(worker,"state",lambda ident:"running")
+    monkeypatch.setattr(worker,"kopia_status",lambda:{"connection":"connected"})
+    monkeypatch.setattr(worker.subprocess,"run",lambda *a,**kw:SimpleNamespace(stdout="linux/amd64"))
+    registry={"configured_image":target,"platform":"linux/amd64","installed_image_ids":[old],
+              "registry_config_digest":new,"platform_manifest_digest":"sha256:"+"d"*64}
+    calls=[]
+    def report(ident):
+        calls.append(ident)
+        return registry
+    monkeypatch.setattr(worker,"registry_report",report)
+    assert worker.update_eligibility("kiwix")["status"]=="registry check required"
+    assert not calls
+    result=worker.update_eligibility("kiwix",True)
+    assert result["status"]=="reviewed candidate confirmed" and not result["automatic_execution_enabled"]
+    registry["registry_config_digest"]=old
+    assert worker.update_eligibility("kiwix",True)["status"]=="blocked"
+    service["installed_image_ids"]=["sha256:"+"f"*64]
+    assert worker.update_eligibility("kiwix",True)["status"]=="blocked"
+    assert len(calls)==2
+    service["installed_image_ids"]=[new]
+    assert worker.update_eligibility("kiwix",True)["status"]=="matches approved target"
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",True)
+    assert worker.update_eligibility("kiwix",True)["status"]=="blocked"
+
+
+def test_candidate_validation_is_narrow_and_fail_closed(tmp_path,monkeypatch):
+    import json
+    monkeypatch.setattr(worker,"MODULES",tmp_path)
+    folder=tmp_path/"kiwix"
+    folder.mkdir()
+    path=folder/"update-candidate.json"
+    assert worker.approved_update_candidate("kiwix") is None
+    candidate={"image":"ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:"+"a"*64,
+               "platforms":{"linux/amd64":{"from":["sha256:"+"b"*64],"to":"sha256:"+"c"*64}}}
+    path.write_text(json.dumps({"format":1,"candidate":candidate}))
+    assert worker.approved_update_candidate("kiwix")==candidate
+    candidate["image"]="ghcr.io/kiwix/kiwix-serve:latest"
+    path.write_text(json.dumps({"format":1,"candidate":candidate}))
+    with pytest.raises(ValueError):worker.approved_update_candidate("kiwix")

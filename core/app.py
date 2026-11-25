@@ -1251,6 +1251,32 @@ def create_app(data_dir=None):
             raise HTTPException(code if code in (404,503) else 502,"Local module version information unavailable")
         return result
 
+    @api.get("/api/admin/modules/{ident}/update-eligibility")
+    def module_update_eligibility(ident: str,request: Request):
+        require_admin(request)
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}",ident):
+            raise HTTPException(400,"Unsupported module")
+        try:code,result=call("/update-eligibility/"+ident,timeout=45)
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=200:raise HTTPException(code if code in {404,503} else 502,"Update eligibility unavailable")
+        try:active=maintenance() is not None
+        except (OSError,ValueError,TypeError):active=True
+        if active:
+            result["status"]="blocked"
+            result["blockers"]=[*result["blockers"],"Recovery maintenance active or unavailable"]
+        return result
+
+    @api.post("/api/admin/modules/{ident}/update-eligibility")
+    def module_update_eligibility_online(ident: str,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if ident!="kiwix":raise HTTPException(400,"Unsupported update pilot")
+        maintenance_idle()
+        try:code,result=call("/update-eligibility",{"module":ident},timeout=60)
+        except WorkerUnavailable:raise HTTPException(503,"Module manager unavailable") from None
+        if code!=200:raise HTTPException(code if code in {400,503} else 502,"Update eligibility unavailable")
+        return result
+
     @api.post("/api/admin/modules/{ident}/registry-check")
     def module_registry_check(ident: str,request: Request):
         require_admin(request)

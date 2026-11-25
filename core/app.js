@@ -166,7 +166,30 @@ async function renderModules(){
           }catch(e){if(status?.admin&&card.isConnected)registryInfo.textContent=e.message;}
           finally{registry.disabled=false;}
         });
-        versions.append(summary,check,info,registry,registryInfo);card.append(versions);
+        versions.append(summary,check,info,registry,registryInfo);
+        if(mod.id==="kiwix"){
+          const eligibility=document.createElement("div"),localButton=document.createElement("button"),onlineButton=document.createElement("button");
+          localButton.type=onlineButton.type="button";
+          localButton.textContent="Review guarded update eligibility";
+          onlineButton.textContent="Confirm approved candidate with registry (internet)";
+          async function readEligibility(online){
+            if(online&&!confirm("Check the approved candidate's registry identity? No image layers are downloaded or containers changed."))return;
+            localButton.disabled=onlineButton.disabled=true;eligibility.textContent="Checking eligibility…";
+            try{
+              const r=await api("/api/admin/modules/kiwix/update-eligibility",online?{}:undefined);
+              if(!status?.admin||!card.isConnected)return;
+              eligibility.replaceChildren();
+              for(const value of [r.status,"Approved target: "+(r.candidate||"none"),"Registry checked: "+(r.registry_checked?"yes":"no"),...(r.blockers||[]),"Advisory only. No automatic update execution enabled."]){
+                const p=document.createElement("p");p.textContent=value;eligibility.append(p);
+              }
+            }catch(e){if(status?.admin&&card.isConnected)eligibility.textContent=e.message;}
+            finally{localButton.disabled=onlineButton.disabled=false;}
+          }
+          localButton.addEventListener("click",()=>readEligibility(false));
+          onlineButton.addEventListener("click",()=>readEligibility(true));
+          versions.append(localButton,onlineButton,eligibility);
+        }
+        card.append(versions);
         if(mod.shared && mod.lan_url){
           const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+(mod.id==="tak"?" TLS; enroll with the trusted CA.":" HTTP is unencrypted.");card.append(note);
         }else if(mod.share_available){

@@ -1455,6 +1455,102 @@ def registry_report(ident):
     finally:
         REGISTRY_LOCK.release()
 
+IMAGE_ID_PATTERN=r"sha256:[a-f0-9]{64}"
+
+def approved_update_candidate(ident):
+    """Repository-owned approval only; no browser-supplied image or tag."""
+    if ident!="kiwix":return None
+    path=MODULES/ident/"update-candidate.json"
+    try:info=path.lstat()
+    except FileNotFoundError:return None
+    if not stat.S_ISREG(info.st_mode) or not 0<info.st_size<=8192:
+        raise ValueError("Invalid approved candidate file")
+    value=json.loads(path.read_text())
+    if not isinstance(value,dict) or set(value)!={"format","candidate"} or type(value["format"]) is not int or value["format"]!=1:
+        raise ValueError("Invalid approved candidate file")
+    candidate=value["candidate"]
+    if candidate is None:return None
+    if (not isinstance(candidate,dict) or set(candidate)!={"image","platforms"}
+        or not isinstance(candidate["image"],str)
+        or not re.fullmatch(r"ghcr\.io/kiwix/kiwix-serve:[A-Za-z0-9_.-]{1,100}@"+IMAGE_ID_PATTERN,candidate["image"])
+        or not isinstance(candidate["platforms"],dict) or not 1<=len(candidate["platforms"])<=2):
+        raise ValueError("Invalid approved Kiwix candidate")
+    for platform,entry in candidate["platforms"].items():
+        if (platform not in {"linux/amd64","linux/arm64"} or not isinstance(entry,dict)
+            or set(entry)!={"from","to"} or not isinstance(entry["to"],str) or not re.fullmatch(IMAGE_ID_PATTERN,entry["to"])
+            or not isinstance(entry["from"],list) or not 1<=len(entry["from"])<=16
+            or any(not isinstance(x,str) or not re.fullmatch(IMAGE_ID_PATTERN,x) for x in entry["from"])
+            or len(set(entry["from"]))!=len(entry["from"]) or entry["to"] in entry["from"]):
+            raise ValueError("Invalid candidate platform approval")
+    return candidate
+
+
+def update_eligibility(ident,online=False):
+    """Advisory only: no backup, pull, Compose mutation or update admission."""
+    if ident not in catalog():raise ValueError("Unknown module")
+    result={"module":ident,"pilot_supported":ident=="kiwix","automatic_execution_enabled":False,
+            "registry_checked":False,"status":"unsupported pilot","candidate":None,"blockers":[],
+            "checked_at":int(time.time())}
+    if ident!="kiwix":return result
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE:
+        result.update(status="blocked",blockers=["Recovery mode disables update checks"])
+        return result
+    try:candidate=approved_update_candidate(ident)
+    except (OSError,ValueError,TypeError):
+        result.update(status="blocked",blockers=["Reviewed candidate file invalid"])
+        return result
+    if candidate is None:
+        result["status"]="no approved update"
+        return result
+    result["candidate"]=candidate["image"]
+    try:
+        local=version_report(ident)
+        services=local["services"]
+        if len(services)!=1 or services[0]["service"]!=ident or services[0]["configured_image"]!=candidate["image"]:
+            raise ValueError("Reviewed candidate does not match single-service Compose target")
+        service=services[0]
+        platform=subprocess.run(["docker","version","--format","{{.Server.Os}}/{{.Server.Arch}}"],
+                                capture_output=True,text=True,timeout=4,check=True).stdout.strip()
+        result.update(platform=platform,installed_image_ids=service["installed_image_ids"],
+                      local_target_image_id=service["local_target_image_id"])
+        approval=candidate["platforms"].get(platform)
+        if approval is None:raise ValueError("Platform not approved")
+        installed=service["installed_image_ids"]
+        result["expected_target_image_id"]=approval["to"]
+        if installed==[approval["to"]]:
+            result["status"]="matches approved target"
+            return result
+        if len(installed)!=1 or installed[0] not in approval["from"]:
+            result["blockers"].append("Installed image is not an approved starting point")
+        if state(ident)!="running":result["blockers"].append("Reader must be running and ready")
+        with db() as conn:
+            if conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone():
+                result["blockers"].append("Worker jobs active")
+            last=conn.execute("SELECT state FROM jobs WHERE module=? AND action IN ('update','guarded-update') ORDER BY id DESC LIMIT 1",(ident,)).fetchone()
+            if last and last["state"] in {"failed","interrupted"}:result["blockers"].append("Unresolved previous update outcome")
+        if kopia_status()["connection"]!="connected":result["blockers"].append("Connect Kopia repository first")
+        if result["blockers"]:
+            result["status"]="blocked"
+            return result
+        if not online:
+            result["status"]="registry check required"
+            return result
+        registry=registry_report(ident)
+        result["registry_checked"]=True
+        result["registry_config_digest"]=registry.get("registry_config_digest")
+        result["platform_manifest_digest"]=registry.get("platform_manifest_digest")
+        if registry.get("registry_config_digest") is None:
+            result.update(status="registry unavailable",blockers=["Registry identity not confirmed"])
+        elif (registry.get("configured_image")!=candidate["image"] or registry.get("platform")!=platform
+              or registry.get("installed_image_ids")!=installed or registry["registry_config_digest"]!=approval["to"]
+              or not registry.get("platform_manifest_digest")):
+            result.update(status="blocked",blockers=["Registry or installed image identity differs from reviewed platform approval"])
+        else:result["status"]="reviewed candidate confirmed"
+    except (OSError,ValueError,TypeError,KeyError,RuntimeError,sqlite3.Error,subprocess.SubprocessError):
+        result.update(status="blocked",blockers=["Local or registry eligibility evidence unavailable or invalid"])
+    return result
+
+
 def ready(ident):
     url = catalog()[ident].get("readiness_url")
     if not url:
@@ -1673,6 +1769,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})
             try:return self.send_json(200,backup_plan(ident))
             except RuntimeError:return self.send_json(503,{"detail":"Reviewed backup sources unavailable"})
+        if self.path.startswith("/update-eligibility/"):
+            ident=self.path.removeprefix("/update-eligibility/")
+            if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})
+            return self.send_json(200,update_eligibility(ident))
         if self.path.startswith("/versions/"):
             ident=self.path.removeprefix("/versions/")
             if ident not in catalog():return self.send_json(404,{"detail":"Unknown module"})
@@ -1693,13 +1793,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if RECOVERY_CORE_ONLY:
             return self.send_json(409,{"detail":"Core-only recovery disables module actions"})
-        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention"}:
+        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
+            if self.path=="/update-eligibility":
+                if not isinstance(body,dict) or set(body)!={"module"} or body["module"]!="kiwix":
+                    raise ValueError("Unsupported update pilot")
+                return self.send_json(200,update_eligibility("kiwix",online=True))
             if self.path=="/backup-policy/retention":
                 return self.send_json(202,{"id":enqueue_retention(body)})
             if self.path == "/registry-check":

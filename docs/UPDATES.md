@@ -72,3 +72,19 @@ A pinned backup is not a complete system recovery package, and pin storage
 needs explicit operator review; do not automatically unpin old recovery points.
 Native and physical clean-host acceptance remain distinct.
 
+### Advisory eligibility implementation
+
+The first read-only slice is implemented. The repository-owned
+`modules/kiwix/update-candidate.json` deliberately has a null candidate.
+A later reviewed release must provide the exact digest-pinned Kiwix Compose
+target and approved source/target image config IDs for each supported
+platform (linux/amd64 or linux/arm64). The worker requires exact Compose
+target agreement, a known approved installed starting point, a ready
+reader, connected Kopia and idle worker; an explicit online check also
+requires matching registry config and platform-manifest evidence. A
+single manifest without confirmed platform selection is not sufficient.
+Unknown registry, recovery modes, missing candidates and mismatched
+identities do not authorize an update. Local inspection does not contact
+the registry. The portal serializes the explicit online check with its
+existing maintenance/content admission. Results are advisory; no image
+pull, backup, update execution or automatic scheduling is exposed here.

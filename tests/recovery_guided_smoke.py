@@ -159,6 +159,8 @@ def main(fixture,exported=None):
             assert core_health["snapshot_job"]==protected["id"] and core_health["verified"]
             assert core_health["pin_at_inventory"] is True and core_health["repository_at_inventory"]=="present"
             assert core_health["schedule"]["status"]=="disabled"
+            eligibility=call(old,"/api/admin/modules/kiwix/update-eligibility")
+            assert eligibility["status"]=="no approved update" and not eligibility["automatic_execution_enabled"]
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)
