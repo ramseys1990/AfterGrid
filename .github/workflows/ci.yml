@@ -43,8 +43,16 @@ jobs:
           fixture="$RUNNER_TEMP/aftergrid-guided-fixture.zim"
           curl --fail --silent --show-error --location --max-time 60 https://raw.githubusercontent.com/openzim/zim-testing-suite/2edf72096208e60c82b6ebbe313baa552cc6af52/data/withns/wikibooks_be_all_nopic_2017-02.zim -o "$fixture"
           test "$(git hash-object "$fixture")" = 6706e9b279753c759ea77c8bd0250ce950bc819c
-          docker pull ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:e478554a9920412eeb5ce1d73f24e4b28445ebed233187cdd03c623c32be46a5
-          docker pull kopia/kopia:0.23.1
+          pull_reviewed() {
+            local attempt
+            for attempt in 1 2 3; do
+              if docker pull "$1"; then return 0; fi
+              if [[ "$attempt" == 3 ]]; then return 1; fi
+              sleep "$((attempt * 15))"
+            done
+          }
+          pull_reviewed ghcr.io/kiwix/kiwix-serve:3.8.2@sha256:e478554a9920412eeb5ce1d73f24e4b28445ebed233187cdd03c623c32be46a5
+          pull_reviewed kopia/kopia:0.23.1
           export_args=()
           if [[ "$EXPORT_DISCONNECTED" == "true" ]]; then
             export_args+=("$RUNNER_TEMP/aftergrid-recovery-acceptance")

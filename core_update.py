@@ -274,16 +274,111 @@ def check_backups(root, candidate):
             "activation_enabled":False,"rollback_ready":False}
 
 
+def image_archive_identities(path):
+    """Verify the image configuration identities in a Docker save archive."""
+    with tarfile.open(path,mode="r:") as tar:
+        member=tar.getmember("manifest.json")
+        if not member.isfile() or not 0<member.size<=65536:raise ValueError("Invalid Docker archive manifest")
+        rows=json.load(tar.extractfile(member))
+        if not isinstance(rows,list) or not 1<=len(rows)<=2:raise ValueError("Unexpected archived image count")
+        ids=set()
+        for row in rows:
+            name=row["Config"]
+            if not isinstance(name,str) or not re.fullmatch(r"(?:blobs/sha256/[a-f0-9]{64}|[a-f0-9]{64}\.json)",name):
+                raise ValueError("Invalid Docker image configuration path")
+            config=tar.getmember(name)
+            if not config.isfile() or not 0<config.size<=16*1024*1024:
+                raise ValueError("Invalid archived image configuration")
+            digest=hashlib.sha256(tar.extractfile(config).read()).hexdigest()
+            if digest!=name.rsplit("/",1)[-1].removesuffix(".json"):raise ValueError("Archived image identity mismatch")
+            ids.add("sha256:"+digest)
+        return ids
+
+
+def image_ref_matches(tag,expected):
+    if not IMAGE.fullmatch(expected) or assets.docker("image","inspect","--format","{{.Id}}",tag)!=expected:
+        raise ValueError("Exact local image missing or changed")
+
+
+def write_private_json(path,value):
+    with path.open("x") as out:
+        os.fchmod(out.fileno(),0o600)
+        json.dump(value,out,indent=2)
+        out.flush()
+        os.fsync(out.fileno())
+
+
+def retain_previous(root,candidate):
+    root=assets.real_directory(root)
+    candidate=assets.real_directory(candidate)
+    if candidate.stat().st_uid!=os.geteuid() or stat.S_IMODE(candidate.stat().st_mode)!=0o700:
+        raise ValueError("Private candidate directory required")
+    plan=read_json_private(candidate/"candidate.json")
+    if plan.get("format")!=1 or plan.get("root")!=str(root) or plan.get("activated") is not False:
+        raise ValueError("Invalid candidate")
+    if assets.local_docker()!=plan["platform"] or live_core(root)!=plan["previous"]:
+        raise ValueError("Installed core changed")
+    if check_scope(root,candidate/"source")!=plan["configuration"]:raise ValueError("Configuration changed")
+    destination=candidate/"previous"
+    if destination.exists() or destination.is_symlink():raise ValueError("Previous image retention already exists; inspect it")
+    stage=Path(tempfile.mkdtemp(prefix=".retain-",dir=candidate))
+    try:
+        rows=[]
+        prior={}
+        for service in ("core","worker"):
+            expected=plan["previous"][service]["image"]
+            target=plan["candidate"][service]
+            if not re.fullmatch(r"aftergrid-candidate/"+service+r":[a-f0-9]{40}-[a-f0-9]{12}",target["tag"]):
+                raise ValueError("Invalid candidate tag")
+            image_ref_matches(target["tag"],target["image"])
+            image_ref_matches(expected,expected)
+            tag="aftergrid-previous/"+service+":"+expected.removeprefix("sha256:")
+            # A dedicated immutable-by-convention local reference protects the
+            # exact image from ordinary dangling-image cleanup. Never prune.
+            assets.docker("image","tag",expected,tag)
+            image_ref_matches(tag,expected)
+            rows.append({"image_id":expected})
+            prior[service]={"tag":tag,"image":expected}
+        archive=stage/"images.tar"
+        assets.save_images(rows,archive)
+        if image_archive_identities(archive)!={r["image_id"] for r in rows}:
+            raise ValueError("Prior image archive identity mismatch")
+        archive_hash=assets.sha256_file(archive)
+        if live_core(root)!=plan["previous"] or check_scope(root,candidate/"source")!=plan["configuration"]:
+            raise ValueError("Live core or configuration changed during retention")
+        # Construct only reviewed Compose image overrides; activation remains
+        # unavailable until the consistent data rollback boundary is proven.
+        for name,images in (("candidate",plan["candidate"]),("previous",prior)):
+            write_private_json(stage/(name+".json"),{"services":{
+                service:{"image":images[service]["tag"],"pull_policy":"never"}
+                for service in ("core","worker")}})
+        report={"format":1,"candidate_sha256":assets.sha256_file(candidate/"candidate.json"),
+                "previous":prior,"archive_sha256":archive_hash,"archive_bytes":archive.stat().st_size,
+                "retained_at":int(time.time()),"image_archive_verified":True,
+                "activation_enabled":False,"rollback_ready":False}
+        write_private_json(stage/"retention.json",report)
+        stage.rename(destination)
+        return report
+    finally:
+        if stage.exists():shutil.rmtree(stage)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive",type=Path,nargs="?",help="Local reviewed GitHub commit tar.gz")
     parser.add_argument("--commit")
     parser.add_argument("--sha256",help="Independently reviewed archive SHA-256")
-    parser.add_argument("--check-backups",type=Path,metavar="CANDIDATE",help="Read-only live recovery evidence check")
+    modes=parser.add_mutually_exclusive_group()
+    modes.add_argument("--check-backups",type=Path,metavar="CANDIDATE",help="Read-only live recovery evidence check")
+    modes.add_argument("--retain-previous",type=Path,metavar="CANDIDATE",help="Retain exact prior images without activation")
     args=parser.parse_args()
     if os.geteuid()!=0:parser.error("Run as root on the installed Linux guest")
     if Path("/etc/pve").exists() or shutil.which("pveversion"):parser.error("Do not run on the Proxmox hypervisor")
     try:
+        if args.retain_previous is not None:
+            if any((args.archive,args.commit,args.sha256)):parser.error("Use retain-previous separately")
+            print(json.dumps(retain_previous(ROOT,args.retain_previous),indent=2))
+            return
         if args.check_backups is not None:
             if any((args.archive,args.commit,args.sha256)):parser.error("Use check-backups separately")
             print(json.dumps(check_backups(ROOT,args.check_backups),indent=2))

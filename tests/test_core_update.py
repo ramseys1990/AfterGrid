@@ -92,3 +92,22 @@ def test_core_backup_gate_requires_exact_fresh_sealed_pins():
     rows[1]["envelope_sha256"]=None
     with pytest.raises(ValueError,match="digest"):
         update.validate_backup_evidence(plan,seal(),inventory,now)
+
+
+def test_prior_image_archive_identity(tmp_path):
+    import json
+    payload=b'{"architecture":"amd64","os":"linux"}'
+    digest=hashlib.sha256(payload).hexdigest()
+    name="blobs/sha256/"+digest
+    path=tmp_path/"images.tar"
+    def make(config):
+        with tarfile.open(path,"w") as tar:
+            for filename,data in {"manifest.json":json.dumps([{"Config":name}]).encode(),name:config}.items():
+                member=tarfile.TarInfo(filename)
+                member.size=len(data)
+                tar.addfile(member,io.BytesIO(data))
+    make(payload)
+    assert update.image_archive_identities(path)=={"sha256:"+digest}
+    make(b"tampered")
+    with pytest.raises(ValueError,match="identity mismatch"):
+        update.image_archive_identities(path)
