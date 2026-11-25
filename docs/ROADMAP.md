@@ -179,3 +179,8 @@ Snapshot regression follow-up: diagnostic [45519497041](https://github.com/ramse
 
 
 Update closeout: corrected snapshot run 45520288017 passed regression and guided native recovery; positive version transition run 45520349270 passed regression and guided native acceptance (Kiwix 3.8.1 to 3.8.2), disconnected acceptance pending at review. Explicit rollback-resolution job implemented c0c9739; native fixture now exercises it using synthetic failed-job evidence from a real restored reader. Existing scheduler gains disabled-by-release-gate dispatch, separate activation and durable one-attempt-per-window claim. Regression and native acceptance pending; production candidate remains null. Physical installation and actual injected native failed transition remain separate acceptance items.
+
+
+### Installation readiness (next milestone)
+
+Installer audit: add read-only preflight and reject conflicting local TCP listeners, Docker published portal ports, remote Docker contexts and existing AfterGrid containers/networks/volumes before source deployment. Preserve unrelated Docker projects. Explicitly export fixed installation root. Next: interrupted-install resume, first-run and port conflict handling for selected apps, clean Debian/Ubuntu and suitable Proxmox guest acceptance. Physical host checks remain unverified.
