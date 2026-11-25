@@ -2036,8 +2036,15 @@ def reader_update_health():
     if not RECOVERY_CORE_ONLY:
         try:
             report["reader_state"]=state("kiwix")
-            report["local_images"]=version_report("kiwix")["services"]
+            services=version_report("kiwix")["services"]
+            if not isinstance(services,list) or len(services)!=1 or services[0]["service"]!="kiwix":
+                raise ValueError("Expected one reviewed reader service")
+            report["local_images"]=services
         except (RuntimeError,OSError,ValueError,TypeError,KeyError):pass
+        if report["local_images"] is None:
+            report["blockers"].append("Local reader image identity unavailable")
+        elif report["reader_state"]=="running" and len(report["local_images"][0]["installed_image_ids"])!=1:
+            report["blockers"].append("Running reader image identity not confirmed")
     if report["reader_state"]!="running":report["blockers"].append("Reader not confirmed running and ready")
     return report
 

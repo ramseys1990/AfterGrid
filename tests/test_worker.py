@@ -1091,3 +1091,22 @@ def test_reader_update_health_keeps_failed_update_separate_from_preparation(tmp_
     assert "Unresolved guarded update; no automatic retry" in report["blockers"]
     assert "not exposed" not in str(report)
     assert not report["registry_checked"] and not report["archive_reverified"] and not report["automatic_execution_enabled"]
+
+
+def test_reader_update_health_reports_missing_image_evidence(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"RECOVERY_OFFLINE",False)
+    monkeypatch.setattr(worker,"RECOVERY_CORE_ONLY",False)
+    worker.init()
+    monkeypatch.setattr(worker,"state",lambda i:"running")
+    def unavailable(i):
+        raise RuntimeError("Docker unavailable")
+    monkeypatch.setattr(worker,"version_report",unavailable)
+    report=worker.reader_update_health()
+    assert report["reader_state"]=="running" and report["local_images"] is None
+    assert "Local reader image identity unavailable" in report["blockers"]
+    monkeypatch.setattr(worker,"version_report",lambda i:{"services":[{"service":"kiwix","installed_image_ids":[]}]})
+    report=worker.reader_update_health()
+    assert "Running reader image identity not confirmed" in report["blockers"]
