@@ -221,7 +221,7 @@ def create_app(data_dir=None):
                 controls={"/api/admin/recovery-maintenance/begin","/api/admin/recovery-maintenance/seal","/api/admin/recovery-maintenance/release"}
                 auth=path in {"/api/login","/api/logout"}
                 permitted=not active or auth or path in controls
-                if active and active.get("phase")=="capturing" and backup_post:
+                if active and active.get("phase")=="capturing" and (backup_post or (path=="/api/admin/backups/protected-snapshot" and not restricted)):
                     permitted=maintenance_owner(request,active)
                 if not permitted:
                     response=JSONResponse({"detail":"Recovery maintenance active; operation disabled"},status_code=409)
@@ -987,6 +987,9 @@ def create_app(data_dir=None):
         same_origin(request)
         if not payload.confirmed or payload.key not in SCHEDULE_SOURCES:
             raise HTTPException(409,"Confirm supported source and persistent native pin")
+        active=maintenance()
+        if active and payload.key not in {"core","worker"}:
+            raise HTTPException(409,"During maintenance only core and worker protected captures are admitted")
         maintenance_idle()
         module,action=SCHEDULE_SOURCES[payload.key]
         try:code,result=call("/jobs",{"module":module,"action":action,"protect":True})

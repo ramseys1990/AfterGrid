@@ -10,6 +10,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
 from pathlib import Path, PurePosixPath
 
@@ -155,7 +156,7 @@ def prepare(root, staging, archive, commit, checksum):
             raise ValueError("Installed core changed during preparation")
         plan={"format":1,"commit":commit,"archive_sha256":checksum,"platform":platform,
               "root":str(root),"previous":prior,"candidate":candidate,"configuration":before,
-              "activated":False,"rollback_ready":False}
+              "prepared_at":int(time.time()),"activated":False,"rollback_ready":False}
         with (stage/"candidate.json").open("x") as out:json.dump(plan,out,indent=2)
         (stage/"candidate.json").chmod(0o600)
         stage.rename(destination)
@@ -164,15 +165,130 @@ def prepare(root, staging, archive, commit, checksum):
         if stage.exists():shutil.rmtree(stage)
 
 
+def read_json_private(path, limit=65536):
+    info=path.lstat()
+    if not stat.S_ISREG(info.st_mode) or not 0<info.st_size<=limit or info.st_mode&0o077:
+        raise ValueError("Invalid private update or maintenance evidence")
+    return json.loads(path.read_text())
+
+
+def validate_backup_evidence(plan, seal, inventory, now):
+    if (seal.get("format")!=1 or seal.get("phase")!="sealed" or seal.get("modules")!=[]
+        or inventory.get("format")!=1 or seal.get("manifest_job")!=inventory.get("manifest_job")):
+        raise ValueError("Seal a core-only recovery maintenance capture first")
+    checksum=hashlib.sha256(json.dumps(inventory,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    if seal.get("inventory_sha256")!=checksum:
+        raise ValueError("Sealed recovery inventory changed")
+    stamp=inventory.get("created")
+    prepared=plan.get("prepared_at")
+    manifest=inventory.get("manifest_job")
+    if (type(stamp) is not int or type(prepared) is not int or type(manifest) is not int
+        or not prepared<=stamp<=now or now-stamp>1800):
+        raise ValueError("Fresh recovery inventory required after candidate preparation")
+    rows=inventory.get("records")
+    if not isinstance(rows,list):raise ValueError("Invalid recovery records")
+    result={}
+    for key in ("core","worker"):
+        matches=[row for row in rows if isinstance(row,dict) and row.get("key")==key]
+        if len(matches)!=1:raise ValueError("Missing or duplicate recovery source")
+        row=matches[0]
+        source_job,verify_job,captured=(row.get(k) for k in ("snapshot_job","verification_job","captured_at"))
+        sid=row.get("snapshot_id")
+        if (any(type(n) is not int for n in (source_job,verify_job,captured))
+            or not 0<source_job<verify_job<manifest or not prepared<=captured<=stamp
+            or not isinstance(sid,str) or not re.fullmatch(r"[a-f0-9]{32,64}",sid)
+            or row.get("verification")!="isolated" or row.get("repository_status")!="present"
+            or row.get("aftergrid_pinned") is not True):
+            raise ValueError("Fresh protected and restore-verified "+key+" snapshot required")
+        proof={"snapshot_job":source_job,"verification_job":verify_job,"snapshot_id":sid}
+        if key=="core" and row.get("content_metadata_included") is not True:
+            raise ValueError("Core content metadata coverage required")
+        if key=="worker":
+            digest=row.get("envelope_sha256")
+            if not isinstance(digest,str) or not SHA.fullmatch(digest):raise ValueError("Worker export digest required")
+            proof["envelope_sha256"]=digest
+        result[key]=proof
+    return result
+
+
+# Fixed read-only program uses the already installed worker's native Kopia
+# manifest reader and existing persistent job evidence; no new remote API.
+LIVE_EVIDENCE=r"""
+import json
+import sys
+import worker as w
+if w.RECOVERY_CORE_ONLY or w.RECOVERY_OFFLINE:
+    raise RuntimeError("Normal operation required")
+inventory=w.load_recovery_manifest()
+if w.kopia_status()["connection"]!="connected":
+    raise RuntimeError("Repository unavailable")
+with w.db() as con:
+    if con.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running') LIMIT 1").fetchone():
+        raise RuntimeError("Worker busy")
+    if con.execute("SELECT max(id) FROM jobs").fetchone()[0]!=inventory["manifest_job"]:
+        raise RuntimeError("Inventory is not the last worker job")
+    for key in ("core","worker"):
+        row=next(r for r in inventory["records"] if r["key"]==key)
+        if not con.execute("SELECT 1 FROM protected_snapshots WHERE job=?",(row["snapshot_job"],)).fetchone():
+            raise RuntimeError("Capture was not protected at creation")
+        if w.managed_snapshot_record(key,row["snapshot_job"])[1]!=row["snapshot_id"]:
+            raise RuntimeError("Snapshot identity changed")
+        proof=con.execute("SELECT module,action,state,log FROM jobs WHERE id=?",(row["verification_job"],)).fetchone()
+        if not proof or (proof["module"],proof["action"],proof["state"])!=("kopia",key+"-verify-snapshot","succeeded") or "Snapshot "+row["snapshot_id"]+" restored;" not in proof["log"]:
+            raise RuntimeError("Exact verification unavailable")
+        if key=="worker" and w.worker_export_checksum(row["snapshot_job"])!=row["envelope_sha256"]:
+            raise RuntimeError("Worker export digest changed")
+        _,stats=w.read_snapshot_manifest(w.CORE_SNAPSHOT_SOURCE if key=="core" else w.WORKER_EXPORT_SOURCE,row["snapshot_id"])
+        if stats.get("aftergrid_pinned") is not True:
+            raise RuntimeError("Native pin missing")
+print(json.dumps(inventory))
+"""
+
+
+def live_backup_inventory(worker_id):
+    if not SHA.fullmatch(worker_id):raise ValueError("Invalid worker container")
+    raw=assets.docker("exec",worker_id,"python3","-c",LIVE_EVIDENCE,timeout=130)
+    if len(raw)>65536:raise ValueError("Oversized recovery inventory")
+    return json.loads(raw)
+
+
+def check_backups(root, candidate):
+    root=assets.real_directory(root)
+    candidate=assets.real_directory(candidate)
+    plan=read_json_private(candidate/"candidate.json")
+    if plan.get("format")!=1 or plan.get("root")!=str(root) or plan.get("activated") is not False:
+        raise ValueError("Invalid candidate")
+    before=live_core(root)
+    if before!=plan["previous"] or check_scope(root,candidate/"source")!=plan["configuration"] or assets.local_docker()!=plan["platform"]:
+        raise ValueError("Installed configuration or core identity changed")
+    marker=root/"data/core/recovery-maintenance.json"
+    seal=read_json_private(marker,8192)
+    inventory=live_backup_inventory(before["worker"]["container"])
+    proof=validate_backup_evidence(plan,seal,inventory,int(time.time()))
+    if read_json_private(marker,8192)!=seal or live_core(root)!=before:
+        raise ValueError("Maintenance or core changed during evidence check")
+    # Advisory only: a seal can subsequently be released. Activation must
+    # repeat this check under a durable admission boundary.
+    return {"backup_evidence_checked":True,"manifest_job":inventory["manifest_job"],
+            "inventory_sha256":seal["inventory_sha256"],"sources":proof,
+            "activation_enabled":False,"rollback_ready":False}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("archive",type=Path,help="Local reviewed GitHub commit tar.gz")
-    parser.add_argument("--commit",required=True)
-    parser.add_argument("--sha256",required=True,help="Independently reviewed archive SHA-256")
+    parser.add_argument("archive",type=Path,nargs="?",help="Local reviewed GitHub commit tar.gz")
+    parser.add_argument("--commit")
+    parser.add_argument("--sha256",help="Independently reviewed archive SHA-256")
+    parser.add_argument("--check-backups",type=Path,metavar="CANDIDATE",help="Read-only live recovery evidence check")
     args=parser.parse_args()
     if os.geteuid()!=0:parser.error("Run as root on the installed Linux guest")
     if Path("/etc/pve").exists() or shutil.which("pveversion"):parser.error("Do not run on the Proxmox hypervisor")
     try:
+        if args.check_backups is not None:
+            if any((args.archive,args.commit,args.sha256)):parser.error("Use check-backups separately")
+            print(json.dumps(check_backups(ROOT,args.check_backups),indent=2))
+            return
+        if not all((args.archive,args.commit,args.sha256)):parser.error("Archive, exact commit and checksum required")
         destination=prepare(ROOT,STAGING,args.archive,args.commit,args.sha256)
     except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError,tarfile.TarError) as exc:
         parser.exit(1,"Core update preparation failed: "+str(exc)+"\n")

@@ -61,3 +61,34 @@ def test_prepare_does_not_activate(tmp_path,monkeypatch):
     plan=json.loads((result/"candidate.json").read_text())
     assert plan["previous"]==before and plan["activated"] is False and plan["rollback_ready"] is False
     assert (root/".env").read_text()=="preserved"
+
+
+def test_core_backup_gate_requires_exact_fresh_sealed_pins():
+    import json
+    now=2000
+    plan={"prepared_at":1000}
+    rows=[]
+    for key in ("core","worker"):
+        rows.append({"key":key,"snapshot_job":1 if key=="core" else 3,
+                     "verification_job":2 if key=="core" else 4,"captured_at":1500,
+                     "snapshot_id":"a"*64,"verification":"isolated","repository_status":"present",
+                     "aftergrid_pinned":True,"content_metadata_included":True,"envelope_sha256":"b"*64})
+    inventory={"format":1,"manifest_job":5,"created":1600,"records":rows}
+    def seal():
+        return {"format":1,"phase":"sealed","modules":[],"manifest_job":5,
+                "inventory_sha256":hashlib.sha256(json.dumps(inventory,sort_keys=True,separators=(",",":")).encode()).hexdigest()}
+    assert set(update.validate_backup_evidence(plan,seal(),inventory,now))=={"core","worker"}
+    old=seal()
+    rows[0]["aftergrid_pinned"]=False
+    with pytest.raises(ValueError,match="changed"):
+        update.validate_backup_evidence(plan,old,inventory,now)
+    with pytest.raises(ValueError,match="protected"):
+        update.validate_backup_evidence(plan,seal(),inventory,now)
+    rows[0]["aftergrid_pinned"]=True
+    with pytest.raises(ValueError,match="Fresh"):
+        update.validate_backup_evidence(plan,seal(),inventory,4000)
+    with pytest.raises(ValueError,match="Fresh"):
+        update.validate_backup_evidence({"prepared_at":1700},seal(),inventory,now)
+    rows[1]["envelope_sha256"]=None
+    with pytest.raises(ValueError,match="digest"):
+        update.validate_backup_evidence(plan,seal(),inventory,now)
