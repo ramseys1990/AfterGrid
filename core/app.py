@@ -901,7 +901,7 @@ def create_app(data_dir=None):
         except (OSError,ValueError,TypeError):raise HTTPException(409,"Invalid schedule file; inspect host") from None
         return {"sources":rows,"available":sorted(SCHEDULE_SOURCES),
                 "intervals":sorted(SCHEDULE_INTERVALS),"execution_enabled":not (recovery_core_only or recovery_offline),
-                "verification_automatic":False}
+                "verification_automatic":True}
 
     @api.post("/api/admin/backups/schedules")
     def configure_schedule(payload: ScheduleSelection,request: Request):

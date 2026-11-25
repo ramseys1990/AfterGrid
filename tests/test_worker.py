@@ -699,3 +699,25 @@ def test_native_policy_summary_allowlisted_and_redacted(monkeypatch):
     {"scheduling":{"timeOfDay":[{"hour":24,"min":0}]}},{"retention":{"keepDaily":True}}])
 def test_native_policy_rejects_malformed_values(value):
     with pytest.raises(ValueError):worker.summarize_native_policy(value)
+
+def test_exact_verification_uses_requested_successful_source(tmp_path,monkeypatch):
+    from pathlib import Path
+    monkeypatch.setattr(worker,"MODULES",Path(__file__).resolve().parents[1]/"modules")
+    monkeypatch.setattr(worker,"STATE",tmp_path)
+    worker.init()
+    old=worker.enqueue("kopia","core-snapshot")
+    worker.change(old,state="succeeded")
+    worker.log(old,"Core database export snapshot: "+"a"*32+";")
+    new=worker.enqueue("kopia","core-snapshot")
+    worker.change(new,state="succeeded")
+    worker.log(new,"Core database export snapshot: "+"b"*32+";")
+    assert worker.managed_snapshot_record("core")== (new,"b"*32)
+    assert worker.managed_snapshot_record("core",old)== (old,"a"*32)
+    with pytest.raises(ValueError):worker.enqueue("kopia","worker-verify-snapshot",source_job=old)
+    with pytest.raises(ValueError):worker.enqueue("kopia","core-verify-snapshot",source_job=999999)
+    with pytest.raises(ValueError):worker.enqueue("kopia","stop",source_job=old)
+    job=worker.enqueue("kopia","core-verify-snapshot",source_job=old)
+    observed=[]
+    monkeypatch.setattr(worker,"verify_snapshot",lambda *args:observed.append(args))
+    worker.execute(worker.jobs()[0])
+    assert observed==[(job,"core",old)]

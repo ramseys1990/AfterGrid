@@ -11,9 +11,12 @@ def test_schedule_due_once_and_no_catchup(tmp_path):
         calls.append((path,payload))
         if path=="/jobs" and payload is None:return 200,jobs
         if path.startswith("/backup-policy/"):return 200,{"policy":{"schedule":{"automatic_policy":False}}}
-        assert payload=={"module":"kopia","action":"core-snapshot"}
-        jobs.append({"id":1,"module":"kopia","action":"core-snapshot","state":"queued"})
-        return 202,{"id":1}
+        if payload=={"module":"kopia","action":"core-snapshot"}:
+            jobs.append({"id":1,"module":"kopia","action":"core-snapshot","state":"queued"})
+            return 202,{"id":1}
+        assert payload=={"module":"kopia","action":"core-verify-snapshot","source_job":1}
+        jobs.append({"id":2,"module":"kopia","action":"core-verify-snapshot","state":"queued"})
+        return 202,{"id":2}
     schedule.tick(call,lambda:None)
     assert not any(p for _,p in calls)
     now[0]+=INTERVALS["daily"]*4
@@ -23,7 +26,12 @@ def test_schedule_due_once_and_no_catchup(tmp_path):
     assert len([p for _,p in calls if p])==1
     jobs[0]["state"]="succeeded"
     schedule.tick(call,lambda:None)
-    assert schedule.load()["core"]["result"]=="succeeded"
+    row=schedule.load()["core"]
+    assert row["source_job"]==1 and row["verification"]=="queued" and row["job"]==2
+    jobs[1]["state"]="succeeded"
+    schedule.tick(call,lambda:None)
+    assert schedule.load()["core"]["verification"]=="succeeded"
+    assert len([p for _,p in calls if p])==2
 
 
 def test_failed_or_uncertain_dispatch_pauses_schedule(tmp_path):
@@ -70,3 +78,14 @@ def test_failed_job_disables_schedule(tmp_path):
     schedule.save(rows)
     schedule.tick(lambda path:(200,[{"id":7,"module":"kopia","action":"core-snapshot","state":"failed"}]),lambda:None)
     assert schedule.load()["core"]["result"]=="failed" and not schedule.load()["core"]["enabled"]
+
+
+def test_verification_failure_pauses_and_never_claims_verified(tmp_path):
+    schedule=BackupSchedules(tmp_path,lambda:100)
+    schedule.configure("core",True,"daily")
+    rows=schedule.load()
+    rows["core"].update(phase="verify",source_job=7,job=8,result="queued",verification="queued")
+    schedule.save(rows)
+    schedule.tick(lambda path:(200,[{"id":8,"module":"kopia","action":"core-verify-snapshot","state":"failed"}]),lambda:None)
+    row=schedule.load()["core"]
+    assert row["verification"]=="failed" and not row["enabled"] and row["source_job"]==7

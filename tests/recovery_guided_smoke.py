@@ -118,6 +118,24 @@ def main(fixture,exported=None):
                 policy=call(old,"/api/admin/backups/effective-policy/"+key)
                 assert policy["key"]==key and policy["managed_scheduling_enabled"] is False
                 assert policy["policy"]["retention"]["keepLatest"] is not None
+            # Exercise real scheduler admission and exact native verification
+            # without waiting an entire day. Only the disposable fixture changes
+            # the due timestamp on disk; the production API has no force-due knob.
+            call(old,"/api/admin/backups/schedules",{"key":"core","interval":"daily","enabled":True,"confirmed":True})
+            schedule_path=original/"data/core/backup-schedules.json"
+            schedule_state=json.loads(schedule_path.read_text())
+            schedule_state["sources"]["core"]["next_due"]=0
+            schedule_path.write_text(json.dumps(schedule_state))
+            deadline=time.monotonic()+150
+            while time.monotonic()<deadline:
+                row=call(old,"/api/admin/backups/schedules")["sources"]["core"]
+                if row["verification"]=="succeeded":break
+                if not row["enabled"]:raise RuntimeError("Scheduled native verification failed or ambiguous")
+                time.sleep(2)
+            else:raise RuntimeError("Scheduled native verification timed out")
+            assert row["source_job"]<row["job"]
+            assert not any("aftergrid-core-"+str(row["job"])+"-" in p.name for p in (original/"restore").iterdir())
+            call(old,"/api/admin/backups/schedules",{"key":"core","interval":"daily","enabled":False,"confirmed":True})
             # Exercise the real fresh-capture coordinator through the authenticated portal.
             other=client()
             call(other,"/api/login",creds)

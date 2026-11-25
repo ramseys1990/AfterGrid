@@ -224,12 +224,14 @@ def init():
             module TEXT PRIMARY KEY, shared INTEGER NOT NULL, registration_closed INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS batches (
             token TEXT PRIMARY KEY, selection TEXT NOT NULL, job_ids TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS exact_verifications (
+            job INTEGER PRIMARY KEY, source_job INTEGER NOT NULL);
           CREATE UNIQUE INDEX IF NOT EXISTS one_pending_per_module
             ON jobs(module) WHERE state IN ('queued','running');
         """)
         conn.execute("UPDATE jobs SET state='interrupted',stage='Worker restarted; inspect service and retry' WHERE state='running'")
 
-def enqueue(ident, action, backup_confirmed=False):
+def enqueue(ident, action, backup_confirmed=False, source_job=None):
     if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
     if RECOVERY_OFFLINE:offline_admission(ident,action)
     manifest = catalog().get(ident)
@@ -250,8 +252,20 @@ def enqueue(ident, action, backup_confirmed=False):
     if action == "share" and not lan_available():
         raise ValueError("Configure a private LAN bind (local DNS is optional)")
     with db() as conn:
+        if source_job is not None:
+            source_action={"verify-snapshot":"snapshot","core-verify-snapshot":"core-snapshot",
+                           "worker-verify-snapshot":"worker-snapshot","content-verify":"content-snapshot"}.get(action)
+            if type(source_job) is not int or source_job<=0 or not source_action or ident=="tak" or RECOVERY_OFFLINE:
+                raise ValueError("Unsupported exact verification")
+            # Claim and validate within the same database transaction as enqueue.
+            conn.execute("BEGIN IMMEDIATE")
+            source=conn.execute("SELECT module,action,state FROM jobs WHERE id=?",(source_job,)).fetchone()
+            if not source or (source["module"],source["action"],source["state"])!=(ident,source_action,"succeeded"):
+                raise ValueError("Exact successful source job required")
         cursor = conn.execute("INSERT INTO jobs(module,action,state,stage,created) VALUES (?,?,'queued','Queued',?)",
                               (ident, action, int(time.time())))
+        if source_job is not None:
+            conn.execute("INSERT INTO exact_verifications(job,source_job) VALUES (?,?)",(cursor.lastrowid,source_job))
         return cursor.lastrowid
 
 def enqueue_batch(token, selection):
@@ -554,18 +568,21 @@ def content_snapshot(job,ident):
         content_guard("end",job)
     change(job,completed=3,state="succeeded",stage="Content snapshot complete; repository verification pending")
 
-def latest_content_snapshot(ident):
+def latest_content_snapshot(ident,source_job=None):
     with db() as conn:
-        row=conn.execute("SELECT log FROM jobs WHERE module=? AND action='content-snapshot' AND state='succeeded' ORDER BY id DESC LIMIT 1",(ident,)).fetchone()
+        if source_job is None:
+            row=conn.execute("SELECT log FROM jobs WHERE module=? AND action='content-snapshot' AND state='succeeded' ORDER BY id DESC LIMIT 1",(ident,)).fetchone()
+        else:
+            row=conn.execute("SELECT log FROM jobs WHERE module=? AND action='content-snapshot' AND state='succeeded' AND id=?",(ident,source_job)).fetchone()
     match=re.search(r"Native content snapshot: ([a-f0-9]{32,64});",row["log"]) if row else None
     if not match:raise RuntimeError("No successful managed content snapshot recorded")
     return match.group(1)
 
-def verify_content(job,ident):
+def verify_content(job,ident,source_job=None):
     if ident not in CONTENT_SOURCES:raise ValueError("Unsupported content source")
     change(job,state="running",total=2,completed=0,stage="Locate exact content snapshot")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
-    snapshot_id=latest_content_snapshot(ident)
+    snapshot_id=latest_content_snapshot(ident) if source_job is None else latest_content_snapshot(ident,source_job)
     _,stats=read_snapshot_manifest(CONTENT_SOURCES[ident],snapshot_id)
     change(job,completed=1,stage="Read every file in native snapshot")
     try:
@@ -845,7 +862,7 @@ CORE_SNAPSHOT_SOURCE="/source/data/core/recovery-export"
 CORE_TABLES={"admin","sessions","first_run","households","inventory_locations",
              "inventory_connections","map_waypoints","map_routes","comm_devices","comm_plans"}
 
-def managed_snapshot_record(ident):
+def managed_snapshot_record(ident,source_job=None):
     if ident=="core":
         module,action,pattern="kopia","core-snapshot",r"Core database export snapshot: ([a-f0-9]{32,64});"
     elif ident=="worker":
@@ -855,7 +872,10 @@ def managed_snapshot_record(ident):
     else:
         raise RuntimeError("Unsupported managed snapshot source")
     with db() as conn:
-        row=conn.execute("SELECT id,log FROM jobs WHERE module=? AND action=? AND state='succeeded' ORDER BY id DESC LIMIT 1",(module,action)).fetchone()
+        if source_job is None:
+            row=conn.execute("SELECT id,log FROM jobs WHERE module=? AND action=? AND state='succeeded' ORDER BY id DESC LIMIT 1",(module,action)).fetchone()
+        else:
+            row=conn.execute("SELECT id,log FROM jobs WHERE module=? AND action=? AND state='succeeded' AND id=?",(module,action,source_job)).fetchone()
     if not row:raise RuntimeError("No successful managed snapshot recorded")
     match=re.search(pattern,row["log"])
     if not match:raise RuntimeError("Managed snapshot ID unavailable")
@@ -1001,11 +1021,11 @@ def worker_export_checksum(source_job):
     if not match:raise RuntimeError("Worker snapshot has no recorded export digest; create a new managed snapshot")
     return match.group(1)
 
-def verify_snapshot(job,ident):
+def verify_snapshot(job,ident,exact_source_job=None):
     if ident not in {"core","worker"} and ident not in SNAPSHOT_SOURCES:raise ValueError("Unsupported restore verification")
     change(job,state="running",total=4,completed=0,stage="Locate latest managed snapshot")
     if kopia_status()["connection"]!="connected":raise RuntimeError("Connect Kopia repository first")
-    source_job,snapshot_id=managed_snapshot_record(ident)
+    source_job,snapshot_id=managed_snapshot_record(ident) if exact_source_job is None else managed_snapshot_record(ident,exact_source_job)
     expected_checksum=worker_export_checksum(source_job) if ident=="worker" else None
     root=restore_manifest(ident,snapshot_id)
     # Each verification gets a new private directory, never a live data mount.
@@ -1088,6 +1108,14 @@ def verify_snapshot(job,ident):
                 result+="; content metadata verified" if has_metadata else "; legacy export without content metadata evidence"
     except (OSError,subprocess.SubprocessError,ValueError):
         raise RuntimeError("Isolated restore or application data check failed; inspect private restore directory") from None
+    if exact_source_job is not None:
+        # Only the exclusively created verification directory. Successful
+        # scheduled restores must not accumulate private data indefinitely.
+        # Failed verification retains its directory for inspection.
+        try:
+            execute("/bin/sh","-c",'test -d "$1" && test ! -L "$1" && rm -rf -- "$1"',"clear-scheduled-verification",target,timeout=60)
+        except (OSError,subprocess.SubprocessError):
+            raise RuntimeError("Verified restore cleanup failed; inspect private directory") from None
     log(job,"\nSnapshot "+snapshot_id+" restored; "+result+". Native application startup not tested.\n")
     if ident=="homebox":log(job,"Homebox worker API-key pepper is outside this snapshot; exact recovery not verified.\n")
     if ident=="meshmonitor":log(job,"MeshMonitor generated credentials are outside this snapshot; exact recovery not verified.\n")
@@ -1325,6 +1353,12 @@ def routing_steps(action):
             ("Start selected graph",("up","-d","--wait","--wait-timeout","90","--pull","never")),
             ("Check routing readiness",None)]
 
+def exact_verification_source(job):
+    with db() as conn:
+        row=conn.execute("SELECT source_job FROM exact_verifications WHERE job=?",(job,)).fetchone()
+    return row["source_job"] if row else None
+
+
 def execute(row):
     job, ident, action = row["id"], row["module"], row["action"]
     switch_attempted=False
@@ -1332,6 +1366,12 @@ def execute(row):
         if ident not in catalog() or action not in ACTIONS or (action in ROUTING_ACTIONS and ident!="routing"):
             raise ValueError("Unsupported job")
         if RECOVERY_OFFLINE:offline_admission(ident,action)
+        exact_args=()
+        if action in {"verify-snapshot","core-verify-snapshot","worker-verify-snapshot","content-verify"}:
+            exact=exact_verification_source(job)
+            if exact is not None:
+                if RECOVERY_OFFLINE or ident=="tak":raise ValueError("Exact scheduled verification unavailable")
+                exact_args=(exact,)
         if action=="recovery-manifest":
             if ident!="kopia":raise ValueError("Kopia-only action")
             recovery_manifest(job)
@@ -1340,11 +1380,11 @@ def execute(row):
             content_snapshot(job,ident)
             return
         if action=="content-verify":
-            verify_content(job,ident)
+            verify_content(job,ident,*exact_args)
             return
         if action=="worker-verify-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
-            verify_snapshot(job,"worker")
+            verify_snapshot(job,"worker",*exact_args)
             return
         if action=="worker-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
@@ -1352,7 +1392,7 @@ def execute(row):
             return
         if action=="core-verify-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
-            verify_snapshot(job,"core")
+            verify_snapshot(job,"core",*exact_args)
             return
         if action=="core-snapshot":
             if ident!="kopia":raise ValueError("Kopia-only action")
@@ -1362,7 +1402,7 @@ def execute(row):
             snapshot_application(job,ident)
             return
         if action=="verify-snapshot":
-            verify_snapshot(job,ident)
+            verify_snapshot(job,ident,*exact_args)
             return
         if action=="initialize-repository":
             if ident!="kopia":raise ValueError("Kopia-only action")
@@ -1504,9 +1544,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if body["action"]=="update":
                 if set(body)!={"module","action","backup_confirmed"} or body["backup_confirmed"] is not True:
                     raise ValueError("Explicit backup confirmation required")
+            elif set(body)=={"module","action","source_job"}:
+                if type(body["source_job"]) is not int or body["source_job"]<=0:
+                    raise ValueError("Invalid source job")
             elif set(body)!={"module","action"}:
                 raise ValueError("Invalid request")
-            job = enqueue(body["module"],body["action"],body.get("backup_confirmed",False))
+            job = enqueue(body["module"],body["action"],body.get("backup_confirmed",False),body.get("source_job"))
             self.send_json(202, {"id": job})
         except sqlite3.IntegrityError:
             self.send_json(409, {"detail": "A job is already pending for this module"})

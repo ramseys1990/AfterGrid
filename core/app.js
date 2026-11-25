@@ -253,7 +253,7 @@ async function loadBackupSchedules(){
     if(result.available.includes(previous))select.value=previous;
     const line=text=>{const p=document.createElement("p");p.textContent=text;root.append(p);};
     for(const [key,row] of Object.entries(result.sources)){
-      line(key+": "+(row.enabled?row.interval+" · next eligible "+new Date(row.next_due*1000).toLocaleString():"disabled")+" · last snapshot "+row.result+(row.job?" (job "+row.job+")":""));
+      line(key+": "+(row.enabled?row.interval+" · next eligible "+new Date(row.next_due*1000).toLocaleString():"disabled")+" · "+row.phase+" "+row.result+(row.job?" (job "+row.job+")":"")+" · verification "+row.verification+(row.source_job?" (snapshot job "+row.source_job+")":""));
     }
     if(!Object.keys(result.sources).length)line("No schedules configured.");
     if(!result.execution_enabled)line("Managed schedules are disabled in recovery mode.");
@@ -265,7 +265,7 @@ async function loadBackupSchedules(){
 }
 $("backup-schedule-load").addEventListener("click",loadBackupSchedules);
 async function changeBackupSchedule(enabled){
-  if(!confirm(enabled?"Enable this managed snapshot schedule? Application sources may be stopped and restarted. Confirm native raw scheduling is disabled and verification will be performed separately.":"Disable future scheduled snapshots? An existing job is not cancelled."))return;
+  if(!confirm(enabled?"Enable this managed snapshot schedule? Application sources may be stopped and restarted. Confirm native raw scheduling is disabled and automatic verification can consume additional time and storage.":"Disable future scheduled snapshots? An existing job is not cancelled."))return;
   try{
     await api("/api/admin/backups/schedules",{key:$("backup-schedule-source").value,interval:$("backup-schedule-interval").value,enabled,confirmed:true});
     await loadBackupSchedules();
