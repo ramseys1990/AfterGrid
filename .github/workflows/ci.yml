@@ -57,7 +57,7 @@ jobs:
           if [[ "$EXPORT_DISCONNECTED" == "true" ]]; then
             export_args+=("$RUNNER_TEMP/aftergrid-recovery-acceptance")
           fi
-          sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 python3 tests/recovery_guided_smoke.py "$fixture" "${export_args[@]}"
+          sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 AFTERGRID_ACCEPTANCE_COMMIT="$GITHUB_SHA" python3 tests/recovery_guided_smoke.py "$fixture" "${export_args[@]}"
       - name: Disconnected replacement archive acceptance
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && runner.environment == 'github-hosted'
         timeout-minutes: 25
