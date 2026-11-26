@@ -278,3 +278,8 @@ On an explicitly designated Linux Docker test guest, run `AFTERGRID_CANDIDATE_BU
 The guided native fixture now archives only Compose and reviewed source trees, extracts them through the real updater and builds candidate images from those contexts. Its trial, forced failure, interrupted reconciliation, canonical schema rollback/resume and successful promotion paths use these source-built images rather than Docker-committed installed containers. The CI commit is supplied explicitly.
 
 Candidate builds add and read back `org.opencontainers.image.revision`, `org.opencontainers.image.source` and `org.aftergrid.component` on the exact resulting image. Invalid commit/suffix values are refused before build; absent or mismatched labels refuse preparation. This metadata describes the requested build and does not authenticate a release. Production activation and browser execution remain gated.
+
+
+### Tool packaging for independent execution
+
+The existing worker image now includes core_update_tools.py and recovery_assets.py using its existing Python and Docker CLI. Top-level host commands keep their existing names through compatibility entry points. Tool packaging adds no service, privilege, host mount or update action, and does not enable activation. Native image checks load both CLIs with no network, read-only filesystem, dropped capabilities and no Docker socket or host binds. An independent executor still needs separate constrained dispatch and lifecycle acceptance.
