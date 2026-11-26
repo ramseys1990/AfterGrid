@@ -46,10 +46,11 @@ class NativeClient:
         try:
             response = self.opener.open(req, timeout=8)
         except urllib.error.HTTPError as exc:
-            if self.module == "grocy" and path == "/login" and exc.code in (302, 303) and exc.headers.get("Location") == "/login?invalid=true":
+            location = urllib.parse.urljoin(BASE[self.module] + path, exc.headers.get("Location", ""))
+            if self.module == "grocy" and path == "/login" and exc.code in (302, 303) and location == BASE[self.module] + "/login?invalid=true":
                 exc.close()
                 raise NativeAuthError("Native login refused. Check your account details.") from None
-            if redirect and exc.code in (302, 303) and exc.headers.get("Location") == "/":
+            if redirect and exc.code in (302, 303) and location == BASE[self.module] + "/":
                 exc.close()
                 return None
             code = exc.code

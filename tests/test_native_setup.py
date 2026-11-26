@@ -44,7 +44,7 @@ def upstream(monkeypatch):
                 password = base64.b64decode(payload["password_base64"][0]).decode()
                 if password != state["password"]:
                     return self.respond(302, Location="/login?invalid=true")
-                return self.respond(302, Location="/", Set_Cookie="grocy_session=valid; Path=/")
+                return self.respond(302, Location="http://" + self.headers["Host"] + "/", Set_Cookie="grocy_session=valid; Path=/")
             if self.path == "/api/user":
                 assert "grocy_session=valid" in self.headers.get("Cookie", "")
                 return self.respond(200, [{"id": 1, "username": "admin", "first_name": "Existing", "last_name": "Operator"}])
