@@ -36,7 +36,7 @@ Sign in as administrator, choose Kiwix, and inspect installation activity. The w
 
 ## Essential optional modules
 
-Homebox (8082), Grocy (8083) and Kopia (51515) use native authentication and initially bind loopback only. Use SSH forwarding for remote setup; stable LAN access is a later milestone. See their module READMEs. Kopia uses its native repository and snapshot UI; no backup is scheduled merely by installing it. Image tags for these three services are version-pinned, not digest-pinned.
+Homebox (8082), Grocy (8083) and Kopia (51515) use native authentication and initially bind loopback only. For Homebox and Grocy, choose Set up native account in the administrator dashboard while the app remains local-only, complete its native account form, then explicitly Share on LAN. Kopia retains its generated native credentials and separate sharing control. See their module READMEs. Kopia uses its native repository and snapshot UI; no backup is scheduled merely by installing it. Image tags for these three services are version-pinned, not digest-pinned.
 After creating the administrator, choose optional apps in the first-run browser wizard or skip to keep the core only. Nothing is preselected. The selected applications are queued atomically and run one at a time using Compose, with real job output. A repeated submission of the same selection returns the original jobs.
 
 For optional inventory sharing on a trusted network, see [LAN access and stable QR URLs](docs/LAN_ACCESS.md). Homebox and Grocy are local-only until explicitly shared; Kopia can also be explicitly shared using native administrator credentials.

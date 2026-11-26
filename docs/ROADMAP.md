@@ -244,7 +244,7 @@ Baseline: **8 of 13 implementation items complete**. A complete row preserves th
 | 8 | Application port conflict handling | Complete | Real occupied-port rejection passed before image pull; error and retry survived refresh; Retry job #12 completed; native retained article reopened |
 | 9 | AfterGrid core updating | Open — production activation gated | Native disposable tests passed; reviewed production release/handoff pending |
 | 10 | Safe uninstall and reinstall | Open | Selected apps and core recreation preserve data; portable recovery into an empty daemon now passed for core/worker/Kopia/Kiwix/Homebox/Grocy. End-user appliance uninstall/reinstall workflow remains open |
-| 11 | LAN deployment validation | Open | Original and recovered portal/article passed desktop and user-observed physical phone; recovered guest WAN-loss and reboot passed. Homebox/Grocy browser setup, authenticated native LAN journeys and populated backups passed; physical-phone QR and stable label hostname remain pending |
+| 11 | LAN deployment validation | Open | Original and recovered portal/article passed desktop and user-observed physical phone; recovered guest WAN-loss and reboot passed. Homebox/Grocy browser setup, authenticated native LAN journeys and populated backups passed; user-observed physical-phone Homebox QR opening passed; stable label hostname remains pending |
 | 12 | Module authentication and simplified onboarding | Open | CT115 Homebox/Grocy browser setup, approved LAN sharing, native inventory/recipe journeys and populated-state restore inspection passed; release integration and broader module review pending |
 | 13 | System requirements and clean-host acceptance | Open | CT116 empty-daemon offline package restore, six exact images, selected native state, new backup/restore, LAN and reboot passed on 2 cores/1 GiB; populated native journeys passed on source CT115; populated replacement startup, load and bare-metal acceptance remain pending |
 
@@ -575,21 +575,6 @@ The operator completed both native account forms on CT115. Edge showed Native ac
 Explicit LAN-sharing approval was requested for Homebox port 8082 and Grocy port 8083 and is still pending at this checkpoint. Neither sharing action was submitted. The operator supplied disposable credentials for subsequent native login, but their values are omitted from repository evidence. Next: obtain the pending access-change confirmation, share the two apps through the existing worker, verify native login and closed Homebox registration, then populate representative equipment/stock/recipes and verify fresh backups. CT116 and production updater activation are unchanged. Phase 3 remains **8/13 implemented**; [PR #3](https://github.com/ramseys1990/AfterGrid/pull/3) remains draft for continuing live acceptance.
 
 
-### Native inventory browser setup candidate — 2026-11-26
-
-Implemented a focused browser onboarding candidate on branch `feat/native-inventory-browser-setup` (runtime code `0d0c4e7a9c218cfe80b65fd3d877352c7fd4e185`). AfterGrid administrators can create/verify a Homebox native account and replace Grocy's default password or verify an existing native admin. Requests use fixed native endpoints, bounded transient credentials, native login checks and session cleanup. Passwords do not enter worker jobs or portal storage. Sharing remains a separate explicit action; no new proxy, daemon, identity service or database was added. Recovery restrictions, administrator authentication, same-origin checks and maintenance admission stay active.
-
-- Ten native HTTP client tests passed on Windows; the full portal suite could not import Linux-only `fcntl` there and is not claimed passed on Windows.
-- On CT115, an isolated container running the existing core image plus candidate source passed all **51 native-setup/core tests** on Linux, with three read-only pytest cache warnings. Two earlier recovery test fixtures incorrectly enrolled an administrator after enabling recovery restrictions; they were corrected to enroll before enabling the guards.
-- A real Grocy login probe exposed absolute same-origin redirects. The candidate accepts only the exact native success/invalid-login locations without following redirects. The corrected client verified the installed native admin login and logged out; the default password was not changed by that probe.
-- Preserved the original core source files and image, captured worker/optional-app IDs and start times, and built a development overlay from the exact installed core image without pulls or network access during build. Recreated only core via Compose with no dependencies, no build and no pull. Native health returned OK; exact worker, Homebox, Grocy, Kopia and Kiwix identities/start times were unchanged.
-- Edge retained its AfterGrid administrator session after the portal recreation. Both native setup pages rendered through the existing LAN portal origin; the cards expose Set up native account instead of SSH-forwarding instructions for these two apps.
-
-Pending: operator credential entry/submission, actual Homebox registration and Grocy default-password replacement, explicit LAN sharing, native login and representative inventory/recipe/QR journeys, then fresh snapshots and isolated verification of populated state. No native onboarding completion is claimed yet. CT116 remains unchanged in restricted recovery mode. This scoped development patch is not a released production updater activation; Phase 3 stays **8/13 implemented** until its acceptance conditions are met.
-
-The source guest's baseline and receipts are retained under `/root/aftergrid-native-setup-original` and `/root/aftergrid-native-setup-*`. Its development Compose image override is `/root/aftergrid-native-setup-override.json`; the original image is retained as `aftergrid-native-baseline:20261126`. Preserve these when continuing or rolling back this candidate.
-
-
 ### Populated native LAN journeys and restore inspection — 2026-11-26
 
 The operator explicitly approved both application LAN bindings and completed the portal sharing actions after browser-control confirmation failures. Both share jobs succeeded. Native Homebox login on port 8082 and Grocy login on port 8083 passed. Homebox visibly reported Registration Disabled. Existing application authentication remains enabled.
@@ -601,3 +586,29 @@ The operator explicitly approved both application LAN bindings and completed the
 - Both native applications remained authenticated after backup stop/start and browser reload. This is application-consistent backup and populated isolated-restore evidence on the same-disk working repository, not an independent disaster backup or a new portable recovery drill.
 
 Next acceptance: scan the open Homebox item QR with a physical phone on the same LAN, confirm native login/item access, and review stable hostname provisioning before printed-label acceptance. Review/integrate PR #3 and address its review feedback before treating the development overlay as a released workflow. CT116 remains unchanged and restricted; production core activation stays gated. Phase 3 remains **8/13 implemented** with the broader open criteria preserved.
+
+
+### Physical-phone Homebox QR confirmation — 2026-11-26
+
+After requesting the Homebox account email, the operator explicitly confirmed that scanning the open item QR on a physical phone opened Acceptance lantern. This closes the user-observed phone QR-opening gate for the current LAN item URL. The QR uses the guest IP; stable hostname provisioning and printed-label continuity across address changes remain unverified. No broader phase completion or populated replacement-app startup is implied. Phase 3 remains **8/13 implemented**; production core activation stays gated. Next: review PR #3 feedback and integration, then stable label addressing and the remaining recovery/resource acceptance criteria.
+
+
+### Native inventory browser setup candidate — 2026-11-26
+
+Implemented a focused browser onboarding candidate on branch `feat/native-inventory-browser-setup` (runtime code `0d0c4e7a9c218cfe80b65fd3d877352c7fd4e185`). AfterGrid administrators can create/verify a Homebox native account and replace Grocy's default password or verify an existing native admin. Requests use fixed native endpoints, bounded transient credentials, native login checks and session cleanup. Passwords do not enter worker jobs or portal storage. Sharing remains a separate explicit action; no new proxy, daemon, identity service or database was added. Recovery restrictions, administrator authentication, same-origin checks and maintenance admission stay active.
+
+- Ten native HTTP client tests passed on Windows; the full portal suite could not import Linux-only `fcntl` there and is not claimed passed on Windows.
+- On CT115, an isolated container running the existing core image plus candidate source passed all **51 native-setup/core tests** on Linux, with three read-only pytest cache warnings. Two earlier recovery test fixtures incorrectly enrolled an administrator after enabling recovery restrictions; they were corrected to enroll before enabling the guards.
+- A real Grocy login probe exposed absolute same-origin redirects. The candidate accepts only the exact native success/invalid-login locations without following redirects. The corrected client verified the installed native admin login and logged out; the default password was not changed by that probe.
+- Preserved the original core source files and image, captured worker/optional-app IDs and start times, and built a development overlay from the exact installed core image without pulls or network access during build. Recreated only core via Compose with no dependencies, no build and no pull. Native health returned OK; exact worker, Homebox, Grocy, Kopia and Kiwix identities/start times were unchanged.
+- Edge retained its AfterGrid administrator session after the portal recreation. Both native setup pages rendered through the existing LAN portal origin; the cards expose Set up native account instead of SSH-forwarding instructions for these two apps.
+
+Follow-up results recorded above supersede the original pending status: both operator account submissions, explicit LAN sharing, native login, populated journeys, isolated restore inspection and physical-phone QR opening passed. CT116 remains unchanged in restricted recovery mode. This scoped development patch is not a released production updater activation; Phase 3 stays **8/13 implemented** until its acceptance conditions are met.
+
+The source guest's baseline and receipts are retained under `/root/aftergrid-native-setup-original` and `/root/aftergrid-native-setup-*`. Its development Compose image override is `/root/aftergrid-native-setup-override.json`; the original image is retained as `aftergrid-native-baseline:20261126`. Preserve these when continuing or rolling back this candidate.
+
+
+
+### Onboarding review follow-up — 2026-11-26
+
+The native HTTP test server now derives its absolute redirect from its loopback listener rather than an incoming Host header, resolving the response-splitting review finding without changing production code. All ten native HTTP-client tests passed on Windows after this correction. The earlier 51-test Linux run remains evidence for the unchanged production implementation; Linux portal tests were not rerun for this fixture-only correction. Native onboarding is ready for integration review; Phase 3 production updater, whole-appliance reinstall, stable addressing and resource/platform gates remain open.
