@@ -8,6 +8,6 @@
   "readiness_url": "http://aftergrid-grocy:80/",
   "upstream": "https://grocy.info/",
   "loopback_only": true,
-  "setup_note": "Change the native admin/admin password locally before explicitly sharing on LAN.",
+  "setup_note": "Use Secure Grocy administrator to change and verify the native admin password, then explicitly Share on LAN.",
   "lan_shareable": true
 }

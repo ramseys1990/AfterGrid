@@ -1,7 +1,11 @@
 # Homebox
 
-Install using the portal. The worker generates and retains the required API-key pepper automatically in its private state volume. Use the native account registration page on http://127.0.0.1:8082 (SSH forward port 8082 for a remote server). Registration starts open for initial setup, so do not expose this port. Create one shared collection and use locations and tags for household ownership and storage. Close registration before enabling family LAN access; browser settings for this are planned. Stable local DNS and actual QR label scanning are not yet validated. Data lives in data/homebox. Removing containers retains it. The pinned release tag is not a digest; verify image provenance before production use.
+Install using the portal, then select **Set up Homebox account** on its application card. Supply a local sign-in email and a native password of 12–128 characters. No email delivery is required. For an existing account, use its current password to verify it. AfterGrid checks native sign-in, closes registration through the supported application setting, and checks that registration is refused. The application stays local-only until you choose **Share on LAN**.
 
-See [LAN access](../../docs/LAN_ACCESS.md) for explicit sharing, stable DNS-based QR links and closing registration. Actual QR scans remain unverified.
+The worker generates and retains the required API-key pepper in its private state volume. Submitted account credentials are held only in a private temporary request file until the job finishes; they are not saved in job history. Check Recent activity before retrying an uncertain response. Use the configured portal address on a trusted LAN or trusted HTTPS origin for credential entry.
 
-Managed maintenance-stop snapshots and isolated database verification are available from the portal. The worker-generated pepper is not included; preserve it separately. Expanded CI pending.
+Use one shared collection with locations and tags for household ownership and storage. Data lives in data/homebox; removing containers retains it. See [LAN access](../../docs/LAN_ACCESS.md) for stable URLs. Actual QR label scanning and populated household journeys remain unverified. The pinned release tag is not a digest.
+
+Managed maintenance-stop snapshots and isolated database verification are available from the portal. The worker-generated pepper is captured separately by the managed worker-state recovery snapshot; preserve that snapshot together with the application data for complete recovery.
+
+Browser account setup is under acceptance on this branch; it has not yet been verified on the live appliance.

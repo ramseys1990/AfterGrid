@@ -11,6 +11,6 @@
   "generated_secrets": [
     "HBOX_AUTH_API_KEY_PEPPER"
   ],
-  "setup_note": "Create the native account locally, then explicitly share on LAN to close registration and establish the QR base URL.",
+  "setup_note": "Use Set up Homebox account to create or verify a native account and close registration, then explicitly Share on LAN.",
   "lan_shareable": true
 }

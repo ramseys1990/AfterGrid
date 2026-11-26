@@ -20,14 +20,16 @@ DNS records are not created automatically. If no domain is supplied, shared appl
 
 ## Initial access and sharing
 
-- Homebox: create the native account locally (or through an SSH tunnel), then Share on LAN. Registration closes and its native hostname option is set to the chosen stable URL.
-- Grocy: change the default admin/admin password locally before Share on LAN. AfterGrid asks the administrator to confirm; it does not independently verify the change.
+- Homebox: select Set up Homebox account in the portal, enter a local sign-in email and native password, and wait for the successful activity job. Native sign-in and closed registration are checked before completion. Then choose Share on LAN to set its native hostname option to the chosen stable URL.
+- Grocy: select Secure Grocy administrator in the portal, enter the current admin password (admin on a fresh installation) and a different new password, and wait for the successful activity job. Native new-password sign-in and old-password refusal are checked. Then choose Share on LAN. The separate sharing action still requires administrator confirmation; it does not itself repeat the password check.
 - Kopia: generated native UI credentials; authenticated administrator can reveal them on the configured portal origin after acknowledging HTTP risk. Share on LAN explicitly to enable the native UI; no default passwords. The portal only hides the link for family users; Kopia itself enforces its own credentials.
 - DokuWiki: open /install.php locally, enable ACLs and Closed Wiki, disable registration and popularity reporting, verify anonymous access is denied, then share. Native permissions remain the application's responsibility.
 - Return to local-only recreates the selected Compose project while retaining data. Homebox registration remains closed. Kopia may always be left local-only.
 
 A root operator on an existing development installation can set AFTERGRID_BIND to the assigned private IPv4, AFTERGRID_ORIGIN to its full portal URL, and optionally AFTERGRID_LAN_DOMAIN in /opt/aftergrid/.env, then recreate core and worker with sudo docker compose up -d. Reapply any existing shared module configuration using its Start/Share action if changing the bind/domain. Do not change the address or name after printing labels without preserving the old URL.
 
+The Homebox/Grocy setup forms submit credentials to fixed internal native application endpoints through the existing worker. Private temporary request files are removed when each job finishes; credentials are excluded from job history. A request interrupted by a worker restart is discarded. Check Recent activity and native sign-in before retrying an uncertain result. An existing Homebox account uses its current password; a completed Grocy change can be retried with the same new password and previous password.
+
 ## Testing
 
-Hosted CI tests Docker bindings with a disposable private address, not real Wi-Fi clients. Physical LAN, local DNS, QR scans, HTTPS trust and native account changes still require real-host testing.
+Hosted CI tests Docker bindings with a disposable private address, not real Wi-Fi clients. Real source and recovered-server portal/Kiwix access has separately been confirmed by the user on a physical phone. Native account setup on this branch still requires real-host browser acceptance. Local DNS, QR scans, HTTPS trust and populated inventory journeys remain open.

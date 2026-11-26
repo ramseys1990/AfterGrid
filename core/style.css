@@ -13,3 +13,5 @@
 #preparedness-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:.8rem;margin-top:.8rem}#preparedness-grid p{overflow-wrap:anywhere}#preparedness-grid a{margin-top:.35rem}#content-pack{font:inherit;padding:.5rem;max-width:100%}
 
 #catalog details{margin-top:.7rem}#catalog details p{overflow-wrap:anywhere;font-size:.86rem}#catalog details button{margin:.5rem 0}
+
+#native-setup-dialog{width:min(34rem,calc(100% - 2rem));max-height:calc(100dvh - 2rem);overflow:auto;background:#1e2923;color:#edf4eb;border:1px solid #80907a;border-radius:12px;padding:1.3rem}#native-setup-dialog::backdrop{background:rgb(0 0 0 / .65)}#native-setup-dialog form{max-width:none;margin:0}#native-setup-dialog input{min-width:0}#native-setup-message{overflow-wrap:anywhere}#native-setup-dialog .controls{gap:.6rem}
