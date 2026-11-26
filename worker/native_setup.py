@@ -37,6 +37,7 @@ class NativeClient:
     def __init__(self, ident):
         self.ident = ident
         self.base = self.BASES[ident]
+        self.authorization = None
         self.client = urllib.request.build_opener(
             urllib.request.ProxyHandler({}), NoRedirect(),
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -46,8 +47,10 @@ class NativeClient:
             raise ValueError("Unsupported native endpoint")
         body = None if payload is None else (
             urllib.parse.urlencode(payload).encode() if form else json.dumps(payload).encode())
-        request = urllib.request.Request(self.base + path, data=body, method=method,
-            headers={"Content-Type": "application/x-www-form-urlencoded" if form else "application/json"})
+        headers = {"Content-Type": "application/x-www-form-urlencoded" if form else "application/json"}
+        if self.ident == "homebox" and self.authorization:
+            headers["Authorization"] = self.authorization
+        request = urllib.request.Request(self.base + path, data=body, method=method, headers=headers)
         try:
             try:
                 response = self.client.open(request, timeout=12)
@@ -72,12 +75,24 @@ class NativeClient:
 
     def login(self, username, password):
         if self.ident == "homebox":
-            code, _, _ = self.request("POST", "/api/v1/users/login",
+            self.authorization = None
+            code, raw, _ = self.request("POST", "/api/v1/users/login",
                                       {"username": username, "password": password, "stayLoggedIn": False})
             if code == 401:
                 return False
             if code != 200:
                 raise RuntimeError("Native Homebox sign-in unavailable")
+            # Native cookie domains use the single-label Docker hostname,
+            # which Python's CookieJar does not return. Use the documented
+            # login bearer token in memory rather than relaxing cookie policy.
+            try:
+                result = json.loads(raw)
+                token = result.get("token") if isinstance(result, dict) else None
+                if not isinstance(token, str) or not re.fullmatch(r"Bearer [A-Za-z0-9._~+/-]+=*", token):
+                    raise ValueError("Invalid token")
+            except (ValueError, UnicodeError):
+                raise RuntimeError("Native Homebox authentication response was invalid") from None
+            self.authorization = token
             account = self.read_json("GET", "/api/v1/users/self")
             return isinstance(account, dict) and isinstance(account.get("item"), dict) and account["item"].get("email", "").lower() == username.lower()
         code, _, location = self.request("POST", "/login",

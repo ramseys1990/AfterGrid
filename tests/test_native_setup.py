@@ -151,3 +151,34 @@ def test_homebox_job_closes_registration_without_sharing(queue,monkeypatch):
     assert not worker.native_setup_request_path(ident).exists()
     run.assert_called_once_with(ident,"homebox","up","-d","--wait","--wait-timeout","90","--pull","never")
     verify.assert_called_once_with(HOME)
+
+def test_homebox_uses_native_bearer_token_for_authenticated_request(monkeypatch):
+    # Real urllib transport: simulate the upstream single-label Domain cookie.
+    # The authenticated endpoint requires the documented native bearer token.
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):pass
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200)
+            self.send_header("Set-Cookie","hb.auth.token=fixture-token; Domain=aftergrid-homebox; Path=/")
+            self.end_headers()
+            self.wfile.write(b'{"token":"Bearer fixture-token"}')
+        def do_GET(self):
+            accepted=self.headers.get("Authorization")=="Bearer fixture-token"
+            self.send_response(200 if accepted else 401);self.end_headers()
+            self.wfile.write(json.dumps({"item":{"email":HOME["username"]}}).encode())
+    server=ThreadingHTTPServer(("127.0.0.1",0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    monkeypatch.setitem(native.NativeClient.BASES,"homebox","http://127.0.0.1:"+str(server.server_port))
+    try:assert native.NativeClient("homebox").login(HOME["username"],PASSWORD)
+    finally:server.shutdown();server.server_close();thread.join(timeout=2)
+
+@pytest.mark.parametrize("raw",[b"{}",b'{"token":"Bearer x\\r\\nInjected: yes"}',b'{"token":123}',b"not-json"])
+def test_homebox_invalid_native_token_never_reaches_account_endpoint(raw,monkeypatch):
+    client=native.NativeClient("homebox")
+    request=Mock(return_value=(200,raw,""))
+    monkeypatch.setattr(client,"request",request)
+    with pytest.raises(RuntimeError):client.login(HOME["username"],PASSWORD)
+    assert request.call_count==1 and client.authorization is None
