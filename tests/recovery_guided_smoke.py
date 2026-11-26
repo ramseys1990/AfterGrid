@@ -200,6 +200,9 @@ def main(fixture,exported=None):
             for fail in (False,True):
                 prior=core_update.live_core(original)
                 detached_checkpoint(original,tmp/("detached-failure" if fail else "detached-success"),prior,observe_apps,fail)
+                status=call(old,"/api/admin/core-update/status")
+                assert status["maintenance_active"] and status["phase"]=="capturing"
+                assert status["activation_enabled"] is False
             call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True})
             assert applications=={ident:app_identity(ident) for ident in applications}
             assert reader_fixture()
