@@ -541,3 +541,23 @@ Point-in-time post-recovery sample on CT116: 1024 MiB RAM total, 291 used, 732 a
 Private recovery inputs and receipts remain in CT115/CT116 and the native transfer location on the host. Source CT115 is online and unsealed. CT116 now runs the recovered restricted-offline installation at its own LAN address, with temporary isolation routes removed and the original acceptance installation preserved. No unrelated workload was changed. MicroTAK was not installed or selected. This passes the real selected-module empty-daemon recovery drill on this Proxmox guest; populated native-account/inventory journeys, bare-metal acceptance and a released normal-mode recovery handoff remain separate. Phase 3 implementation stays 8/13; production core activation remains gated.
 
 Additional UI/workflow findings: recovery errors hide the failing phase/cause; the CLI needs clear credential/input versus Docker/repository failure guidance without leaking secrets. Recovery utilities must stay outside the immutable package, or suppress bytecode writes. Recovery's safe loopback-first start still requires an advanced manual LAN handoff. Restricted recovery shows uninstalled/unmapped modules as unavailable and still offers some actions that admission later refuses; explain the recovery mode and show usable controls. These join the deferred modal/status/layout list. Secure Homebox/Grocy browser onboarding is the next functional blocker, before visual redesign.
+
+
+### Native browser onboarding acceptance branch — 2026-11-26
+
+Draft [PR #2](https://github.com/ramseys1990/AfterGrid/pull/2) addresses the remaining SSH-only Homebox/Grocy onboarding blocker. It adds administrator-only portal dialogs and a narrow action on the existing worker. Homebox uses native account creation/sign-in plus the supported closed-registration setting. Grocy uses the current native admin password, changes only that account, verifies the new password and rejects the old one. Both stay local-only until a separate Share on LAN action. No service, identity system, proxy or authentication bypass was added.
+
+Credentials are excluded from job history and retained only in private temporary request files until completion; interrupted requests are discarded at worker startup. Validation rejects malformed input without echoing passwords. Recovery modes refuse setup. Native setup documentation now describes this browser flow rather than SSH forwarding.
+
+Automated evidence and limits:
+
+- Linux unit/API tests, syntax checks, Compose configuration/build and disposable recovered-core startup passed at aef384d before the final native transport fix. These are not live-appliance acceptance.
+- Review reproduced Python CookieJar withholding Homebox's native cookie for its single-label Docker hostname. The helper now uses the bearer token returned by the supported native login API, without relaxing cookie policy. All 24 focused helper tests passed locally, including actual urllib transport and malformed token rejection. Linux queue/API checks for the final revision and full real-app Compose acceptance still need completion.
+- The disposable Compose acceptance now submits real portal setup jobs to Homebox and Grocy, retries them, verifies native sign-in/closed registration/old-password refusal, and rechecks credentials after LAN configuration and restart. Its result is pending; no native integration pass is claimed yet.
+- Computer use could not connect to its native pipe. No live guest or account was changed by this branch, and it has not been deployed or merged.
+
+Next live sequence: reconnect the browser; stage the reviewed branch on source CT115 while preserving optional app container identities; exercise the Homebox dialog/account and closed registration; prepare the Grocy dialog and hand off native password entry to the user; verify both native logins and explicit LAN sharing. Then exercise representative asset/stock records, persistence and managed restore. Keep recovered CT116 and unrelated workloads unchanged.
+
+The account form uses an in-page dialog outside the refreshed catalog so polling does not discard input. Escape/close clears fields and returns focus. Keyboard/mobile visual acceptance remains pending. Replacing other native confirmation boxes, preserving expanded details/focus during refresh, reducing page/card crowding and clarifying job/recovery states remain on the deferred UI-overhaul list.
+
+Physical-phone portal/article acceptance remains passed for both source and recovered server. Phase 3 implementation stays 8/13; populated native journeys, bare-metal/load acceptance, normal-mode recovery handoff and production core updater activation remain open.
