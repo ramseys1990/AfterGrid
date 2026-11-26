@@ -30,6 +30,10 @@ jobs:
       - run: node --check core/app.js && node --check core/maps.js && node --check core/region.js && node --check core/communications.js
       - run: docker compose config -q
       - run: docker compose build core worker
+      - name: Bundled core update tool entry points
+        run: |
+          docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --entrypoint python3 aftergrid-core-worker /app/core_update_tools.py --help
+          docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --entrypoint python3 aftergrid-core-worker /app/recovery_assets.py --help
       - name: Disposable recovered-core startup acceptance
         timeout-minutes: 15
         run: sudo env AFTERGRID_DISPOSABLE_RECOVERY_TEST=1 python3 tests/recovery_core_smoke.py
