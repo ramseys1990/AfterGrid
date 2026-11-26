@@ -30,7 +30,7 @@ def test_native_setup_requires_admin_origin_confirmation_and_private_destination
         assert client.post("/api/admin/native-setup/homebox",json=ACCOUNT,headers=ORIGIN).status_code==401
     finally:client.__exit__(None,None,None)
 
-@pytest.mark.parametrize("changes",[{"password":"short-secret"},{"password":"x"*3000},{"extra":"secret"},{"password":False}])
+@pytest.mark.parametrize("changes",[{"password":"short-pw"},{"password":"x"*3000},{"extra":"secret"},{"password":False}])
 def test_invalid_native_fields_never_echo_rejected_credentials(tmp_path,monkeypatch,changes):
     client=configure(tmp_path,monkeypatch)
     try:
@@ -43,8 +43,9 @@ def test_invalid_native_fields_never_echo_rejected_credentials(tmp_path,monkeypa
 
 @pytest.mark.parametrize("mode",["AFTERGRID_RECOVERY_CORE_ONLY","AFTERGRID_RECOVERY_OFFLINE"])
 def test_native_setup_is_blocked_in_recovery(tmp_path,monkeypatch,mode):
+    original=configure(tmp_path,monkeypatch)
+    original.__exit__(None,None,None)
     monkeypatch.setenv(mode,"1")
-    client=configure(tmp_path,monkeypatch)
-    try:
+    with TestClient(app.create_app(tmp_path)) as client:
+        assert client.post("/api/login",json={"username":"admin","password":"portal-test-password-123!"},headers=ORIGIN).status_code==200
         assert client.post("/api/admin/native-setup/homebox",json=ACCOUNT,headers=ORIGIN).status_code==409
-    finally:client.__exit__(None,None,None)
