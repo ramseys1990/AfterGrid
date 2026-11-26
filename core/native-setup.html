@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Native account setup • AfterGrid</title><link rel="stylesheet" href="/style.css"><script src="/native-setup.js" defer></script></head>
+<body><header><a href="/">AfterGrid</a></header><main>
+<h1 id="title">Native account setup</h1>
+<p>Set up the application's own account while its port stays local-only. AfterGrid sends these details only to the bundled native application and does not save the password or put it in activity logs.</p>
+<p id="guidance"></p>
+<form id="native-form" autocomplete="off">
+<label>Action<select id="mode" name="mode"><option value="verify">Verify existing account</option></select></label>
+<label id="name-label" hidden>Display name<input id="name" name="name" maxlength="80" autocomplete="name"></label>
+<label><span id="username-label">Native username</span><input id="username" name="username" maxlength="254" required autocomplete="username"></label>
+<label><span id="password-label">Native password</span><input id="password" name="password" type="password" maxlength="256" required autocomplete="current-password"></label>
+<label id="confirm-label" hidden>Confirm new password<input id="password-confirm" type="password" maxlength="256" autocomplete="new-password"></label>
+<label><input id="confirmed" type="checkbox" required> I am using my trusted private LAN and have saved these native account details. HTTP sends them without encryption.</label>
+<button id="submit" type="submit">Verify native account</button>
+</form>
+<p id="result" role="status" aria-live="polite"></p><a href="/">Return to application cards</a>
+</main></body></html>

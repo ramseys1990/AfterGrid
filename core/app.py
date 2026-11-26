@@ -32,6 +32,7 @@ try:
     from .downloads import Downloads
     from .households import Households
     from .inventory import Inventory, InventoryError
+    from .native_setup import prepare as prepare_native, validate as validate_native, SetupError as NativeSetupError
     from .map_downloads import MapDownloads
     from .routing import route, RouteError
     from .waypoints import MapPlans
@@ -47,6 +48,7 @@ except ImportError:
     from downloads import Downloads
     from households import Households
     from inventory import Inventory, InventoryError
+    from native_setup import prepare as prepare_native, validate as validate_native, SetupError as NativeSetupError
     from map_downloads import MapDownloads
     from routing import route, RouteError
     from waypoints import MapPlans
@@ -1474,6 +1476,50 @@ def create_app(data_dir=None):
         if code!=200:
             raise HTTPException(code if code in (400,503) else 502,result.get("detail","Registry check unavailable"))
         return result
+
+    @api.get("/native-setup/{ident}")
+    def native_setup_page(ident: str, request: Request):
+        require_admin(request)
+        if ident not in {"homebox", "grocy"}:
+            raise HTTPException(404, "Unsupported native setup")
+        if recovery_core_only or recovery_offline:
+            raise HTTPException(409, "Native setup is unavailable in restricted recovery mode")
+        return FileResponse(ROOT / "native-setup.html")
+
+    @api.get("/native-setup.js")
+    def native_setup_script():
+        return FileResponse(ROOT / "native-setup.js", media_type="text/javascript")
+
+    @api.post("/api/admin/modules/{ident}/native-setup")
+    async def native_setup_account(ident: str, request: Request):
+        require_admin(request)
+        same_origin(request)
+        rate_limit()
+        if ident not in {"homebox", "grocy"}:
+            raise HTTPException(400, "Unsupported native setup")
+        # Stream a small body and never return validation input or native errors.
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 4096:
+                raise HTTPException(413, "Native setup request too large")
+        try:
+            payload = json.loads(body)
+            validate_native(ident, payload)
+        except (ValueError, TypeError, UnicodeError):
+            raise HTTPException(400, "Check native setup fields, password length and trusted-LAN confirmation") from None
+        maintenance_idle()
+        try:
+            code, modules = call("/modules")
+            module = next((m for m in modules if m.get("id") == ident), None) if code == 200 and isinstance(modules, list) else None
+        except (WorkerUnavailable, TypeError, AttributeError):
+            raise HTTPException(503, "Module manager unavailable") from None
+        if not module or module.get("status") != "running" or module.get("shared"):
+            raise HTTPException(409, "Start the application in local-only mode before native setup")
+        try:
+            return await asyncio.to_thread(prepare_native, ident, payload)
+        except NativeSetupError as exc:
+            raise HTTPException(409, str(exc)) from None
 
     class ModuleActionOptions(BaseModel):
         backup_confirmed: bool = Field(default=False,strict=True)

@@ -591,3 +591,24 @@ Next acceptance: scan the open Homebox item QR with a physical phone on the same
 ### Physical-phone Homebox QR confirmation — 2026-11-26
 
 After requesting the Homebox account email, the operator explicitly confirmed that scanning the open item QR on a physical phone opened Acceptance lantern. This closes the user-observed phone QR-opening gate for the current LAN item URL. The QR uses the guest IP; stable hostname provisioning and printed-label continuity across address changes remain unverified. No broader phase completion or populated replacement-app startup is implied. Phase 3 remains **8/13 implemented**; production core activation stays gated. Next: review PR #3 feedback and integration, then stable label addressing and the remaining recovery/resource acceptance criteria.
+
+
+### Native inventory browser setup candidate — 2026-11-26
+
+Implemented a focused browser onboarding candidate on branch `feat/native-inventory-browser-setup` (runtime code `0d0c4e7a9c218cfe80b65fd3d877352c7fd4e185`). AfterGrid administrators can create/verify a Homebox native account and replace Grocy's default password or verify an existing native admin. Requests use fixed native endpoints, bounded transient credentials, native login checks and session cleanup. Passwords do not enter worker jobs or portal storage. Sharing remains a separate explicit action; no new proxy, daemon, identity service or database was added. Recovery restrictions, administrator authentication, same-origin checks and maintenance admission stay active.
+
+- Ten native HTTP client tests passed on Windows; the full portal suite could not import Linux-only `fcntl` there and is not claimed passed on Windows.
+- On CT115, an isolated container running the existing core image plus candidate source passed all **51 native-setup/core tests** on Linux, with three read-only pytest cache warnings. Two earlier recovery test fixtures incorrectly enrolled an administrator after enabling recovery restrictions; they were corrected to enroll before enabling the guards.
+- A real Grocy login probe exposed absolute same-origin redirects. The candidate accepts only the exact native success/invalid-login locations without following redirects. The corrected client verified the installed native admin login and logged out; the default password was not changed by that probe.
+- Preserved the original core source files and image, captured worker/optional-app IDs and start times, and built a development overlay from the exact installed core image without pulls or network access during build. Recreated only core via Compose with no dependencies, no build and no pull. Native health returned OK; exact worker, Homebox, Grocy, Kopia and Kiwix identities/start times were unchanged.
+- Edge retained its AfterGrid administrator session after the portal recreation. Both native setup pages rendered through the existing LAN portal origin; the cards expose Set up native account instead of SSH-forwarding instructions for these two apps.
+
+Follow-up results recorded above supersede the original pending status: both operator account submissions, explicit LAN sharing, native login, populated journeys, isolated restore inspection and physical-phone QR opening passed. CT116 remains unchanged in restricted recovery mode. This scoped development patch is not a released production updater activation; Phase 3 stays **8/13 implemented** until its acceptance conditions are met.
+
+The source guest's baseline and receipts are retained under `/root/aftergrid-native-setup-original` and `/root/aftergrid-native-setup-*`. Its development Compose image override is `/root/aftergrid-native-setup-override.json`; the original image is retained as `aftergrid-native-baseline:20261126`. Preserve these when continuing or rolling back this candidate.
+
+
+
+### Onboarding review follow-up — 2026-11-26
+
+The native HTTP test server now derives its absolute redirect from its loopback listener rather than an incoming Host header, resolving the response-splitting review finding without changing production code. All ten native HTTP-client tests passed on Windows after this correction. The earlier 51-test Linux run remains evidence for the unchanged production implementation; Linux portal tests were not rerun for this fixture-only correction. Native onboarding is ready for integration review; Phase 3 production updater, whole-appliance reinstall, stable addressing and resource/platform gates remain open.

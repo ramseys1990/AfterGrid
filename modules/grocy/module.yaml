@@ -8,6 +8,6 @@
   "readiness_url": "http://aftergrid-grocy:80/",
   "upstream": "https://grocy.info/",
   "loopback_only": true,
-  "setup_note": "Change the native admin/admin password locally before explicitly sharing on LAN.",
+  "setup_note": "Use Set up native account to replace the default admin password or verify an existing login, then explicitly Share on LAN. Native authentication remains required.",
   "lan_shareable": true
 }
