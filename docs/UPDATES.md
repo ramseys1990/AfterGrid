@@ -283,3 +283,10 @@ Candidate builds add and read back `org.opencontainers.image.revision`, `org.ope
 ### Tool packaging for independent execution
 
 The existing worker image now includes core_update_tools.py and recovery_assets.py using its existing Python and Docker CLI. Top-level host commands keep their existing names through compatibility entry points. Tool packaging adds no service, privilege, host mount or update action, and does not enable activation. Native image checks load both CLIs with no network, read-only filesystem, dropped capabilities and no Docker socket or host binds. An independent executor still needs separate constrained dispatch and lifecycle acceptance.
+
+
+### Detached core-only checkpoint executor acceptance
+
+The exclusive guided CI fixture starts a detached container from the exact installed worker image, using its packaged fixed updater tools. The installation is mounted read-only at its original path, checkpoint output is a separate private writable sibling, and the helper has no network. Existing local Docker socket access is needed to run the reviewed core-only Compose operations; no host command API or production dispatch is exposed.
+
+Both the normal path and an intentional post-checkpoint failure must recreate core and worker from their original image IDs, preserve the administrator session and maintenance hold, validate both checkpoint databases, and leave Kiwix/Kopia container IDs and start times unchanged while the reader stays accessible. The caller explicitly releases maintenance only afterward. This verifies the independent execution mechanism in disposable CI, not a production update or browser handoff.
