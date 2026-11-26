@@ -243,10 +243,10 @@ Baseline: **8 of 13 implementation items complete**. A complete row preserves th
 | 7 | Installation progress reporting | Complete | Real per-app Compose activity and completed-stage summaries observed; failed summary persisted after refresh |
 | 8 | Application port conflict handling | Complete | Real occupied-port rejection passed before image pull; error and retry survived refresh; Retry job #12 completed; native retained article reopened |
 | 9 | AfterGrid core updating | Open — production activation gated | Native disposable tests passed; reviewed production release/handoff pending |
-| 10 | Safe uninstall and reinstall | Open | Selected apps preserve data; actual core/worker removal and exact-image reinstall passed with persistent-file hashes and independent app identities preserved. Portable empty-daemon recovery passed. End-user appliance uninstall/reinstall workflow remains open |
+| 10 | Safe uninstall and reinstall | Complete | Selected optional-app dashboard uninstall/reinstall and documented exact-image core/worker removal/reinstall passed; data and independent apps preserved. Exceptional recovery retains its own overrides |
 | 11 | LAN deployment validation | Open | Original and recovered portal/article passed desktop and user-observed physical phone; recovered guest WAN-loss and reboot passed. Homebox/Grocy browser setup, authenticated native LAN journeys and populated backups passed; user-observed physical-phone Homebox QR opening passed; stable label hostname remains pending |
 | 12 | Module authentication and simplified onboarding | Open | Homebox/Grocy setup, LAN journeys, phone QR and populated native restored startup passed; PR #3 merged. Other catalog apps still require private native onboarding; broader simplified onboarding remains open |
-| 13 | System requirements and clean-host acceptance | Open | CT116 empty-daemon offline package restore, six exact images, selected native state, new backup/restore, LAN and reboot passed on 2 cores/1 GiB; Populated native restored startup passed on CT115; bounded 60-request exercise passed across CT115/116. Sustained/peak load and bare-metal acceptance remain pending |
+| 13 | System requirements and clean-host acceptance | Open — bare-metal verification deferred by operator | CT116 empty-daemon offline package restore, six exact images, selected native state, new backup/restore, LAN and reboot passed on 2 cores/1 GiB; Populated native restored startup passed on CT115; bounded 60-request exercise passed across CT115/116. Sustained/peak load and bare-metal acceptance remain pending |
 
 The test guest is disposable, but acceptance must preserve installed application data unless a distinct test explicitly calls for deletion. Keep all infrastructure changes confined to the designated guest. Retain native application permissions, use Compose and Kopia, and defer the major UI overhaul until the approach to 1.0.
 
@@ -641,3 +641,13 @@ Remaining Phase 3 closure gates:
 | 13 — requirements/platform | Sustained/peak representative use and generic bare-metal acceptance; no suitable bare-metal machine is available |
 
 Phase 3 remains **8/13 implemented**. The new runtime subchecks are passed evidence, not justification for silently removing these acceptance conditions. No unrelated workload was modified and no production updater was enabled.
+
+
+### Bare-metal deferral and supported reinstall procedure — 2026-11-26
+
+The operator explicitly deferred bare-metal verification for now. Preserve that test as **deferred/unverified**, not a passing test or an available-machine blocker for continuing repository and Proxmox work. Sustained guest-based acceptance and the remaining software gates continue.
+
+[Appliance maintenance](APPLIANCE_MAINTENANCE.md) documents the verified distinction between ordinary browser optional-app removal/reinstall and exceptional host-level portal/worker removal/reinstall. The latter uses scoped native Compose, exact retained image identities, preserved data and an explicit repeatable startup command. Normal-mode instructions refuse recovery mode and maintenance; recovered/update installations must retain their own reviewed overrides. The exact published normal-mode instruction block passed Bash syntax validation and returned 0 on CT115. Both core services returned healthy; optional app IDs/start times matched before/after, and portal health, administrator session, install history and native reader remained available. The published startup-only retry also returned 0. On recovered CT116 the same block refused recovery mode with exit 1 before any container mutation. This completes row 10, including the documented exceptional host workflow; no browser action can reinstall an absent portal.
+
+
+Current Phase 3 checklist: **9/13 complete** (rows 1–8 and 10). Rows 9, 11, 12 and 13 remain open. Bare-metal verification is explicitly deferred by the operator; it is not claimed passed. The production updater remains gated. Retain /opt/aftergrid/.core-reinstall-images.json on CT115 and its installed source/settings for any future repeat of the tested startup command.
