@@ -50,6 +50,77 @@ def reader_fixture():
     with urllib.request.urlopen("http://127.0.0.1:8081/catalog/v2/entries",timeout=10) as response:
         return ET.fromstring(response.read()).findall("{http://www.w3.org/2005/Atom}entry")
 
+# Fixed disposable fixture program, executed from the packaged worker image.
+# Docker owns this process independently of the worker it removes/recreates.
+DETACHED_CHECKPOINT = r'''
+import json, os, sys
+from pathlib import Path
+import core_update_tools as update
+for key in ("DOCKER_HOST", "DOCKER_CONTEXT"):
+    os.environ.pop(key, None)
+root, destination = map(Path, sys.argv[1:3])
+prior = json.loads(sys.argv[3])
+fail = sys.argv[4] == "fail"
+assert root.name == "original" and root.parent.name.startswith("aftergrid-guided-ci-")
+assert destination.parent.parent == root.parent
+assert update.live_core(root) == prior
+for name in ("core", "worker"):
+    update.image_ref_matches("aftergrid-core-" + name, prior[name]["image"])
+try:
+    update.scoped_compose(root, "stop", "core", "worker")
+    checkpoint = update.capture_stopped_checkpoint(root, destination, prior)
+    assert all(row["database_integrity"] for row in checkpoint["archives"].values())
+    if fail:
+        raise RuntimeError("Intentional disposable executor failure after checkpoint")
+finally:
+    for name in ("core", "worker"):
+        update.image_ref_matches("aftergrid-core-" + name, prior[name]["image"])
+    update.scoped_compose(root, "up", "-d", "--no-deps", "--force-recreate",
+                          "--no-build", "--pull", "never", "--wait",
+                          "--wait-timeout", "120", "worker", "core")
+    actual = update.live_core(root)
+    assert all(actual[name]["image"] == prior[name]["image"] for name in prior)
+    assert all(actual[name]["container"] != prior[name]["container"] for name in prior)
+'''
+
+def detached_checkpoint(root, output, prior, observe, fail=False):
+    output.mkdir(mode=0o700)
+    destination=output/"checkpoint"
+    cid=assets.docker("run","--detach","--pull","never","--network","none",
+        "--read-only","--cap-drop","ALL","--cap-add","DAC_OVERRIDE",
+        "--security-opt","no-new-privileges","--tmpfs","/tmp",
+        "--mount","type=bind,src="+str(root)+",dst="+str(root)+",readonly",
+        "--mount","type=bind,src="+str(output)+",dst="+str(output),
+        "--mount","type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock",
+        "--entrypoint","python3",prior["worker"]["image"],"-c",DETACHED_CHECKPOINT,
+        str(root),str(destination),json.dumps(prior),"fail" if fail else "success")
+    assert re.fullmatch(r"[a-f0-9]{64}",cid)
+    try:
+        info=json.loads(assets.docker("container","inspect",cid))[0]
+        assert info["Image"]==prior["worker"]["image"]
+        assert info["HostConfig"]["NetworkMode"]=="none"
+        assert info["HostConfig"]["ReadonlyRootfs"]
+        mounts={row["Destination"]:row for row in info["Mounts"]}
+        assert not mounts[str(root)]["RW"] and mounts[str(output)]["RW"]
+        deadline=time.monotonic()+360
+        while assets.docker("container","inspect","--format","{{.State.Running}}",cid)=="true":
+            observe()
+            if time.monotonic()>deadline:raise RuntimeError("Detached executor timed out")
+            time.sleep(0.2)
+        observe()
+        exit_code=int(assets.docker("wait",cid))
+        if exit_code!=(1 if fail else 0):
+            # This fixed program prints no credentials; retain useful CI traceback.
+            raise RuntimeError("Detached executor failed: "+assets.docker("logs",cid))
+        checkpoint=json.loads((destination/"checkpoint.json").read_text())
+        assert all(row["database_integrity"] for row in checkpoint["archives"].values())
+        actual=core_update.live_core(root)
+        assert all(actual[name]["image"]==prior[name]["image"] for name in prior)
+        assert all(actual[name]["container"]!=prior[name]["container"] for name in prior)
+    finally:
+        # Only this exact fixture-created container, never project-wide removal.
+        assets.docker("rm","--force","--volumes",cid)
+
 def main(fixture,exported=None):
     if os.geteuid()!=0 or os.environ.get("AFTERGRID_DISPOSABLE_RECOVERY_TEST")!="1":
         raise RuntimeError("Disposable CI only")
@@ -123,19 +194,16 @@ def main(fixture,exported=None):
                 return cid,assets.docker("container","inspect","--format","{{.State.StartedAt}}",cid)
             applications={ident:app_identity(ident) for ident in ("kiwix","kopia")}
             call(old,"/api/admin/recovery-maintenance/begin",{"confirmed":True,"modules":[]})
-            run(cmd,"stop","core","worker")
-            try:
+            def observe_apps():
                 assert reader_fixture()
                 assert applications=={ident:app_identity(ident) for ident in applications}
-                checkpoint=core_update.capture_stopped_checkpoint(original,tmp/"core-checkpoint",prior)
-                assert all(row["database_integrity"] for row in checkpoint["archives"].values())
-                assert applications=={ident:app_identity(ident) for ident in applications}
-            finally:
-                run(cmd,"up","-d","--no-build","--pull","never","--wait","--wait-timeout","120","worker","core")
+            for fail in (False,True):
+                prior=core_update.live_core(original)
+                detached_checkpoint(original,tmp/("detached-failure" if fail else "detached-success"),prior,observe_apps,fail)
             call(old,"/api/admin/recovery-maintenance/release",{"confirmed":True})
             assert applications=={ident:app_identity(ident) for ident in applications}
             assert reader_fixture()
-            print("Core-only outage checkpoint: Kiwix and Kopia containers unchanged, reader accessible, both databases validated.",flush=True)
+            print("Detached executor success and intentional failure: core/worker recreated, Kiwix/Kopia unchanged, reader accessible, both databases validated, maintenance released explicitly.",flush=True)
             # Exercise actual archive extraction and Docker builds before the
             # native promotion/rollback paths, including build-context modes.
             # Only reviewed source trees enter the archive, never live data.
