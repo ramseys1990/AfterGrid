@@ -1483,13 +1483,23 @@ def create_app(data_dir=None):
         confirmed: bool = Field(default=False,strict=True)
 
     @api.post("/api/admin/native-setup/{ident}",status_code=202)
-    def native_account_setup(ident: str,payload: NativeAccountSetup,request: Request):
+    async def native_account_setup(ident: str,request: Request):
         require_admin(request)
         same_origin(request)
         if ident not in {"homebox","grocy"}:
             raise HTTPException(400,"Unsupported native account setup")
         if not local_credential_origin():
             raise HTTPException(403,"Use the configured private LAN or trusted HTTPS portal for native account setup")
+        try:
+            raw=bytearray()
+            async for chunk in request.stream():
+                raw.extend(chunk)
+                if len(raw)>2048:raise ValueError("Oversized setup request")
+            payload=NativeAccountSetup.model_validate_json(bytes(raw))
+        except (ValueError,TypeError):
+            # Pydantic's normal validation response includes rejected input.
+            # Never echo a native password in an error response.
+            raise HTTPException(400,"Invalid native account fields; use a password of 12 to 128 characters") from None
         if not payload.confirmed:
             raise HTTPException(409,"Confirm native account setup on your trusted network")
         try:
