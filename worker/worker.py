@@ -24,11 +24,16 @@ import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from pathlib import Path
 
+try:
+    from . import native_setup
+except ImportError:
+    import native_setup
+
 MODULES = Path("/modules")
 STATE = Path("/worker-state")
 SOCKET = Path("/run/aftergrid/worker.sock")
 ROUTING_ACTIONS = {"prepare-graph", "activate-graph", "rollback-graph", "archive-original", "archive-replacement"}
-ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot", "worker-verify-snapshot", "content-snapshot", "content-verify", "recovery-manifest"} | ROUTING_ACTIONS
+ACTIONS = {"install", "start", "stop", "restart", "update", "uninstall", "share", "unshare", "initialize-repository", "snapshot", "verify-snapshot", "core-snapshot", "core-verify-snapshot", "worker-snapshot", "worker-verify-snapshot", "content-snapshot", "content-verify", "recovery-manifest", "native-setup"} | ROUTING_ACTIONS
 ROOT = os.environ.get("AFTERGRID_ROOT", "/opt/aftergrid")
 BIND = os.environ.get("AFTERGRID_BIND", "127.0.0.1")
 LAN_BIND = os.environ.get("AFTERGRID_LAN_BIND") or BIND
@@ -282,6 +287,7 @@ def init():
             ON jobs(module) WHERE state IN ('queued','running');
         """)
         conn.execute("UPDATE jobs SET state='interrupted',stage='Worker restarted; inspect service and retry' WHERE state='running'")
+    cleanup_native_setup_requests()
 
 def unresolved_guarded_update(conn,exclude=0):
     row=conn.execute("SELECT j.id,j.state,p.evidence FROM jobs j LEFT JOIN update_preparations p ON p.job=j.id WHERE j.module='kiwix' AND j.action='guarded-update' AND j.id!=? ORDER BY j.id DESC LIMIT 1",(exclude,)).fetchone()
@@ -306,7 +312,7 @@ def kiwix_lifecycle_admission(ident,action):
         raise ValueError("Unresolved guarded reader update; inspect recovery evidence before lifecycle changes")
 
 
-def enqueue(ident, action, backup_confirmed=False, source_job=None, protect=False):
+def enqueue(ident, action, backup_confirmed=False, source_job=None, protect=False, native_payload=None):
     if RECOVERY_CORE_ONLY:raise ValueError("Core-only recovery disables module actions")
     if RECOVERY_OFFLINE:offline_admission(ident,action)
     kiwix_lifecycle_admission(ident,action)
@@ -319,6 +325,12 @@ def enqueue(ident, action, backup_confirmed=False, source_job=None, protect=Fals
         raise ValueError("Application snapshot not yet supported")
     if action in ("initialize-repository","core-snapshot","core-verify-snapshot","worker-snapshot","worker-verify-snapshot","recovery-manifest") and ident!="kopia":
         raise ValueError("Kopia-only action")
+    if action == "native-setup":
+        native_setup.validate(ident,native_payload)
+        if state(ident)!="running" or share_settings(ident)[0]:
+            raise ValueError("Start the native application locally before account setup")
+    elif native_payload is not None:
+        raise ValueError("Native account fields require the native setup action")
     if action == "update" and (backup_confirmed is not True or ident == "routing"):
         raise ValueError("Update requires backup confirmation and a supported module")
     if action in ROUTING_ACTIONS and ident != "routing":
@@ -331,6 +343,8 @@ def enqueue(ident, action, backup_confirmed=False, source_job=None, protect=Fals
             or action not in {"snapshot","core-snapshot","worker-snapshot","content-snapshot"})):
         raise ValueError("Unsupported protected snapshot")
     with db() as conn:
+        if native_payload is not None:
+            conn.execute("BEGIN IMMEDIATE")
         if source_job is not None:
             source_action={"verify-snapshot":"snapshot","core-verify-snapshot":"core-snapshot",
                            "worker-verify-snapshot":"worker-snapshot","content-verify":"content-snapshot"}.get(action)
@@ -346,7 +360,71 @@ def enqueue(ident, action, backup_confirmed=False, source_job=None, protect=Fals
         if source_job is not None:
             conn.execute("INSERT INTO exact_verifications(job,source_job) VALUES (?,?)",(cursor.lastrowid,source_job))
         if protect:conn.execute("INSERT INTO protected_snapshots(job) VALUES (?)",(cursor.lastrowid,))
+        if native_payload is not None:save_native_setup_request(cursor.lastrowid,native_payload)
         return cursor.lastrowid
+
+def native_setup_request_path(job):
+    if type(job) is not int or job<=0:raise ValueError("Invalid native setup job")
+    return STATE/"native-setup-requests"/(str(job)+".json")
+
+def native_setup_directory():
+    directory=STATE/"native-setup-requests"
+    directory.mkdir(mode=0o700,exist_ok=True)
+    info=directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.geteuid() or info.st_mode&0o077:
+        raise ValueError("Unsafe native setup request directory")
+    return directory
+
+def save_native_setup_request(job,payload):
+    native_setup_directory()
+    path=native_setup_request_path(job)
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,"w") as stream:
+        json.dump(payload,stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+def read_native_setup_request(job,ident):
+    path=native_setup_request_path(job)
+    info=path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid() or info.st_mode&0o077 or not 0<info.st_size<=2048:
+        raise ValueError("Unsafe native setup request")
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+    with os.fdopen(fd) as stream:payload=json.load(stream)
+    return native_setup.validate(ident,payload)
+
+def cleanup_native_setup_requests():
+    directory=STATE/"native-setup-requests"
+    if not directory.exists() and not directory.is_symlink():return
+    native_setup_directory()
+    with db() as conn:
+        pending={str(r["id"])+".json" for r in conn.execute("SELECT id FROM jobs WHERE action='native-setup' AND state='queued'")}
+    for path in directory.iterdir():
+        if re.fullmatch(r"[1-9][0-9]*\.json",path.name) and path.name not in pending:
+            if not stat.S_ISREG(path.lstat().st_mode):raise ValueError("Unexpected native setup request file")
+            path.unlink()
+
+def execute_native_setup(job,ident):
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE or ident not in {"homebox","grocy"}:
+        raise ValueError("Native account setup is unavailable in recovery")
+    if state(ident)!="running" or share_settings(ident)[0]:
+        raise ValueError("Keep the native application running locally during setup")
+    payload=read_native_setup_request(job,ident)
+    total=3 if ident=="homebox" else 2
+    change(job,state="running",total=total,completed=0,stage="Configure native account")
+    native_setup.configure(ident,payload)
+    change(job,completed=1,stage="Close native registration" if ident=="homebox" else "Verify local native readiness")
+    if ident=="homebox":
+        with db() as conn:
+            conn.execute("""INSERT INTO sharing(module,shared,registration_closed) VALUES ('homebox',0,1)
+                ON CONFLICT(module) DO UPDATE SET registration_closed=1""")
+        run(job,ident,"up","-d","--wait","--wait-timeout","90","--pull","never")
+    wait_ready(ident)
+    if ident=="homebox":
+        change(job,completed=2,stage="Verify native sign-in and closed registration")
+        native_setup.verify_closed_homebox(payload)
+    change(job,completed=total,state="succeeded",stage="Native account ready; local-only until Share on LAN")
+    log(job,"\nNative account sign-in verified. The application remains local-only; keep your native password.\n")
 
 def enqueue_batch(token, selection):
     if RECOVERY_OFFLINE:raise ValueError("Offline recovery disables new installations")
@@ -2377,6 +2455,9 @@ def execute(row):
             if exact is not None:
                 if RECOVERY_OFFLINE or ident=="tak":raise ValueError("Exact scheduled verification unavailable")
                 exact_args=(exact,)
+        if action=="native-setup":
+            execute_native_setup(job,ident)
+            return
         if action=="recovery-manifest":
             if ident!="kopia":raise ValueError("Kopia-only action")
             recovery_manifest(job)
@@ -2464,6 +2545,8 @@ def execute(row):
                 log(job,"\nCould not confirm containers stopped; inspect Docker immediately.\n")
         log(job, "\n" + str(exc) + "\n")
         change(job, state="failed", stage=str(exc) if isinstance(exc,PublishedPortConflict) else "Failed; see output")
+    finally:
+        if action=="native-setup":native_setup_request_path(job).unlink(missing_ok=True)
 
 def process():
     if RECOVERY_CORE_ONLY:return
@@ -2548,13 +2631,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if RECOVERY_CORE_ONLY:
             return self.send_json(409,{"detail":"Core-only recovery disables module actions"})
-        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation", "/guarded-update", "/resolve-rollback"}:
+        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation", "/guarded-update", "/resolve-rollback", "/native-setup"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
+            if self.path=="/native-setup":
+                if not isinstance(body,dict) or set(body)!={"module","account"}:
+                    raise ValueError("Unsupported native setup request")
+                return self.send_json(202,{"id":enqueue(body["module"],"native-setup",native_payload=body["account"])})
             if self.path=="/resolve-rollback":
                 return self.send_json(202,{"id":enqueue_reader_resolution(body)})
             if self.path in {"/update-preparation","/guarded-update"}:
