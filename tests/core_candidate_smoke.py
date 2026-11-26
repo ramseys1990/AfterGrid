@@ -1,7 +1,8 @@
 """Opt-in Linux smoke for source-built images; never replaces installed services.
 
 Usage: AFTERGRID_CANDIDATE_BUILD_TEST=1 python3 -B tests/core_candidate_smoke.py CANDIDATE
-CANDIDATE contains source/ and build.json from the reviewed source build.
+CANDIDATE contains source/ and candidate.json from core_update.prepare.
+A build-only acceptance receipt (build.json) is also supported.
 Private fixture directories and stopped containers are retained for inspection.
 """
 import argparse
@@ -41,7 +42,11 @@ def smoke(candidate):
             or Path("/etc/pve").exists() or shutil.which("pveversion")):
         raise RuntimeError("Opt-in Linux guest acceptance only; never the hypervisor")
     candidate = candidate.resolve(strict=True)
-    report = json.loads((candidate / "build.json").read_text())
+    if (candidate / "candidate.json").is_file():
+        plan = json.loads((candidate / "candidate.json").read_text())
+        report = {"commit": plan["commit"], "images": plan["candidate"]}
+    else:
+        report = json.loads((candidate / "build.json").read_text())
     if (set(report["images"]) != {"core", "worker"}
             or not re.fullmatch(r"[a-f0-9]{40}", report["commit"])):
         raise ValueError("Expected reviewed source build report")
