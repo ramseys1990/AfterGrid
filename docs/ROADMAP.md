@@ -237,16 +237,16 @@ Baseline: **8 of 13 implementation items complete**. A complete row preserves th
 | 1 | Installer audit | Complete | Fresh Ubuntu 24.04 guest install passed through healthy core/worker and LAN setup page |
 | 2 | Read-only installation preflight | Complete | Passed on fresh Ubuntu 24.04 unprivileged Proxmox guest |
 | 3 | Existing Docker workload protection | Complete | Worker and four app IDs/start times unchanged during scoped test core rebuild; deliberate conflicting fixture preserved; existing shared-host coverage remains partial |
-| 4 | Interrupted installation recovery | Complete | CT116: real failed startup, interrupted resume and successful resume passed after Docker inspection fix; fresh browser setup still pending |
-| 5 | First-run setup improvements | Complete | Administrator setup, logout/login, guest controls and portal restart/session persistence passed |
+| 4 | Interrupted installation recovery | Complete | CT116: real failed startup, interrupted resume and successful resume passed after Docker inspection fix; browser setup and guest reboot persistence also passed |
+| 5 | First-run setup improvements | Complete | CT115 and CT116 administrator setup/logout/login passed; CT116 core-only choice, account and session survived guest reboot |
 | 6 | Application selection validation | Complete | Four-app wizard batch passed; independent Kiwix retry completed as job #12 after resolved port conflict |
 | 7 | Installation progress reporting | Complete | Real per-app Compose activity and completed-stage summaries observed; failed summary persisted after refresh |
 | 8 | Application port conflict handling | Complete | Real occupied-port rejection passed before image pull; error and retry survived refresh; Retry job #12 completed; native retained article reopened |
 | 9 | AfterGrid core updating | Open — production activation gated | Native disposable tests passed; reviewed production release/handoff pending |
-| 10 | Safe uninstall and reinstall | Open | Kiwix uninstall passed; archive SHA-256 unchanged; Kiwix reinstall/reopen and subsequent independent restart passed; core/full-appliance removal remains untested |
-| 11 | LAN deployment validation | Open | Desktop setup, signed-out portal and anonymous Kiwix reading passed; guest WAN-routing-loss test passed; phone and native app onboarding pending |
+| 10 | Safe uninstall and reinstall | Open | All four selected apps removed/reinstalled with data checks; core/worker recreated with session/history intact and optional containers unchanged; full appliance data removal/recovery remains untested |
+| 11 | LAN deployment validation | Open | Desktop and user-observed physical phone portal/article passed; scoped guest WAN-loss reading passed; Homebox/Grocy native browser onboarding remains blocked |
 | 12 | Module authentication and simplified onboarding | Open | Native browser setup required; SSH-only initial setup remains a usability gap |
-| 13 | System requirements and clean-host acceptance | Open | Core plus four essentials installed on 4-core/4-GiB/100-GiB guest; guest WAN-loss reading passed; full resource, bare-metal and clean-machine recovery acceptance pending |
+| 13 | System requirements and clean-host acceptance | Open | CT115 four-app resource samples recorded; CT116 core-only failed-install/resume/setup/reboot passed on 2-core/1-GiB guest; load, bare-metal and clean-machine recovery remain pending |
 
 The test guest is disposable, but acceptance must preserve installed application data unless a distinct test explicitly calls for deletion. Keep all infrastructure changes confined to the designated guest. Retain native application permissions, use Compose and Kopia, and defer the major UI overhaul until the approach to 1.0.
 
@@ -506,3 +506,14 @@ With the patched installer from caa13a1b209944e3018df85a374007f4dfb5100c:
 This closes the failed-start/interrupted-resume runtime gate for the corrected installer on this guest. Source core/worker remain the pinned cfb0f3e release with the focused installer correction applied; this is not a production updater activation or full clean-host recovery. Native logs and exit receipts remain under /root/aftergrid-* in CT116; token values are not recorded here.
 
 The browser client blocked navigation to http://192.168.4.73:8080/ with ERR_BLOCKED_BY_CLIENT, so fresh administrator setup, browser wizard and guest reboot persistence are still pending. Server health alone does not close these browser journeys. CT115 and unrelated workloads were not modified by this slice. Phase 3 implementation baseline remains 8/13; production core activation stays gated. Existing deferred UI observations, including replacing browser-native confirmations with accessible in-page modals, remain on the later overhaul list.
+
+
+### Fresh browser setup and guest reboot — 2026-11-25
+
+The browser setup page at CT116's normal LAN URL became readable despite the earlier navigation error. No browser restriction was changed or bypassed. The original preserved token created a disposable administrator and named the server AfterGrid acceptance. Logout returned to the signed-out portal with administrative controls hidden; normal administrator login succeeded. Selected Skip for now with no optional applications installed.
+
+Rebooted only CT116 using its native OS. The changed boot ID confirmed an actual reboot. Core and worker automatically returned healthy, native LAN health returned OK, and the browser reloaded the named portal with its administrator session intact. Administration was visible and the dismissed first-run wizard remained absent. Only core and worker containers existed after reboot. This passes core-only first-run and guest reboot persistence on this Ubuntu/Proxmox configuration, not full clean-machine recovery or minimum-resource certification.
+
+Installer fix and regression/evidence changes were merged through PR #1, squash commit 49ce77898c84b95a35ed2a86f4a9253f911b248d. Eight installer regression tests passed on native Linux before merge; hosted checks were still running at merge and are not claimed passed. Phase 3 remains 8/13 implemented, with open items 9–13 as summarized above.
+
+UI observation: a successful sign-out briefly displayed Administrator login required on the shared portal. Make intentional sign-out a neutral confirmation and prevent background administrative requests from producing a misleading authentication error. This joins the deferred modal/status/layout improvements; major redesign remains deferred.
