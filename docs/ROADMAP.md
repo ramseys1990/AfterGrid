@@ -244,7 +244,7 @@ Baseline: **8 of 13 implementation items complete**. A complete row preserves th
 | 8 | Application port conflict handling | Complete | Real occupied-port rejection passed before image pull; error and retry survived refresh; Retry job #12 completed; native retained article reopened |
 | 9 | AfterGrid core updating | Open — production activation gated | Native disposable tests passed; reviewed production release/handoff pending |
 | 10 | Safe uninstall and reinstall | Open | Selected apps and core recreation preserve data; portable recovery into an empty daemon now passed for core/worker/Kopia/Kiwix/Homebox/Grocy. End-user appliance uninstall/reinstall workflow remains open |
-| 11 | LAN deployment validation | Open | Original and recovered portal/article passed desktop and user-observed physical phone; recovered guest WAN-loss and reboot passed. Homebox/Grocy browser setup, authenticated native LAN journeys and populated backups passed; physical-phone QR and stable label hostname remain pending |
+| 11 | LAN deployment validation | Open | Original and recovered portal/article passed desktop and user-observed physical phone; recovered guest WAN-loss and reboot passed. Homebox/Grocy browser setup, authenticated native LAN journeys and populated backups passed; user-observed physical-phone Homebox QR opening passed; stable label hostname remains pending |
 | 12 | Module authentication and simplified onboarding | Open | CT115 Homebox/Grocy browser setup, approved LAN sharing, native inventory/recipe journeys and populated-state restore inspection passed; release integration and broader module review pending |
 | 13 | System requirements and clean-host acceptance | Open | CT116 empty-daemon offline package restore, six exact images, selected native state, new backup/restore, LAN and reboot passed on 2 cores/1 GiB; populated native journeys passed on source CT115; populated replacement startup, load and bare-metal acceptance remain pending |
 
@@ -586,3 +586,8 @@ The operator explicitly approved both application LAN bindings and completed the
 - Both native applications remained authenticated after backup stop/start and browser reload. This is application-consistent backup and populated isolated-restore evidence on the same-disk working repository, not an independent disaster backup or a new portable recovery drill.
 
 Next acceptance: scan the open Homebox item QR with a physical phone on the same LAN, confirm native login/item access, and review stable hostname provisioning before printed-label acceptance. Review/integrate PR #3 and address its review feedback before treating the development overlay as a released workflow. CT116 remains unchanged and restricted; production core activation stays gated. Phase 3 remains **8/13 implemented** with the broader open criteria preserved.
+
+
+### Physical-phone Homebox QR confirmation — 2026-11-26
+
+After requesting the Homebox account email, the operator explicitly confirmed that scanning the open item QR on a physical phone opened Acceptance lantern. This closes the user-observed phone QR-opening gate for the current LAN item URL. The QR uses the guest IP; stable hostname provisioning and printed-label continuity across address changes remain unverified. No broader phase completion or populated replacement-app startup is implied. Phase 3 remains **8/13 implemented**; production core activation stays gated. Next: review PR #3 feedback and integration, then stable label addressing and the remaining recovery/resource acceptance criteria.
