@@ -81,15 +81,15 @@ async function renderModules(){
         const backupButton=document.createElement("button"),backupInfo=document.createElement("div");
         backupButton.type="button";backupButton.textContent="Read backup sources";
         backupButton.addEventListener("click",async()=>{
-          backupButton.disabled=true;backupInfo.textContent="Reading reviewed Compose mounts.";
+          backupButton.disabled=true;backupInfo.textContent="Reading reviewed Compose mounts…";
           try{
             const plan=await api("/api/admin/modules/"+mod.id+"/backup-plan");
             if(!status?.admin||!card.isConnected)return;
             backupInfo.replaceChildren();
             function line(value){const p=document.createElement("p");p.textContent=value;backupInfo.append(p);}
-            line("Source plan only - no verified snapshot.");
+            line("Source plan only — no verified snapshot.");
             line(plan.guidance);
-            for(const source of plan.sources)line(source.role+" � "+(source.kopia_path||"not included in native source plan")+" (container: "+source.container_path+")");
+            for(const source of plan.sources)line(source.role+" · "+(source.kopia_path||"not included in native source plan")+" (container: "+source.container_path+")");
             if(plan.worker_secrets_required)line("Worker-generated secrets must be included separately for exact recovery; not visible in Kopia.");
           }catch(e){if(status?.admin&&card.isConnected)backupInfo.textContent=e.message;}
           finally{backupButton.disabled=false;}
@@ -132,21 +132,21 @@ async function renderModules(){
         const summary=document.createElement("summary");summary.textContent="Image versions and update history";
         const info=document.createElement("div"),check=document.createElement("button");check.type="button";check.textContent="Read local versions";
         check.addEventListener("click",async()=>{
-          check.disabled=true;info.textContent="Reading local Docker image information.";
+          check.disabled=true;info.textContent="Reading local Docker image information…";
           try{
             const result=await api("/api/admin/modules/"+mod.id+"/versions");
             if(!status?.admin||!card.isConnected)return;
             info.replaceChildren();
             for(const service of result.services){
               const section=document.createElement("div");
-              for(const value of [service.service+" - "+service.comparison,"Reviewed target: "+service.configured_image,"Installed image IDs: "+(service.installed_image_ids.join(", ")||"none"),"Local target ID: "+(service.local_target_image_id||"not present or unknown")]){
+              for(const value of [service.service+" — "+service.comparison,"Reviewed target: "+service.configured_image,"Installed image IDs: "+(service.installed_image_ids.join(", ")||"none"),"Local target ID: "+(service.local_target_image_id||"not present or unknown")]){
                 const p=document.createElement("p");p.textContent=value;section.append(p);
               }
               info.append(section);
             }
             const note=document.createElement("p");note.textContent="Local comparison only. No registry check. A matching image does not prove the latest upstream version.";info.append(note);
             if(!result.manual_update_supported){const n=document.createElement("p");n.textContent="Routing image updates are deferred until graph compatibility and recovery are validated.";info.append(n);}
-            for(const entry of result.history){const p=document.createElement("p");p.textContent="Update #"+entry.id+" � "+new Date(entry.created*1000).toLocaleString()+" � "+entry.state+" � "+entry.stage;info.append(p);}
+            for(const entry of result.history){const p=document.createElement("p");p.textContent="Update #"+entry.id+" · "+new Date(entry.created*1000).toLocaleString()+" · "+entry.state+" · "+entry.stage;info.append(p);}
           }catch(e){if(status?.admin&&card.isConnected)info.textContent=e.message;}
           finally{check.disabled=false;}
         });
@@ -154,7 +154,7 @@ async function renderModules(){
         const registryInfo=document.createElement("div");
         registry.addEventListener("click",async()=>{
           if(!confirm("Contact the image registry for this reviewed reference? No image layers will be downloaded or containers changed."))return;
-          registry.disabled=true;registryInfo.textContent="Reading registry metadata.";
+          registry.disabled=true;registryInfo.textContent="Reading registry metadata…";
           try{
             const result=await api("/api/admin/modules/"+mod.id+"/registry-check",{});
             if(!status?.admin||!card.isConnected)return;
@@ -177,7 +177,7 @@ async function renderModules(){
           onlineButton.textContent="Confirm approved candidate with registry (internet)";
           async function readEligibility(online){
             if(online&&!confirm("Check the approved candidate's registry identity? No image layers are downloaded or containers changed."))return;
-            localButton.disabled=onlineButton.disabled=true;eligibility.textContent="Checking eligibility.";
+            localButton.disabled=onlineButton.disabled=true;eligibility.textContent="Checking eligibility…";
             try{
               const r=await api("/api/admin/modules/kiwix/update-eligibility",online?{}:undefined);
               if(!status?.admin||!card.isConnected)return;
@@ -212,7 +212,7 @@ async function renderModules(){
               if(!status?.admin||!card.isConnected)return;
               if(history.latest){
                 const p=document.createElement("p"),h=history.latest;
-                p.textContent="Latest "+(h.action||"preparation")+": job "+h.job+" � "+h.state+(h.evidence?" � protected snapshot "+h.evidence.snapshot_id+" � exact content read passed"+(h.evidence.previous_image_archive?" � previous image archive recorded":"")+(h.state==="succeeded"&&h.evidence.update_performed?" � target identity and catalog verified":h.evidence.rollback_status==="restored"?" � previous reader restored; update paused":h.evidence.rollback_status?" � rollback "+h.evidence.rollback_status+"; inspect outcome":h.evidence.recreation_attempted?" � recreation attempted; inspect outcome":" � no recreation recorded"):"");
+                p.textContent="Latest "+(h.action||"preparation")+": job "+h.job+" · "+h.state+(h.evidence?" · protected snapshot "+h.evidence.snapshot_id+" · exact content read passed"+(h.evidence.previous_image_archive?" · previous image archive recorded":"")+(h.state==="succeeded"&&h.evidence.update_performed?" · target identity and catalog verified":h.evidence.rollback_status==="restored"?" · previous reader restored; update paused":h.evidence.rollback_status?" · rollback "+h.evidence.rollback_status+"; inspect outcome":h.evidence.recreation_attempted?" · recreation attempted; inspect outcome":" · no recreation recorded"):"");
                 eligibility.append(p);
               }
             }catch(e){if(status?.admin&&card.isConnected)eligibility.textContent=e.message;}
@@ -223,7 +223,7 @@ async function renderModules(){
           const preferences=document.createElement("div"),prefButton=document.createElement("button");
           prefButton.type="button";prefButton.textContent="Configure future automatic update preference";
           async function readPreferences(){
-            prefButton.disabled=true;preferences.textContent="Reading update preferences.";
+            prefButton.disabled=true;preferences.textContent="Reading update preferences…";
             try{
               const report=await api("/api/admin/modules/kiwix/update-preferences");
               if(!status?.admin||!card.isConnected)return;
@@ -269,7 +269,7 @@ async function renderModules(){
         }
         card.append(versions);
         if(mod.shared && mod.lan_url){
-          const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" - local DNS must point to the server.":" - reserve the server IP for stable links.")+(mod.id==="tak"?" TLS; enroll with the trusted CA.":" HTTP is unencrypted.");card.append(note);
+          const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+(mod.id==="tak"?" TLS; enroll with the trusted CA.":" HTTP is unencrypted.");card.append(note);
         }else if(mod.share_available){
           const note=document.createElement("p");note.textContent=(mod.lan_dns?"Add a local DNS record for "+new URL(mod.lan_url).hostname+". ":"")+"Complete native account setup before sharing. LAN URL: "+mod.lan_url;card.append(note);
         }else if(["homebox","grocy","kopia","meshmonitor","tak","kolibri","media","notes"].includes(mod.id)){
@@ -314,7 +314,7 @@ async function refreshCoreUpdate(){
 $("core-update-refresh").addEventListener("click",refreshCoreUpdate);
 $("update-health-refresh").addEventListener("click",async()=>{
   const button=$("update-health-refresh"),root=$("update-health-result");
-  button.disabled=true;root.textContent="Reading local update health.";
+  button.disabled=true;root.textContent="Reading local update health…";
   try{
     const r=await api("/api/admin/updates/health");
     if(!status?.admin)return;
@@ -322,8 +322,8 @@ $("update-health-refresh").addEventListener("click",async()=>{
     const line=(parent,value)=>{const p=document.createElement("p");p.textContent=value;parent.append(p);};
     const date=v=>Number.isFinite(v)?new Date(v*1000).toISOString():"not recorded";
     line(root,r.automatic_execution_enabled?"Automatic execution active for reviewed candidates.":"Automatic execution disabled; separate activation required.");
-    line(root,"Reader: "+r.reader_state+" � Approved candidate: "+(r.approved_candidate||"none"));
-    line(root,"Rollback hold: "+r.rollback_hold.status+(r.rollback_hold.image_id?" � "+r.rollback_hold.image_id:""));
+    line(root,"Reader: "+r.reader_state+" · Approved candidate: "+(r.approved_candidate||"none"));
+    line(root,"Rollback hold: "+r.rollback_hold.status+(r.rollback_hold.image_id?" · "+r.rollback_hold.image_id:""));
     const resolution=r.rollback_resolution;
     if(resolution&&resolution.status!=="not applicable"){
       line(root,"Rollback resolution: "+resolution.status);
@@ -332,11 +332,11 @@ $("update-health-refresh").addEventListener("click",async()=>{
         resolve.addEventListener("click",async()=>{
           if(!confirm("Reverify the exact archive, protected snapshot and catalog before removing the override? No image update or data restore will be performed."))return;
           resolve.disabled=true;
-          try{const job=await api("/api/admin/modules/kiwix/resolve-rollback",{failed_job:resolution.failed_job,image_id:r.rollback_hold.image_id,confirmed:true});line(root,"Resolution queued � #"+job.id);}
+          try{const job=await api("/api/admin/modules/kiwix/resolve-rollback",{failed_job:resolution.failed_job,image_id:r.rollback_hold.image_id,confirmed:true});line(root,"Resolution queued · #"+job.id);}
           catch(e){line(root,e.message);resolve.disabled=false;}
         });root.append(resolve);
       }
-      if(resolution.base_image)line(root,"Base Compose target: "+resolution.base_image+" � "+(resolution.base_matches_rollback?"matches recovered image locally":"not confirmed to match recovered image"));
+      if(resolution.base_image)line(root,"Base Compose target: "+resolution.base_image+" · "+(resolution.base_matches_rollback?"matches recovered image locally":"not confirmed to match recovered image"));
       for(const blocker of resolution.blockers)line(root,"Resolution: "+blocker);
     }
     if(r.maintenance_active)line(root,"Recovery maintenance active.");
@@ -347,7 +347,7 @@ $("update-health-refresh").addEventListener("click",async()=>{
       line(root,"Installed image: "+(s.installed_image_ids.join(", ")||"none"));
     }
     const pref=r.preferences;
-    if(pref.dispatch)line(root,"Last scheduled admission: "+pref.dispatch.status+(pref.dispatch.job?" � #"+pref.dispatch.job:""));
+    if(pref.dispatch)line(root,"Last scheduled admission: "+pref.dispatch.status+(pref.dispatch.job?" · #"+pref.dispatch.job:""));
     if(pref.release_enabled&&pref.preference?.enabled){
       const activate=document.createElement("button");activate.textContent=pref.execution_enabled?"Deactivate automatic updates":"Activate automatic updates";
       activate.addEventListener("click",async()=>{
@@ -359,23 +359,23 @@ $("update-health-refresh").addEventListener("click",async()=>{
     }
     if(pref.preference?.enabled){
       const p=pref.preference,days=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-      line(root,"Future update preference: "+days[p.weekday]+" "+String(Math.floor(p.start_minute/60)).padStart(2,"0")+":"+String(p.start_minute%60).padStart(2,"0")+" UTC � "+p.duration_minutes+" min");
+      line(root,"Future update preference: "+days[p.weekday]+" "+String(Math.floor(p.start_minute/60)).padStart(2,"0")+":"+String(p.start_minute%60).padStart(2,"0")+" UTC · "+p.duration_minutes+" min");
       line(root,pref.window_open?"Window open until "+date(pref.current_window_end):"Next window: "+date(pref.next_window_start));
     }else line(root,"Future automatic update preference: disabled");
     for(const [name,attempt] of [["Latest guarded update",r.latest_guarded_update],["Latest preparation",r.latest_preparation],["Latest manual update",r.latest_manual_update]]){
       const details=document.createElement("details"),summary=document.createElement("summary");
-      summary.textContent=name+": "+(attempt?attempt.state+" � #"+attempt.id:"none recorded");
+      summary.textContent=name+": "+(attempt?attempt.state+" · #"+attempt.id:"none recorded");
       details.append(summary);root.append(details);
       if(!attempt)continue;
-      line(details,"Submitted "+date(attempt.created)+" � "+attempt.stage);
+      line(details,"Submitted "+date(attempt.created)+" · "+attempt.stage);
       if(attempt.evidence_invalid)line(details,"Recorded evidence invalid; inspect host.");
       const e=attempt.evidence;
       if(!e)continue;
-      if(e.snapshot_id)line(details,"Recorded pre-update snapshot: "+e.snapshot_id+" � "+e.verification+" verification � pin "+(e.pin_confirmed?"recorded":"unconfirmed"));
-      if(e.previous_image_archive)line(details,"Previous archive: "+e.previous_image_archive.image_id+" � "+e.previous_image_archive.bytes+" bytes � checksum "+e.previous_image_archive.sha256);
+      if(e.snapshot_id)line(details,"Recorded pre-update snapshot: "+e.snapshot_id+" · "+e.verification+" verification · pin "+(e.pin_confirmed?"recorded":"unconfirmed"));
+      if(e.previous_image_archive)line(details,"Previous archive: "+e.previous_image_archive.image_id+" · "+e.previous_image_archive.bytes+" bytes · checksum "+e.previous_image_archive.sha256);
       if(e.recreation_attempted)line(details,"Recreation attempted.");
-      if(e.rollback_status)line(details,"Recorded rollback: "+e.rollback_status+" � "+(e.rollback_image_id||"identity not confirmed"));
-      if(attempt.state==="succeeded"&&e.update_performed)line(details,"Result image "+e.result_image_id+" � catalog sample verified.");
+      if(e.rollback_status)line(details,"Recorded rollback: "+e.rollback_status+" · "+(e.rollback_image_id||"identity not confirmed"));
+      if(attempt.state==="succeeded"&&e.update_performed)line(details,"Result image "+e.result_image_id+" · catalog sample verified.");
       else if(attempt.action==="guarded-update"&&attempt.state!=="succeeded")line(details,"Update success not confirmed; inspect before further changes.");
     }
     line(root,"Recovery evidence is historical; archive and pin are not reverified on refresh. Use the Kiwix application card for explicit online checks and preferences.");
@@ -384,7 +384,7 @@ $("update-health-refresh").addEventListener("click",async()=>{
 });
 $("backup-health-refresh").addEventListener("click",async()=>{
   const button=$("backup-health-refresh"),root=$("backup-health-result");
-  button.disabled=true;root.textContent="Reading recorded backup health.";
+  button.disabled=true;root.textContent="Reading recorded backup health…";
   try{
     const report=await api("/api/admin/backups/health");
     if(!status?.admin)return;
@@ -392,8 +392,8 @@ $("backup-health-refresh").addEventListener("click",async()=>{
     const date=value=>Number.isFinite(value)?new Date(value*1000).toLocaleString():"not recorded";
     const line=(parent,text)=>{const p=document.createElement("p");p.textContent=text;parent.append(p);};
     const attempt=row=>row?row.state+" (job "+row.id+", submitted "+date(row.created)+")":"not recorded";
-    line(root,"Repository connection: "+report.repository.connection+(report.repository.storage_type?" � "+report.repository.storage_type:""));
-    line(root,"Inventory check: "+(report.inventory_job?"job "+report.inventory_job+" � "+date(report.inventory_checked_at):"not generated")+". Availability and pin observations are historical, not current.");
+    line(root,"Repository connection: "+report.repository.connection+(report.repository.storage_type?" · "+report.repository.storage_type:""));
+    line(root,"Inventory check: "+(report.inventory_job?"job "+report.inventory_job+" · "+date(report.inventory_checked_at):"not generated")+". Availability and pin observations are historical, not current.");
     const supported=report.sources.filter(s=>s.supported);
     const attention=supported.filter(s=>["failed","interrupted","unknown","dispatching"].includes(s.schedule.result)||[s.latest_attempt,s.latest_verification_attempt].some(a=>a&&["failed","interrupted"].includes(a.state))||s.repository_at_inventory==="unavailable");
     const due=supported.filter(s=>s.schedule.enabled&&s.schedule.next_due<=report.observed_at);
@@ -402,17 +402,17 @@ $("backup-health-refresh").addEventListener("click",async()=>{
     if(report.latest_retention_attempt)line(root,"Last retention operation: "+attempt(report.latest_retention_attempt));
     for(const s of report.sources){
       const details=document.createElement("details"),summary=document.createElement("summary");
-      summary.textContent=s.key+" - "+(!s.supported?"excluded":attention.includes(s)?"review needed":s.verified?"verification recorded":s.snapshot_job?"not verified":"no recorded snapshot");
+      summary.textContent=s.key+" — "+(!s.supported?"excluded":attention.includes(s)?"review needed":s.verified?"verification recorded":s.snapshot_job?"not verified":"no recorded snapshot");
       details.append(summary);root.append(details);
       if(!s.supported){line(details,"MicroTAK data recovery excluded.");continue;}
-      line(details,"Latest successful snapshot: "+(s.snapshot_job?"job "+s.snapshot_job+" � submitted "+date(s.captured_at):"none recorded"));
+      line(details,"Latest successful snapshot: "+(s.snapshot_job?"job "+s.snapshot_job+" · submitted "+date(s.captured_at):"none recorded"));
       line(details,"Latest snapshot attempt: "+attempt(s.latest_attempt));
       line(details,"Latest verification attempt: "+attempt(s.latest_verification_attempt));
-      line(details,"Verification of latest successful snapshot: "+(s.verified?s.verification_kind+" � "+attempt(s.verified):"not recorded"));
+      line(details,"Verification of latest successful snapshot: "+(s.verified?s.verification_kind+" · "+attempt(s.verified):"not recorded"));
       line(details,"Matching inventory: "+s.repository_at_inventory+"; pin "+(s.pin_at_inventory===true?"observed":s.pin_at_inventory===false?"not present":"not checked"));
-      if(s.latest_protected_capture){const p=s.latest_protected_capture;line(details,"Latest protected capture: job "+p.job+" � "+date(p.created)+"; verification "+attempt(p.verification)+"; pin at inventory "+(p.pin_at_inventory===true?"observed":p.pin_at_inventory===false?"not present":"not checked"));}
+      if(s.latest_protected_capture){const p=s.latest_protected_capture;line(details,"Latest protected capture: job "+p.job+" · "+date(p.created)+"; verification "+attempt(p.verification)+"; pin at inventory "+(p.pin_at_inventory===true?"observed":p.pin_at_inventory===false?"not present":"not checked"));}
       else line(details,"No successful protected capture recorded.");
-      line(details,"Schedule: "+s.schedule.status+(s.schedule.enabled?" � "+s.schedule.interval+" � next eligible "+date(s.schedule.next_due):"")+(s.schedule.result?" � "+s.schedule.phase+" "+s.schedule.result:""));
+      line(details,"Schedule: "+s.schedule.status+(s.schedule.enabled?" · "+s.schedule.interval+" · next eligible "+date(s.schedule.next_due):"")+(s.schedule.result?" · "+s.schedule.phase+" "+s.schedule.result:""));
     }
     line(root,"Generate a fresh recovery inventory below to recheck the exact latest snapshot IDs in Kopia. Keep an independent portable package.");
   }catch(e){if(status?.admin)root.textContent=e.message;}
@@ -420,11 +420,11 @@ $("backup-health-refresh").addEventListener("click",async()=>{
 });
 $("kopia-status-check").addEventListener("click",async()=>{
   const button=$("kopia-status-check"),create=$("kopia-initialize"),root=$("kopia-repository-result");
-  button.disabled=true;create.disabled=true;root.textContent="Checking native Kopia.";
+  button.disabled=true;create.disabled=true;root.textContent="Checking native Kopia…";
   try{
     const result=await api("/api/admin/kopia/status");
     if(!status?.admin)return;
-    root.textContent="Repository: "+result.connection+(result.storage_type?" � "+result.storage_type:"")+". Snapshot and restore verification pending.";
+    root.textContent="Repository: "+result.connection+(result.storage_type?" · "+result.storage_type:"")+". Snapshot and restore verification pending.";
     create.disabled=result.connection!=="not connected";
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{button.disabled=false;}
@@ -445,19 +445,19 @@ $("backup-policy-sources").addEventListener("click",async()=>{
 $("backup-policy-source").addEventListener("change",()=>{$("backup-retention-controls").replaceChildren();$("backup-policy-result").textContent="Read effective policy for selected source.";});
 $("backup-policy-check").addEventListener("click",async()=>{
   const root=$("backup-policy-result"),button=$("backup-policy-check"),select=$("backup-policy-source");
-  button.disabled=true;select.disabled=true;$("backup-retention-controls").replaceChildren();root.textContent="Reading native effective policy.";
+  button.disabled=true;select.disabled=true;$("backup-retention-controls").replaceChildren();root.textContent="Reading native effective policy…";
   try{
     const result=await api("/api/admin/backups/effective-policy/"+select.value.split("/").map(encodeURIComponent).join("/"));
     if(!status?.admin)return;
     root.replaceChildren();
     const line=text=>{const p=document.createElement("p");p.textContent=text;root.append(p);};
     const p=result.policy,s=p.schedule;
-    line("Source: "+result.key+(result.source?" � "+result.source:""));
+    line("Source: "+result.key+(result.source?" · "+result.source:""));
     line("Native scheduling policy: "+(s.manual?"manual only":s.automatic_policy?"automatic settings present":"no interval or time configured")+". Not proof that a native job is running or application-consistent.");
     if(s.interval_seconds)line("Interval: "+s.interval_seconds+" seconds");
     if(s.times_utc.length)line("Scheduled times (Kopia UTC): "+s.times_utc.join(", "));
     if(s.cron_count)line("Cron entries: "+s.cron_count+" (inspect native Kopia for expressions)");
-    line("Retention: "+Object.entries(p.retention).map(([k,v])=>k.replace("keep","")+": "+(v===null?"not reported":v)).join(" � "));
+    line("Retention: "+Object.entries(p.retention).map(([k,v])=>k.replace("keep","")+": "+(v===null?"not reported":v)).join(" · "));
     line("Use managed schedules separately. Retention affects unpinned backups; no global changes.");
     if(result.retention_changes_enabled && Object.values(p.retention).every(Number.isInteger)){
       const controls=$("backup-retention-controls"),fields={};
@@ -497,7 +497,7 @@ async function loadBackupSchedules(){
     if(result.available.includes(previous))select.value=previous;
     const line=text=>{const p=document.createElement("p");p.textContent=text;root.append(p);};
     for(const [key,row] of Object.entries(result.sources)){
-      line(key+": "+(row.enabled?row.interval+" � next eligible "+new Date(row.next_due*1000).toLocaleString():"disabled")+" � "+row.phase+" "+row.result+(row.job?" (job "+row.job+")":"")+" � verification "+row.verification+(row.source_job?" (snapshot job "+row.source_job+")":""));
+      line(key+": "+(row.enabled?row.interval+" · next eligible "+new Date(row.next_due*1000).toLocaleString():"disabled")+" · "+row.phase+" "+row.result+(row.job?" (job "+row.job+")":"")+" · verification "+row.verification+(row.source_job?" (snapshot job "+row.source_job+")":""));
     }
     if(!Object.keys(result.sources).length)line("No schedules configured.");
     if(!result.execution_enabled)line("Managed schedules are disabled in recovery mode.");
@@ -602,21 +602,21 @@ $("backup-manifest-download").addEventListener("click",async()=>{
 });
 $("backup-core-check").addEventListener("click",async()=>{
   const button=$("backup-core-check"),root=$("backup-core-result");
-  button.disabled=true;root.textContent="Reading core backup requirements.";
+  button.disabled=true;root.textContent="Reading core backup requirements…";
   try{
     const plan=await api("/api/admin/backups/core");
     if(!status?.admin)return;
     root.replaceChildren();
     function line(value){const p=document.createElement("p");p.textContent=value;root.append(p);}
-    line("Source plan only - no verified snapshot.");
-    for(const source of plan.sources)line(source.path+" - "+source.guidance);
+    line("Source plan only — no verified snapshot.");
+    for(const source of plan.sources)line(source.path+" — "+source.guidance);
     for(const gap of plan.missing)line("Not covered: "+gap);
     line(plan.repository_guidance);
   }catch(e){if(status?.admin)root.textContent=e.message;}
   finally{button.disabled=false;}
 });
 function renderPreparednessApps(modules){
-  const groups={knowledge:["kiwix"],navigation:["maps","routing"],communications:["meshmonitor","tak"],resources:["homebox","grocy"],learning:["kolibri","media","notes"]};
+  const groups={knowledge:["kiwix"],navigation:["maps","routing"],communications:["meshmonitor","tak"],resources:["homebox","grocy","media"],learning:["kolibri","media","notes"]};
   for(const [group,ids] of Object.entries(groups)){
     const root=$("prep-"+group+"-apps");root.replaceChildren();
     for(const id of ids){
@@ -627,7 +627,7 @@ function renderPreparednessApps(modules){
       const local=["127.0.0.1","localhost"].includes(location.hostname);
       const accessible=mod?.installable&&state==="running"&&(!mod.admin_only||status?.admin)&&(!mod.loopback_only||(mod.shared&&mod.lan_url)||local);
       const link=document.createElement("a");
-      link.textContent=label+" - "+state+(state==="running"&&!accessible?" (not available from this browser)":"");
+      link.textContent=label+" — "+state+(state==="running"&&!accessible?" (not available from this browser)":"");
       link.href="#app-"+id;
       if(accessible&&id!=="tak"){
         if(id==="maps"||id==="routing"){link.href="/maps";}
@@ -638,21 +638,21 @@ function renderPreparednessApps(modules){
           link.href=url.href;link.target="_blank";link.rel="noopener noreferrer";
         }
       }else if(accessible&&id==="tak"){link.href="/communications";}
-      if(mod)line.append(link);else line.textContent=label+" - "+state;
+      if(mod)line.append(link);else line.textContent=label+" — "+state;
       root.append(line);
     }
   }
 }
 async function refreshPreparedness(){
   const button=$("preparedness-refresh");button.disabled=true;
-  $("preparedness-message").textContent="Reading local resource indicators.";
+  $("preparedness-message").textContent="Reading local resource indicators…";
   try{
     const data=await api("/api/preparedness");
     const k=data.knowledge,n=data.navigation,c=data.communications,r=data.resources;
-    $("prep-knowledge").textContent=k?k.indexed+" indexed archive(s) � "+k.unindexed+" unindexed. Indexing does not prove content quality or readability.":"Local library status unavailable.";
-    $("prep-navigation").textContent=n?n.map_archives+" map archive(s) � "+(n.routing_graph_prepared?"Routing graph marker present":"No prepared routing graph")+" � "+n.waypoints+" waypoint(s) � "+n.saved_routes+" saved route(s).":"Navigation resource status unavailable.";
-    $("prep-communications").textContent=c?c.pace_plans+" PACE plan(s) � "+c.device_records+" device record(s) � "+c.devices_ever_checked+" ever manually checked. Not live device status.":"Communications records unavailable.";
-    $("prep-resources").textContent=r?r.households+" household(s) � "+r.mapped_locations+" mapped location(s). Counts are not available stock.":"Resource directory unavailable.";
+    $("prep-knowledge").textContent=k?k.indexed+" indexed archive(s) · "+k.unindexed+" unindexed. Indexing does not prove content quality or readability.":"Local library status unavailable.";
+    $("prep-navigation").textContent=n?n.map_archives+" map archive(s) · "+(n.routing_graph_prepared?"Routing graph marker present":"No prepared routing graph")+" · "+n.waypoints+" waypoint(s) · "+n.saved_routes+" saved route(s).":"Navigation resource status unavailable.";
+    $("prep-communications").textContent=c?c.pace_plans+" PACE plan(s) · "+c.device_records+" device record(s) · "+c.devices_ever_checked+" ever manually checked. Not live device status.":"Communications records unavailable.";
+    $("prep-resources").textContent=r?r.households+" household(s) · "+r.mapped_locations+" mapped location(s). Counts are not available stock.":"Resource directory unavailable.";
     $("preparedness-message").textContent="Local indicators read. Refresh after changing content or plans.";
   }catch(e){
     for(const id of ["knowledge","navigation","communications","resources"])$("prep-"+id).textContent="Not checked.";
@@ -684,7 +684,7 @@ function renderWizard(modules){
   for(const mod of modules.filter(m=>m.installable&&m.status==="not installed"&&!pending.has(m.id))){
     const label=document.createElement("label");label.className="wizard-option";
     const input=document.createElement("input");input.type="checkbox";input.value=mod.id;input.checked=checked.has(mod.id);
-    const description=document.createElement("span");description.textContent=mod.name+" - "+mod.description;
+    const description=document.createElement("span");description.textContent=mod.name+" — "+mod.description;
     label.append(input,description);root.append(label);
   }
   if(!root.children.length)root.textContent="No uninstalled applications currently available. You can skip and add applications later.";
@@ -735,7 +735,7 @@ async function refreshLocalContent(){
   }
   for(const file of info.files){
     const row=document.createElement("article"),line=document.createElement("p");
-    line.textContent=file.name+" - "+bytes(file.size_bytes)+(file.indexed?" � indexed":" � not indexed");
+    line.textContent=file.name+" — "+bytes(file.size_bytes)+(file.indexed?" · indexed":" · not indexed");
     row.append(line);
     if(!file.indexed)control(row,file,"index","Add to library");
     control(row,file,"remove","Remove","Remove "+file.name+" from the library? A recoverable copy will be kept.");
@@ -745,7 +745,7 @@ async function refreshLocalContent(){
     const h=document.createElement("h4");h.textContent="Removed archives (still use storage)";root.append(h);
     for(const file of info.removed){
       const row=document.createElement("article"),line=document.createElement("p");
-      line.textContent=file.name+" - "+bytes(file.size_bytes);row.append(line);
+      line.textContent=file.name+" — "+bytes(file.size_bytes);row.append(line);
       control(row,file,"restore","Restore");
       control(row,file,"purge","Delete permanently","Permanently delete "+file.name+" and reclaim its storage? This cannot be undone.");
       root.append(row);
@@ -758,7 +758,7 @@ let contentQuery=null, contentOffset=0, contentBusy=false;
 async function searchContent(offset){
   if(contentBusy||!contentQuery||!status?.admin)return;
   contentBusy=true;$("content-prev").disabled=true;$("content-next").disabled=true;
-  $("content-message").textContent="Searching official Kiwix catalog.";
+  $("content-message").textContent="Searching official Kiwix catalog…";
   try{
     const params=new URLSearchParams({...contentQuery,start:String(offset)});
     const data=await api("/api/admin/content/catalog?"+params);
@@ -769,7 +769,7 @@ async function searchContent(offset){
       const card=document.createElement("article");
       const h=document.createElement("h4");h.textContent=entry.title;
       const p=document.createElement("p");p.textContent=entry.description;
-      const meta=document.createElement("small");meta.textContent=bytes(entry.size_bytes)+" � "+entry.language+" � "+entry.updated.slice(0,10);
+      const meta=document.createElement("small");meta.textContent=bytes(entry.size_bytes)+" · "+entry.language+" · "+entry.updated.slice(0,10);
       card.append(h,p,meta);
       if(entry.download_key){
         const b=document.createElement("button");b.textContent="Download to server";
@@ -778,7 +778,7 @@ async function searchContent(offset){
       }
       root.append(card);
     }
-    $("content-message").textContent=data.entries.length?"Showing "+(offset+1)+"-"+(offset+data.entries.length)+(data.total!==null?" of "+data.total:""):"No catalog results.";
+    $("content-message").textContent=data.entries.length?"Showing "+(offset+1)+"–"+(offset+data.entries.length)+(data.total!==null?" of "+data.total:""):"No catalog results.";
     $("content-prev").disabled=offset===0;
     $("content-next").disabled=data.entries.length<20||(data.total!==null&&offset+data.entries.length>=data.total);
   }catch(e){$("content-message").textContent=e.message;}
@@ -799,7 +799,7 @@ async function renderDownloads(){
   const root=$("downloads");root.replaceChildren();
   for(const d of rows){
     const card=document.createElement("article"),title=document.createElement("strong"),detail=document.createElement("p");
-    title.textContent=d.name+" � "+d.state;detail.textContent=d.detail+" - "+bytes(d.bytes)+" / "+bytes(d.size);card.append(title,detail);
+    title.textContent=d.name+" · "+d.state;detail.textContent=d.detail+" — "+bytes(d.bytes)+" / "+bytes(d.size);card.append(title,detail);
     if(d.size){const bar=document.createElement("progress");bar.max=d.size;bar.value=Math.min(d.bytes,d.size);card.append(bar);}
     if(d.state==="failed"){const retry=document.createElement("button");retry.textContent="Retry / resume";retry.addEventListener("click",async()=>{try{await api("/api/admin/content/downloads",{key:d.key});await renderDownloads();}catch(e){error(e.message);}});card.append(retry);}
     root.append(card);
@@ -818,12 +818,12 @@ async function renderInstallationSummary(){
     const counts={queued:0,running:0,succeeded:0,failed:0,interrupted:0};
     for(const item of rows)if(Object.hasOwn(counts,item.state))counts[item.state]++;
     const total=document.createElement("p");
-    total.textContent=counts.succeeded+" completed � "+counts.running+" installing � "+counts.queued+" queued � "+(counts.failed+counts.interrupted)+" need attention";
+    total.textContent=counts.succeeded+" completed · "+counts.running+" installing · "+counts.queued+" queued · "+(counts.failed+counts.interrupted)+" need attention";
     root.append(total);
     for(const item of rows){
       const row=document.createElement("article"),title=document.createElement("strong"),stage=document.createElement("p");
-      title.textContent=item.name+" � "+({succeeded:"Installation completed",running:"Installing",queued:"Queued",failed:"Installation failed",interrupted:"Interrupted"}[item.state]||"Unknown");
-      stage.textContent=item.stage+" � Job #"+item.id;
+      title.textContent=item.name+" · "+({succeeded:"Installation completed",running:"Installing",queued:"Queued",failed:"Installation failed",interrupted:"Interrupted"}[item.state]||"Unknown");
+      stage.textContent=item.stage+" · Job #"+item.id;
       row.append(title,stage);
       if(item.total>0){const p=document.createElement("progress");p.max=item.total;p.value=item.completed;p.setAttribute("aria-label","Completed stages for "+item.name);row.append(p);}
       if(item.retry_available&&!status.recovery_maintenance&&!status.recovery_core_only&&!status.recovery_offline){
@@ -851,7 +851,7 @@ async function renderJobs(){
   if(!jobs.length){parent.textContent="No installation activity yet.";return changed;}
   for(const job of jobs.slice(0,8)){
     const row=document.createElement("article");
-    const title=document.createElement("strong");title.textContent=job.module+" � "+job.action+" � "+job.state;row.append(title);
+    const title=document.createElement("strong");title.textContent=job.module+" · "+job.action+" · "+job.state;row.append(title);
     const stage=document.createElement("p");stage.textContent=job.stage;row.append(stage);
     if(job.action==="install"&&["failed","interrupted"].includes(job.state)&&!pending.has(job.module)&&jobs.find(j=>j.module===job.module)?.id===job.id&&!status.recovery_core_only&&!status.recovery_offline&&!status.recovery_maintenance){
       const retry=document.createElement("button");retry.type="button";retry.textContent="Retry this application";
@@ -919,7 +919,7 @@ function renderDirectory(){
     title.textContent=h.name;
     const owned=directory.locations.filter(l=>l.owner_id===h.id).length;
     const stored=directory.locations.filter(l=>l.storage_id===h.id).length;
-    summary.textContent=owned+" owned location references � "+stored+" storage location references (not item counts)";
+    summary.textContent=owned+" owned location references · "+stored+" storage location references (not item counts)";
     card.append(title,summary);
     if(admin){
       directoryButton(card,"Edit",()=>{const form=$("household-form");form.elements.id.value=h.id;form.elements.name.value=h.name;form.scrollIntoView();});
@@ -932,14 +932,14 @@ function renderDirectory(){
   for(const l of directory.locations){
     if(filter&&String(l.owner_id)!==filter&&String(l.storage_id)!==filter)continue;
     const card=document.createElement("article"),title=document.createElement("strong"),detail=document.createElement("p"),ref=document.createElement("small");
-    title.textContent=l.label+" � "+l.module;
-    detail.textContent="Ownership: "+(l.owner_name||"Shared / unassigned")+" � Stored at: "+(l.storage_name||"Shared / unassigned");
+    title.textContent=l.label+" · "+l.module;
+    detail.textContent="Ownership: "+(l.owner_name||"Shared / unassigned")+" · Stored at: "+(l.storage_name||"Shared / unassigned");
     ref.textContent="Native location ID: "+l.native_id;card.append(title,detail,ref);
     if(admin){
       directoryButton(card,"Edit reference",()=>{const form=$("location-form");for(const key of ["id","module","native_id","label","owner_id","storage_id"])form.elements[key].value=l[key]??"";form.scrollIntoView();});
       const report=document.createElement("div");
       directoryButton(card,"Live inventory",async()=>{
-        report.textContent="Reading native inventory.";
+        report.textContent="Reading native inventory…";
         try{
           const r=await api("/api/admin/inventory/report/"+l.id);
           report.replaceChildren();
@@ -986,7 +986,7 @@ async function loadOverview(offset){
   const household=$("inventory-overview-household").value;
   const q=new URLSearchParams({basis:$("inventory-overview-basis").value,offset:String(offset)});
   if(household!=="")q.set("household",household);
-  root.textContent="Reading native inventory.";
+  root.textContent="Reading native inventory…";
   form.querySelector("button").disabled=true;
   $("inventory-overview-prev").disabled=true;$("inventory-overview-next").disabled=true;
   try{
@@ -996,13 +996,13 @@ async function loadOverview(offset){
     root.replaceChildren();
     const summary=document.createElement("p");
     summary.textContent=result.locations.length?
-      "Locations "+(result.offset+1)+"-"+(result.offset+result.locations.length)+" of "+result.total_locations+" � "+result.available_locations+" available � "+result.unavailable_locations+" unavailable. Homebox item records on this page: "+(result.homebox_item_records??"not available")+". Not unit quantities.":
+      "Locations "+(result.offset+1)+"–"+(result.offset+result.locations.length)+" of "+result.total_locations+" · "+result.available_locations+" available · "+result.unavailable_locations+" unavailable. Homebox item records on this page: "+(result.homebox_item_records??"not available")+". Not unit quantities.":
       "No mapped locations match this filter.";
     root.append(summary);
     for(const item of result.locations){
       const card=document.createElement("article"),title=document.createElement("strong"),detail=document.createElement("p");
-      title.textContent=item.label+" � "+item.module;
-      detail.textContent="Owner: "+(item.owner_name||"Shared / unassigned")+" � Storage: "+(item.storage_name||"Shared / unassigned");
+      title.textContent=item.label+" · "+item.module;
+      detail.textContent="Owner: "+(item.owner_name||"Shared / unassigned")+" · Storage: "+(item.storage_name||"Shared / unassigned");
       card.append(title,detail);
       const line=document.createElement("p");
       if(item.state!=="available"){line.textContent="Unavailable: "+item.error;card.append(line);}
@@ -1048,7 +1048,7 @@ async function refreshInventoryConnections(){
   const root=$("inventory-connections");root.replaceChildren();
   for(const [module,connected] of Object.entries(result)){
     const row=document.createElement("article"),p=document.createElement("p");
-    p.textContent=module+" - "+(connected?"Key saved":"Not connected");row.append(p);
+    p.textContent=module+" — "+(connected?"Key saved":"Not connected");row.append(p);
     if(connected){
       directoryButton(row,"Discover locations",async()=>showNativeLocations(module,(await api("/api/admin/inventory/locations/"+module)).locations));
       directoryButton(row,"Disconnect",async()=>{
@@ -1086,10 +1086,10 @@ async function refreshMaps(){
   const result=await api("/api/admin/maps");
   if(!status?.admin)return;
   const root=$("map-status");root.replaceChildren();
-  const state=document.createElement("p");state.textContent="Map operation: "+result.state+" - "+(result.detail||"");root.append(state);
+  const state=document.createElement("p");state.textContent="Map operation: "+result.state+" — "+(result.detail||"");root.append(state);
   if(result.estimate_bytes!==undefined){const p=document.createElement("p");p.textContent="Estimated archive: "+bytes(result.estimate_bytes)+" (approximate; extra space required)";root.append(p);}
   const free=document.createElement("p");free.textContent="Available storage: "+bytes(result.free_bytes);root.append(free);
-  for(const file of result.files){const p=document.createElement("p");p.textContent=file.name+" - "+bytes(file.size_bytes);root.append(p);}
+  for(const file of result.files){const p=document.createElement("p");p.textContent=file.name+" — "+bytes(file.size_bytes);root.append(p);}
   if(result.output){const pre=document.createElement("pre");pre.textContent=result.output;root.append(pre);}
   $("map-download").hidden=result.state!=="estimated";
 }
@@ -1109,13 +1109,13 @@ async function refreshRoutingData(){
   if(!select.options.length)for(const item of r.regions)option(select,item.id,item.name);
   const root=$("routing-status");root.replaceChildren();
   function line(value){const p=document.createElement("p");p.textContent=value;root.append(p);}
-  line("Routing data: "+r.state+" - "+(r.detail||""));
+  line("Routing data: "+r.state+" — "+(r.detail||""));
   line("Available storage: "+bytes(r.free_bytes));
   if(r.size_bytes!==undefined)line("PBF size: "+bytes(r.size_bytes)+" (graph requires additional space)");
-  for(const file of r.files)line(file.name+" - "+bytes(file.size_bytes));
+  for(const file of r.files)line(file.name+" — "+bytes(file.size_bytes));
   if(r.state==="downloading"&&r.size_bytes){const p=document.createElement("progress");p.max=r.size_bytes;p.value=r.bytes||0;root.append(p);line(bytes(r.bytes||0)+" downloaded");}
-  line("Selected on disk: "+r.selected_slot+" � "+(r.graph_ready?"prepared":"not prepared")+" (see application status for actual availability)");
-  line("Slot A: "+(r.original_ready?"ready":"not prepared")+" � Slot B: "+(r.candidate_ready?"ready":"not prepared"));
+  line("Selected on disk: "+r.selected_slot+" · "+(r.graph_ready?"prepared":"not prepared")+" (see application status for actual availability)");
+  line("Slot A: "+(r.original_ready?"ready":"not prepared")+" · Slot B: "+(r.candidate_ready?"ready":"not prepared"));
   for(const archived of r.archives||[])line("Retained archive: "+archived.name+(archived.complete?"":" (incomplete; inspect storage)"));
   const controls=$("routing-graph-controls");controls.replaceChildren();
   const busy=pending.has("routing")||["estimating","downloading","verifying"].includes(r.state);
@@ -1144,4 +1144,3 @@ $("routing-download").addEventListener("click",async()=>{
   try{await api("/api/admin/routing-data/download",{});await refreshRoutingData();}catch(e){error(e.message);}
 });
 refresh().catch(e=>error(e.message));
-

@@ -99,7 +99,7 @@ def upstream(monkeypatch):
 
 def payload(module="homebox", mode="create"):
     value = {"mode": mode, "username": "operator@example.test" if module == "homebox" else "admin",
-             "password": "long <native> password �", "confirmed": True}
+             "password": "long <native> password ü", "confirmed": True}
     if module == "homebox" and mode == "create":
         value["name"] = "Operator"
     return value
