@@ -55,9 +55,14 @@ resume_resources(){
     [[ $project == aftergrid-core && $folder == "$root" && $config == "$root/compose.yaml" && ( $service == core || $service == worker ) ]] || die "Unexpected AfterGrid container; inspect manually."
     if [[ $service == core ]]; then core_found=true; fi
   done <<<"$rows"
-  local ports
-  ports=$(docker ps --filter 'label!=com.docker.compose.project=aftergrid-core' --format '{{.Ports}}') || die "Cannot inspect Docker ports."
-  if grep -Eq ":$port->" <<<"$ports"; then die "Another Docker workload publishes portal port $port."; fi
+  local ports publications
+  # docker ps does not support a negative label filter. Read each running
+  # container's project and ports, then exclude only the validated core project.
+  ports=$(docker ps --format '{{.Label "com.docker.compose.project"}}|{{.Ports}}') || die "Cannot inspect Docker ports."
+  while IFS='|' read -r project publications; do
+    [[ $project == aftergrid-core ]] && continue
+    if grep -Eq ":$port->" <<<"$publications"; then die "Another Docker workload publishes portal port $port."; fi
+  done <<<"$ports"
   # Existing core may already own the listener; Compose remains the final
   # binding authority. Never stop a conflicting unrelated process.
   if ! $core_found; then check_port "$port"; fi

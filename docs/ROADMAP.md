@@ -237,7 +237,7 @@ Baseline: **8 of 13 implementation items complete**. A complete row preserves th
 | 1 | Installer audit | Complete | Fresh Ubuntu 24.04 guest install passed through healthy core/worker and LAN setup page |
 | 2 | Read-only installation preflight | Complete | Passed on fresh Ubuntu 24.04 unprivileged Proxmox guest |
 | 3 | Existing Docker workload protection | Complete | Worker and four app IDs/start times unchanged during scoped test core rebuild; deliberate conflicting fixture preserved; existing shared-host coverage remains partial |
-| 4 | Interrupted installation recovery | Complete | Real failed-start/resume acceptance pending |
+| 4 | Interrupted installation recovery | Complete | CT116: real failed startup, interrupted resume and successful resume passed after Docker inspection fix; fresh browser setup still pending |
 | 5 | First-run setup improvements | Complete | Administrator setup, logout/login, guest controls and portal restart/session persistence passed |
 | 6 | Application selection validation | Complete | Four-app wizard batch passed; independent Kiwix retry completed as job #12 after resolved port conflict |
 | 7 | Installation progress reporting | Complete | Real per-app Compose activity and completed-stage summaries observed; failed summary persisted after refresh |
@@ -489,3 +489,20 @@ port-8080 listener only after the installer publishes its pending installation,
 observe real Compose startup failure, remove only that fixture and resume.
 Compare preserved configuration and setup-token hashes without recording token
 values. Genuine failed-start/resume and clean-host recovery remain pending.
+
+
+### Failed fresh install and interrupted resume — 2026-11-25
+
+On the explicitly authorized disposable CT116 (Ubuntu 24.04, 2 cores, 1 GiB RAM), the pinned cfb0f3e installer passed read-only preflight before Docker or /opt/aftergrid existed. A temporary host listener admitted only after pending installation publication forced a real Compose portal-port binding failure. The installer returned 1 and retained the pending marker, configuration and original setup token. The fixture was removed without modifying unrelated workloads.
+
+The first resume exposed a real defect: Docker 29.10.1 rejects the installer's negative label filter with invalid filter 'label!'. The correction reads supported project/port fields and excludes only the already validated core project. Regression coverage checks own-core exclusion, labeled and unlabeled foreign conflicts, native listeners, unexpected project/root/service/configuration labels and inspection failure. The regression fails against the original script; bash syntax validation and all 8 installer tests pass on native Linux. Windows Bash was unavailable and is not passing test evidence.
+
+With the patched installer from caa13a1b209944e3018df85a374007f4dfb5100c:
+
+- A disposable foreign Docker fixture publishing 8080 was refused with the expected conflict message and exit 1. The installer did not stop it. After checking its acceptance label, only that fixture was removed. Configuration/token hashes stayed unchanged.
+- A real resume interrupted by SIGINT timeout returned 124 after entering the Docker build/start phase. The pending marker and all three original hashes remained intact.
+- Normal --resume returned 0, cleared the pending marker, and left only core and worker containers, both healthy. The original .env, compose.yaml and one-time setup-token hashes all passed. Native LAN health returned {"status":"ok"}.
+
+This closes the failed-start/interrupted-resume runtime gate for the corrected installer on this guest. Source core/worker remain the pinned cfb0f3e release with the focused installer correction applied; this is not a production updater activation or full clean-host recovery. Native logs and exit receipts remain under /root/aftergrid-* in CT116; token values are not recorded here.
+
+The browser client blocked navigation to http://192.168.4.73:8080/ with ERR_BLOCKED_BY_CLIENT, so fresh administrator setup, browser wizard and guest reboot persistence are still pending. Server health alone does not close these browser journeys. CT115 and unrelated workloads were not modified by this slice. Phase 3 implementation baseline remains 8/13; production core activation stays gated. Existing deferred UI observations, including replacing browser-native confirmations with accessible in-page modals, remain on the later overhaul list.
