@@ -552,7 +552,7 @@ Credentials are excluded from job history and retained only in private temporary
 Automated evidence and limits:
 
 - Linux unit/API tests, syntax checks, Compose configuration/build and disposable recovered-core startup passed at aef384d before the final native transport fix. These are not live-appliance acceptance.
-- Review reproduced Python CookieJar withholding Homebox's native cookie for its single-label Docker hostname. The helper now uses the bearer token returned by the supported native login API, without relaxing cookie policy. All 24 focused helper tests passed locally, including actual urllib transport and malformed token rejection. Linux queue/API checks for the final revision and full real-app Compose acceptance still need completion.
+- Review reproduced Python CookieJar withholding Homebox's native cookie for its single-label Docker hostname. The helper now uses the bearer token returned by the supported native login API, without relaxing cookie policy. All 24 focused helper tests passed locally, including actual urllib transport and malformed token rejection. Linux unit/queue/API checks, Python/JavaScript/shell syntax checks and Compose configuration also passed for code revision 50c870e. Full real-app Compose acceptance remains pending.
 - The disposable Compose acceptance now submits real portal setup jobs to Homebox and Grocy, retries them, verifies native sign-in/closed registration/old-password refusal, and rechecks credentials after LAN configuration and restart. Its result is pending; no native integration pass is claimed yet.
 - Computer use could not connect to its native pipe. No live guest or account was changed by this branch, and it has not been deployed or merged.
 
