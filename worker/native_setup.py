@@ -86,7 +86,7 @@ class NativeClient:
             raise RuntimeError("Native Grocy sign-in unavailable")
         target = urllib.parse.urlsplit(urllib.parse.urljoin(self.base, location))
         base = urllib.parse.urlsplit(self.base)
-        if (target.scheme, target.hostname, target.port) != (base.scheme, base.hostname, base.port):
+        if (target.scheme, target.hostname, target.port or 80) != (base.scheme, base.hostname, base.port or 80):
             raise RuntimeError("Native Grocy sign-in returned an unexpected destination")
         if target.path == "/login":
             return False
