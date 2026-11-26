@@ -126,14 +126,23 @@ def live_core(root,override=None):
 
 
 def build_candidate(source, commit, suffix):
+    if not COMMIT.fullmatch(commit) or not re.fullmatch(r"[a-f0-9]{12}",suffix):
+        raise ValueError("Exact commit and private candidate suffix required")
     result={}
     env={"PATH":os.environ["PATH"],"HOME":"/root","DOCKER_HOST":"unix:///var/run/docker.sock"}
     for name in ("core","worker"):
         tag="aftergrid-candidate/"+name+":"+commit+"-"+suffix
-        subprocess.run(["docker","build","--tag",tag,str(source/name)],
+        labels={"org.opencontainers.image.revision":commit,
+                "org.opencontainers.image.source":"https://github.com/ramseys1990/AfterGrid",
+                "org.aftergrid.component":name}
+        label_args=[arg for key,value in labels.items() for arg in ("--label",key+"="+value)]
+        subprocess.run(["docker","build",*label_args,"--tag",tag,str(source/name)],
                        env=env,check=True,timeout=1800)
         image=assets.docker("image","inspect","--format","{{.Id}}",tag)
         if not IMAGE.fullmatch(image):raise ValueError("Candidate image identity unavailable")
+        actual=json.loads(assets.docker("image","inspect","--format","{{json .Config.Labels}}",image))
+        if not isinstance(actual,dict) or any(actual.get(key)!=value for key,value in labels.items()):
+            raise ValueError("Built candidate source metadata mismatch")
         result[name]={"tag":tag,"image":image}
     return result
 

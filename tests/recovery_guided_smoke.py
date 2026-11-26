@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -135,34 +136,34 @@ def main(fixture,exported=None):
             assert applications=={ident:app_identity(ident) for ident in applications}
             assert reader_fixture()
             print("Core-only outage checkpoint: Kiwix and Kopia containers unchanged, reader accessible, both databases validated.",flush=True)
-            # Native replacement with distinct image IDs and actual probe failure.
-            # Create a stopped disposable container from each local prior image,
-            # then commit a harmless fixture label. No registry/build dependency.
-            commit="a"*40
+            # Exercise actual archive extraction and Docker builds before the
+            # native promotion/rollback paths, including build-context modes.
+            # Only reviewed source trees enter the archive, never live data.
+            commit=os.environ.get("AFTERGRID_ACCEPTANCE_COMMIT","a"*40)
+            if not core_update.COMMIT.fullmatch(commit):raise ValueError("Invalid acceptance source commit")
             prior=core_update.live_core(original)
-            candidate_images={}
+            archive=tmp/"candidate-source.tar.gz"
+            with tarfile.open(archive,"w:gz") as tar:
+                for name in ("compose.yaml","core","worker","modules"):
+                    tar.add(original/name,arcname="AfterGrid-"+commit+"/"+name)
+            built_source=tmp/"source-built-candidate"
+            core_update.extract_candidate(archive,built_source,commit,assets.sha256_file(archive))
+            candidate_images=core_update.build_candidate(built_source,commit,"123456789abc")
             for name in ("core","worker"):
-                tag="aftergrid-candidate/"+name+":"+commit+"-123456789abc"
-                cid=assets.docker("create","--network","none",prior[name]["image"])
-                try:
-                    assets.docker("commit","--change","LABEL org.aftergrid.update-fixture=true",cid,tag,timeout=120)
-                finally:
-                    assets.docker("rm","-v",cid)
-                image=assets.docker("image","inspect","--format","{{.Id}}",tag)
+                image=candidate_images[name]["image"]
                 assert image!=prior[name]["image"]
-                # Docker commit must preserve the runtime configuration.
+                # The separately built source retains runtime configuration.
                 for field in ("Entrypoint","Cmd","User","WorkingDir"):
                     fmt="{{json .Config."+field+"}}"
                     assert assets.docker("image","inspect","--format",fmt,image)==assets.docker("image","inspect","--format",fmt,prior[name]["image"]),field
-                candidate_images[name]={"tag":tag,"image":image}
             def run_trial(fail=False,interrupt=False,promote=False,promotion_failure=False):
                 prior=core_update.live_core(original)
                 candidate=tmp/("candidate-promotion-failure" if promotion_failure else "candidate-promotion" if promote else "candidate-interruption" if interrupt else "candidate-failure" if fail else "candidate-success")
                 candidate.mkdir(mode=0o700)
                 source=candidate/"source"
                 source.mkdir()
-                shutil.copy2(original/"compose.yaml",source/"compose.yaml")
-                for name in ("core","worker","modules"):shutil.copytree(original/name,source/name)
+                shutil.copy2(built_source/"compose.yaml",source/"compose.yaml")
+                for name in ("core","worker","modules"):shutil.copytree(built_source/name,source/name)
                 if promote or promotion_failure:(source/"core/update-fixture.txt").write_text("Disposable promoted source marker\n")
                 plan={"format":1,"root":str(original),"platform":assets.local_docker(),"commit":commit,
                       "previous":prior,"candidate":candidate_images,"configuration":core_update.check_scope(original,source),
@@ -273,7 +274,7 @@ def main(fixture,exported=None):
             run_trial(interrupt=True)
             run_trial(promotion_failure=True)
             run_trial(promote=True)
-            print("Distinct candidate images, forced probe failure, interrupted trial reconciliation, resumed worker restore and canonical promotion passed; Kiwix and Kopia stayed online.",flush=True)
+            print("Source-built candidate images, forced probe failure, interrupted trial reconciliation, resumed worker restore and canonical promotion passed; Kiwix and Kopia stayed online.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")
             assert "core" in keys and "content/kiwix" in keys and "application/tak" not in keys
             for key in ("global","content/kiwix"):
@@ -593,3 +594,5 @@ print(j)
 if __name__=="__main__":
     if len(sys.argv) not in (2,3):raise SystemExit("Pinned ZIM fixture and optional private CI export path required")
     main(sys.argv[1],sys.argv[2] if len(sys.argv)==3 else None)
+
+

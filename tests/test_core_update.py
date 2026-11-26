@@ -7,6 +7,45 @@ import core_update as update
 
 COMMIT="a"*40
 
+def test_build_candidate_records_and_checks_source_metadata(tmp_path,monkeypatch):
+    import json
+    commands=[]
+    monkeypatch.setattr(update.subprocess,"run",lambda command,**kw:commands.append(command))
+    def docker(*args):
+        name=Path(commands[-1][-1]).name
+        if args[3]=="{{.Id}}":return "sha256:"+("1" if name=="core" else "2")*64
+        return json.dumps({"org.opencontainers.image.revision":COMMIT,
+                           "org.opencontainers.image.source":"https://github.com/ramseys1990/AfterGrid",
+                           "org.aftergrid.component":name})
+    monkeypatch.setattr(update.assets,"docker",docker)
+    rows=update.build_candidate(tmp_path,COMMIT,"123456789abc")
+    assert set(rows)=={"core","worker"}
+    assert rows["core"]["image"]=="sha256:"+"1"*64
+    assert rows["worker"]["image"]=="sha256:"+"2"*64
+    for name,command in zip(("core","worker"),commands):
+        assert "org.opencontainers.image.revision="+COMMIT in command
+        assert "org.aftergrid.component="+name in command
+        assert command[-1]==str(tmp_path/name)
+
+@pytest.mark.parametrize("change", [None, {"org.opencontainers.image.revision":"b"*40},
+    {"org.opencontainers.image.source":"https://example.test/other"}, {"org.aftergrid.component":"other"}])
+def test_build_candidate_rejects_missing_or_mismatched_metadata(tmp_path,monkeypatch,change):
+    import json
+    expected={"org.opencontainers.image.revision":COMMIT,
+              "org.opencontainers.image.source":"https://github.com/ramseys1990/AfterGrid",
+              "org.aftergrid.component":"core"}
+    labels=None if change is None else {**expected,**change}
+    monkeypatch.setattr(update.subprocess,"run",lambda *a,**kw:None)
+    monkeypatch.setattr(update.assets,"docker",lambda *a:"sha256:"+"1"*64 if a[3]=="{{.Id}}" else json.dumps(labels))
+    with pytest.raises(ValueError,match="metadata mismatch"):
+        update.build_candidate(tmp_path,COMMIT,"123456789abc")
+
+@pytest.mark.parametrize("commit,suffix", [("main","123456789abc"),(COMMIT,"invalid")])
+def test_build_candidate_refuses_unbound_identity_before_build(tmp_path,monkeypatch,commit,suffix):
+    monkeypatch.setattr(update.subprocess,"run",lambda *a,**kw:pytest.fail("Must not build"))
+    with pytest.raises(ValueError,match="Exact commit"):
+        update.build_candidate(tmp_path,commit,suffix)
+
 @pytest.mark.skipif(__import__("os").name=="nt", reason="Linux build-context permissions")
 def test_candidate_modes_support_unprivileged_image_under_private_umask(tmp_path):
     import os
