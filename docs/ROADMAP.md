@@ -554,3 +554,10 @@ Continued against the recovered restricted-offline CT116 portal at its existing 
 - Core update status still explicitly states activation is not released. No updater was activated. No unrelated guest or workload was modified.
 
 Phase 3 remains **8/13 implemented**; this checkpoint adds recovered-worker runtime evidence without closing items 9–13. Next functional work is supported secure Homebox/Grocy onboarding through the browser, followed by representative inventory/recipe/QR journeys and backup verification of that populated state. The restricted recovered installation must not be mistaken for a normal-mode onboarding environment.
+
+
+### Browser onboarding development handoff — 2026-11-26
+
+Draft [PR #3](https://github.com/ramseys1990/AfterGrid/pull/3) implements private Homebox/Grocy browser account setup through fixed native APIs while keeping their ports local-only. The candidate is installed only as a scoped development portal overlay on CT115; runtime source is `0d0c4e7a9c218cfe80b65fd3d877352c7fd4e185`. All 51 native-setup/core tests passed in isolated Linux testing, and a real native Grocy administrator login probe passed without changing its password. Core-only Compose recreation returned healthy; the worker and all four optional applications retained exact container IDs and start times. Edge preserved the portal administrator session and rendered both setup forms.
+
+The operator must now enter/save native passwords and submit the Homebox creation and Grocy default-password replacement forms. No native account-change success is claimed yet. Then verify account results before explicit LAN sharing, populated inventory/recipe/QR journeys and fresh backup/restore checks. Keep the draft open pending those results. CT116 and production updater activation remain unchanged; Phase 3 is still **8/13 implemented**. Detailed candidate evidence and preserved development baseline/override locations are recorded in the PR's roadmap changes.
