@@ -208,6 +208,38 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
             assert published and all(entry["HostIp"]==host for entry in published)
         check_bind("127.0.0.1")
         assert module(ident)["share_available"]
+        if ident in ("homebox", "grocy"):
+            # Disposable native accounts only: exercise the actual portal queue,
+            # worker HTTP adapter, registration closure and idempotent retry.
+            account = {
+                "username": "ci@example.invalid" if ident == "homebox" else "admin",
+                "password": "disposable-native-account-password",
+                "current_password": "" if ident == "homebox" else "admin",
+                "confirmed": True,
+            }
+            for attempt in range(2):
+                setup_job = api("/api/admin/native-setup/" + ident, account)["id"]
+                wait_job(setup_job, ident + " native browser setup")
+                record = next(j for j in api("/api/admin/jobs") if j["id"] == setup_job)
+                assert account["password"] not in json.dumps(record)
+                assert not module(ident)["shared"]
+                check_bind("127.0.0.1")
+            native_check = """import json,sys
+from native_setup import NativeClient,verify_closed_homebox
+ident,account=json.load(sys.stdin)
+assert NativeClient(ident).login(account["username"],account["password"])
+if ident=="homebox":
+    verify_closed_homebox(account)
+else:
+    assert not NativeClient(ident).login("admin","admin")
+"""
+            def check_native_account():
+                check = subprocess.run(
+                    ["docker", "compose", "exec", "-T", "worker", "python3", "-c", native_check],
+                    input=json.dumps([ident, account]), text=True, capture_output=True)
+                assert check.returncode == 0, "Native account authentication verification failed"
+            check_native_account()
+            print(ident + " native setup, private queue, retry and authentication passed.", flush=True)
         action("share",ident)
         assert module(ident)["shared"]
         assert module(ident)["lan_url"]=="http://"+ident+".aftergrid.home.arpa:"+str(port)
@@ -226,6 +258,9 @@ for ident, port in [("homebox",8082),("grocy",8083),("kopia",51515)]:
     assert module(ident)["status"]=="stopped"
     action("start",ident)
     assert module(ident)["status"]=="running"
+    if ident in ("homebox", "grocy"):
+        check_native_account()
+        print(ident + " native account survived LAN configuration and restart.", flush=True)
     # Keep the already-pulled native repository online for the rest of the smoke test.
     # Its uninstall/persistence acceptance is exercised at the end.
     if ident!="kopia":
