@@ -230,7 +230,7 @@ The next deliverable is a manually approved, single-action core update for a rev
 
 ## Phase 3 master checklist — installation and deployment
 
-Baseline: **8 of 13 implementation items complete**. A complete row preserves the existing development checklist; it does not imply clean-host or browser acceptance. Runtime evidence is recorded separately below. Production core activation remains gated.
+Current: **9 of 13 checklist items complete** (1–8 and 10). Runtime evidence and remaining limitations are recorded below. Bare-metal verification is explicitly deferred by the operator; production core activation remains gated.
 
 | # | Checklist item | Implementation status | Real-machine acceptance |
 |---|---|---|---|
@@ -246,7 +246,7 @@ Baseline: **8 of 13 implementation items complete**. A complete row preserves th
 | 10 | Safe uninstall and reinstall | Complete | Selected optional-app dashboard uninstall/reinstall and documented exact-image core/worker removal/reinstall passed; data and independent apps preserved. Exceptional recovery retains its own overrides |
 | 11 | LAN deployment validation | Open | Original and recovered portal/article passed desktop and user-observed physical phone; recovered guest WAN-loss and reboot passed. Homebox/Grocy browser setup, authenticated native LAN journeys and populated backups passed; user-observed physical-phone Homebox QR opening passed; stable label hostname remains pending |
 | 12 | Module authentication and simplified onboarding | Open | Homebox/Grocy setup, LAN journeys, phone QR and populated native restored startup passed; PR #3 merged. Other catalog apps still require private native onboarding; broader simplified onboarding remains open |
-| 13 | System requirements and clean-host acceptance | Open — bare-metal verification deferred by operator | CT116 empty-daemon offline package restore, six exact images, selected native state, new backup/restore, LAN and reboot passed on 2 cores/1 GiB; Populated native restored startup passed on CT115; bounded 60-request exercise passed across CT115/116. Sustained/peak load and bare-metal acceptance remain pending |
+| 13 | System requirements and clean-host acceptance | Open — bare-metal verification deferred by operator | CT116 empty-daemon offline package restore, six exact images, selected native state, new backup/restore, LAN and reboot passed on 2 cores/1 GiB; Populated native restored startup passed on CT115; 60-request and 45-second/1,030-request exercises passed across CT115/116. Larger datasets/peak sizing remain unverified; bare-metal verification is deferred |
 
 The test guest is disposable, but acceptance must preserve installed application data unless a distinct test explicitly calls for deletion. Keep all infrastructure changes confined to the designated guest. Retain native application permissions, use Compose and Kopia, and defer the major UI overhaul until the approach to 1.0.
 
@@ -651,3 +651,14 @@ The operator explicitly deferred bare-metal verification for now. Preserve that 
 
 
 Current Phase 3 checklist: **9/13 complete** (rows 1–8 and 10). Rows 9, 11, 12 and 13 remain open. Bare-metal verification is explicitly deferred by the operator; it is not claimed passed. The production updater remains gated. Retain /opt/aftergrid/.core-reinstall-images.json on CT115 and its installed source/settings for any future repeat of the tested startup command.
+
+
+### Published reinstall closeout and longer LAN exercise — 2026-11-26
+
+PR #4 merged as `9e129bc4438a8611b2b4dc8ad165e67857dfdd77`. Safe uninstall/reinstall row 10 is complete on the tested selected-module deployment: the exact published normal-mode command block and startup-only retry returned 0 on CT115, all four independent app identities/start times matched, and the portal session/history and native reader remained available. The same normal-mode block refused recovered CT116 before mutation. Preserve the image-identity receipt with its unchanged source and settings. This is host maintenance for an unavailable/removed portal; ordinary optional-app removal remains in the dashboard.
+
+A longer bounded read exercise used six concurrent workers for 45.19 seconds against source portal HTML, the native globalThis article, Homebox landing page and Grocy login, plus recovered portal HTML and the same recovered article. All **1,030/1,030** requests passed HTTP/body checks, totaling 12,523,103 bytes. P95 latency was 0.038 seconds; maximum was 0.060 seconds. Per-target request counts were 173, 177, 177, 154, 172 and 177. The request report completed at epoch 1795698442.
+
+CT116's independent 40-sample, one-second memory observation ran from epoch 1795698428.275 to 1795698468.402, overlapping approximately the last 14 seconds of that request exercise and then observing idle recovery. Minimum available memory across its full observation was 862,460 KiB on 1,048,576 KiB total; maximum allocated swap was 141,096 KiB. Ending memory-PSI averages were 0.00. All six services on each guest were running with no recorded OOM kill and restart count zero when inspected afterward. Both temporary measurement processes completed; no background service was installed. Private reports remain under /root/aftergrid-sustained-lan-20261126* on CT115 and /root/aftergrid-lan-memory-20261126* on CT116.
+
+This establishes a bounded small-dataset portal/reader read workload on the selected deployment, not authenticated concurrent writes, multi-minute endurance, download/backup contention, large libraries, map/routing builds or universal minimum hardware requirements. Resource/platform row 13 retains those limits, with bare-metal verification explicitly deferred at the operator's request. Phase 3 remains **9/13 complete**; core production updates, durable addressing, broader catalog onboarding and remaining resource acceptance are not silently waived.
