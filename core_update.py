@@ -65,7 +65,14 @@ def extract_candidate(archive, destination, commit, checksum):
                 target.parent.mkdir(parents=True,exist_ok=True)
                 with tar.extractfile(member) as src,target.open("xb") as dst:
                     shutil.copyfileobj(src,dst)
-                target.chmod(0o700 if member.mode&0o111 else 0o600)
+                # Docker COPY preserves source modes. These are reviewed build
+                # inputs, not runtime secrets; the unprivileged core must read
+                # them in the resulting image. Keep only the executable bit.
+                target.chmod(0o755 if member.mode&0o111 else 0o644)
+    # Include implicit parents and ignore the caller's restrictive umask.
+    # The enclosing source root stays private (0700) on the build host.
+    for directory in destination.rglob("*"):
+        if directory.is_dir():directory.chmod(0o755)
     for name in ("compose.yaml","core/Dockerfile","worker/Dockerfile"):
         if not (destination/name).is_file():raise ValueError("Incomplete core candidate")
 
@@ -1240,3 +1247,5 @@ def main():
 
 
 if __name__=="__main__":main()
+
+
