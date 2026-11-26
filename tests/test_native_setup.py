@@ -44,7 +44,7 @@ def upstream(monkeypatch):
                 state["media_username"], state["media_password"] = payload["Name"], payload["Password"]
                 return self.respond(204)
             if self.path == "/Users/AuthenticateByName":
-                if payload["Username"] != state["media_username"] or payload["Pw"] != state["media_password"]:
+                if payload["Username"] != state["media_username"] or payload["Pw"] != (state["media_password"] or ""):
                     return self.respond(401)
                 return self.respond(200, {"AccessToken": "disposable-native-media-token"})
             if self.path in {"/Users/Me", "/Startup/RemoteAccess", "/Startup/Complete", "/System/Configuration/network", "/Sessions/Logout"}:

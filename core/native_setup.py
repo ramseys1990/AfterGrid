@@ -53,6 +53,9 @@ class NativeClient:
             if self.module == "grocy" and path == "/login" and exc.code in (302, 303) and location == BASE[self.module] + "/login?invalid=true":
                 exc.close()
                 raise NativeAuthError("Native login refused. Check your account details.") from None
+            if self.module == "media" and path == "/Users/AuthenticateByName" and exc.code in (401, 403):
+                exc.close()
+                raise NativeAuthError("Native login refused. Check your account details.") from None
             if redirect and exc.code in (302, 303) and location == BASE[self.module] + "/":
                 exc.close()
                 return None
@@ -141,7 +144,11 @@ def grocy_login(client, password):
     return user
 
 
-def media_login(client, username, password):
+def media_login(client, username, password, require_password=True):
+    if client.media_authenticated:
+        client.request("/Sessions/Logout", {})
+        client.media_authenticated = False
+        client.authorization = MEDIA_AUTH
     result = client.request("/Users/AuthenticateByName", {"Username": username, "Pw": password})
     token = result.get("AccessToken") if isinstance(result, dict) else None
     if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,256}", token):
@@ -150,7 +157,7 @@ def media_login(client, username, password):
     client.media_authenticated = True
     user = client.request("/Users/Me")
     if (not isinstance(user, dict) or user.get("Name") != username
-        or user.get("HasPassword") is not True or not isinstance(user.get("Policy"), dict)
+        or (require_password and user.get("HasPassword") is not True) or not isinstance(user.get("Policy"), dict)
         or user["Policy"].get("IsAdministrator") is not True):
         raise SetupError("A password-protected Jellyfin administrator is required")
 
@@ -170,15 +177,19 @@ def media_setup(client, value):
             raise SetupError("Jellyfin is already configured; use Verify existing account")
         if mode == "create":
             initial = client.request("/Startup/User")
-            users = client.request("/Users/Public")
-            # Refuse an unknown or already password-protected first account.
-            # Never reset credentials after partial setup or on an existing server.
-            if (not isinstance(initial, dict) or not isinstance(initial.get("Name"), str)
-                or not initial["Name"] or not isinstance(users, list) or len(users) != 1
-                or not isinstance(users[0], dict) or users[0].get("Name") != initial.get("Name")
-                or users[0].get("HasPassword") is not False
-                or users[0].get("HasConfiguredPassword") is not False):
-                raise SetupError("Jellyfin already has an account or unknown setup state; use Finish interrupted setup with its existing credentials")
+            if not isinstance(initial, dict) or not isinstance(initial.get("Name"), str) or not initial["Name"]:
+                raise SetupError("Jellyfin initial account could not be identified")
+            # The initial administrator is hidden from /Users/Public. Verify its
+            # native empty first-run credential instead; never reset an unknown
+            # password after a partial setup attempt.
+            check = NativeClient("media")
+            try:
+                try:
+                    media_login(check, initial["Name"], "", require_password=False)
+                except NativeAuthError:
+                    raise SetupError("Jellyfin already has an account; use Finish interrupted setup with its existing credentials") from None
+            finally:
+                check.close()
             client.request("/Startup/User", {"Name": username, "Password": password})
         media_login(client, username, password)
         client.request("/Startup/RemoteAccess", {"EnableRemoteAccess": False})
@@ -189,9 +200,20 @@ def media_setup(client, value):
         public = client.request("/System/Info/Public")
         if not isinstance(public, dict) or public.get("StartupWizardCompleted") is not True:
             raise SetupError("Jellyfin startup completion could not be verified")
+        media_login(client, username, password)
     network = client.request("/System/Configuration/network")
     if not isinstance(network, dict) or network.get("EnableRemoteAccess") is not False:
         raise SetupError("Disable Jellyfin remote access in its native settings before sharing")
+    check = NativeClient("media")
+    try:
+        try:
+            media_login(check, username, "", require_password=False)
+        except NativeAuthError:
+            pass
+        else:
+            raise SetupError("Jellyfin still accepts an empty password; keep it local-only")
+    finally:
+        check.close()
     return {"ok": True, "message": "Jellyfin administrator login and completed setup verified; remote access is disabled. Save your native credentials, then use Share on LAN. In Jellyfin, add /media and disable internet providers for offline libraries. Native login remains required."}
 
 
