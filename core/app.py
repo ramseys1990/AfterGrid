@@ -1475,6 +1475,31 @@ def create_app(data_dir=None):
             raise HTTPException(code if code in (400,503) else 502,result.get("detail","Registry check unavailable"))
         return result
 
+    class NativeAccountSetup(BaseModel):
+        model_config={"extra":"forbid"}
+        username: str = Field(min_length=1,max_length=254)
+        password: str = Field(min_length=12,max_length=128)
+        current_password: str = Field(default="",max_length=128)
+        confirmed: bool = Field(default=False,strict=True)
+
+    @api.post("/api/admin/native-setup/{ident}",status_code=202)
+    def native_account_setup(ident: str,payload: NativeAccountSetup,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if ident not in {"homebox","grocy"}:
+            raise HTTPException(400,"Unsupported native account setup")
+        if not local_credential_origin():
+            raise HTTPException(403,"Use the configured private LAN or trusted HTTPS portal for native account setup")
+        if not payload.confirmed:
+            raise HTTPException(409,"Confirm native account setup on your trusted network")
+        try:
+            code,result=call("/native-setup",{"module":ident,"account":payload.model_dump(exclude={"confirmed"})})
+        except WorkerUnavailable:
+            raise HTTPException(503,"Module manager unavailable; inspect existing activity before retrying")
+        if code!=202:
+            raise HTTPException(code if code in {400,409} else 502,result.get("detail","Native account setup unavailable"))
+        return result
+
     class ModuleActionOptions(BaseModel):
         backup_confirmed: bool = Field(default=False,strict=True)
 
