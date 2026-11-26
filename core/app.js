@@ -27,6 +27,40 @@ async function refresh(){
     await refreshHouseholds();
   }
 }
+
+let nativeSetupModule=null,nativeSetupReturnFocus=null;
+function openNativeSetup(ident){
+  if(!["homebox","grocy"].includes(ident))return;
+  nativeSetupModule=ident;nativeSetupReturnFocus=document.activeElement;
+  $("native-setup-form").reset();$("native-setup-message").textContent="";
+  $("native-setup-title").textContent=ident==="homebox"?"Set up Homebox account":"Secure Grocy administrator";
+  $("native-setup-description").textContent=ident==="homebox"?"Create a local Homebox account and close public registration. If this account already exists, enter its existing password to verify it.":"Change the native admin password using its current password. A fresh Grocy installation uses admin/admin. Existing native accounts are not reset.";
+  $("native-setup-username").type=ident==="homebox"?"email":"text";
+  $("native-setup-username").value=ident==="homebox"?"admin@aftergrid.home.arpa":"admin";
+  $("native-setup-username").readOnly=ident==="grocy";
+  $("native-setup-current-label").hidden=ident!=="grocy";
+  $("native-setup-current").required=ident==="grocy";
+  $("native-setup-submit").textContent=ident==="homebox"?"Create or verify Homebox account":"Change Grocy administrator password";
+  $("native-setup-dialog").showModal();
+  (ident==="homebox"?$("native-setup-username"):$("native-setup-current")).focus();
+}
+$("native-setup-cancel").addEventListener("click",()=>$("native-setup-dialog").close());
+$("native-setup-dialog").addEventListener("close",()=>{
+  $("native-setup-form").reset();nativeSetupModule=null;$("native-setup-message").textContent="";
+  if(nativeSetupReturnFocus?.isConnected)nativeSetupReturnFocus.focus();
+  else{$("catalog").tabIndex=-1;$("catalog").focus();}
+});
+$("native-setup-form").addEventListener("submit",async event=>{
+  event.preventDefault();const ident=nativeSetupModule;if(!ident)return;
+  const fields=new FormData(event.currentTarget),button=$("native-setup-submit");button.disabled=true;
+  $("native-setup-message").textContent="Submitting native setup. Check Recent activity before retrying an uncertain response.";
+  try{
+    await api("/api/admin/native-setup/"+ident,{username:fields.get("username"),password:fields.get("password"),current_password:ident==="grocy"?fields.get("current_password"):"",confirmed:true});
+    $("native-setup-dialog").close();await renderJobs();
+  }catch(error){$("native-setup-message").textContent=error.message+" Inspect Recent activity before retrying.";}
+  finally{button.disabled=false;}
+});
+
 async function renderModules(){
     const modules=await api("/api/modules");
     if(status.admin && status.selection_pending)renderWizard(modules);
@@ -50,7 +84,12 @@ async function renderModules(){
       }
       if(status.admin && mod.installable){
         if(mod.setup_note){const note=document.createElement("p");note.textContent=mod.setup_note;card.append(note);}
-        if(mod.loopback_only && !mod.shared && !["127.0.0.1","localhost"].includes(location.hostname)){
+        if(["homebox","grocy"].includes(mod.id)&&mod.status==="running"&&!mod.shared&&!status.recovery_core_only&&!status.recovery_offline){
+          const setup=document.createElement("button");setup.type="button";
+          setup.textContent=mod.id==="homebox"?"Set up Homebox account":"Secure Grocy administrator";
+          setup.addEventListener("click",()=>openNativeSetup(mod.id));card.append(setup);
+        }
+        if(mod.loopback_only && !mod.shared && !["homebox","grocy"].includes(mod.id) && !["127.0.0.1","localhost"].includes(location.hostname)){
           const note=document.createElement("small");note.textContent=mod.id==="tak"?"Local setup only. Use the native admin CLI over SSH forwards for 8446 and 8443, with the trusted CA.":mod.id==="kolibri"?"Local setup only. Forward both 8086 and 8087 over SSH; open http://127.0.0.1:8086.":"Local setup only. SSH forward port "+mod.port+" and open http://127.0.0.1:"+mod.port;card.append(note);
         }
         if(mod.id==="meshmonitor" && mod.status==="running"){
