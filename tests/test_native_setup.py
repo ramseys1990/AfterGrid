@@ -153,10 +153,13 @@ def test_portal_setup_auth_origin_admission_and_no_secret_echo(tmp_path, monkeyp
 @pytest.mark.parametrize("mode", ["AFTERGRID_RECOVERY_CORE_ONLY", "AFTERGRID_RECOVERY_OFFLINE"])
 def test_recovery_refuses_native_setup(tmp_path, monkeypatch, mode):
     from core import app as portal
+    with TestClient(portal.create_app(tmp_path)) as client:
+        login(client, tmp_path)
     monkeypatch.setenv(mode, "1")
     monkeypatch.setattr(portal, "prepare_native", lambda *args: pytest.fail("Must not contact native service"))
     with TestClient(portal.create_app(tmp_path)) as client:
-        login(client, tmp_path)
+        assert client.post("/api/login", json={"username": "admin", "password": "long portal password"},
+                           headers={"Origin": "http://testserver"}).status_code == 200
         assert client.get("/native-setup/grocy").status_code == 409
         assert client.post("/api/admin/modules/grocy/native-setup", json=payload("grocy", "verify"),
                            headers={"Origin": "http://testserver"}).status_code == 409
