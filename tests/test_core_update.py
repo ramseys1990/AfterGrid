@@ -7,6 +7,31 @@ import core_update as update
 
 COMMIT="a"*40
 
+@pytest.mark.skipif(__import__("os").name=="nt", reason="Linux build-context permissions")
+def test_candidate_modes_support_unprivileged_image_under_private_umask(tmp_path):
+    import os
+    import stat
+    path=tmp_path/"private-source.tar.gz"
+    entries={"compose.yaml":(b"compose",0o600), "core/Dockerfile":(b"core",0o600),
+             "worker/Dockerfile":(b"worker",0o600), "core/app.py":(b"print('readable')",0o600),
+             "core/nested/start.sh":(b"#!/bin/sh\n",0o4777)}
+    with tarfile.open(path,"w:gz") as tar:
+        for name,(value,mode) in entries.items():
+            info=tarfile.TarInfo("AfterGrid-"+COMMIT+"/"+name)
+            info.size=len(value)
+            info.mode=mode
+            tar.addfile(info,io.BytesIO(value))
+    digest=hashlib.sha256(path.read_bytes()).hexdigest()
+    source=tmp_path/"source"
+    previous=os.umask(0o077)
+    try:update.extract_candidate(path,source,COMMIT,digest)
+    finally:os.umask(previous)
+    assert stat.S_IMODE(source.stat().st_mode)==0o700
+    assert stat.S_IMODE((source/"core/app.py").stat().st_mode)==0o644
+    assert stat.S_IMODE((source/"core/nested/start.sh").stat().st_mode)==0o755
+    assert stat.S_IMODE((source/"core").stat().st_mode)==0o755
+    assert stat.S_IMODE((source/"core/nested").stat().st_mode)==0o755
+
 def archive(path, entries):
     with tarfile.open(path,"w:gz") as tar:
         for name,value in entries.items():
@@ -340,3 +365,5 @@ def test_resume_canonical_rollback_requires_disposable_scope(tmp_path,monkeypatc
     monkeypatch.delenv("AFTERGRID_DISPOSABLE_RECOVERY_TEST",raising=False)
     with pytest.raises(ValueError,match="Disposable"):
         update.resume_disposable_rollback(tmp_path,tmp_path)
+
+

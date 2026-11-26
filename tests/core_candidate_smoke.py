@@ -21,8 +21,10 @@ IMAGE = re.compile(r"sha256:[a-f0-9]{64}")
 def run(*args, timeout=180):
     env = {"PATH": os.environ["PATH"], "HOME": "/root",
            "DOCKER_HOST": "unix:///var/run/docker.sock"}
-    return subprocess.run(args, env=env, capture_output=True, text=True,
-                          check=True, timeout=timeout).stdout
+    result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError("Candidate acceptance command failed: " + result.stderr[-8192:])
+    return result.stdout
 
 
 def inventory():
