@@ -50,10 +50,10 @@ async function renderModules(){
       }
       if(status.admin && mod.installable){
         if(mod.setup_note){const note=document.createElement("p");note.textContent=mod.setup_note;card.append(note);}
-        if(["homebox","grocy","media"].includes(mod.id) && mod.status==="running" && !mod.shared){
+        if(["homebox","grocy","media","kolibri"].includes(mod.id) && mod.status==="running" && !mod.shared){
           const setup=document.createElement("a");setup.href="/native-setup/"+mod.id;setup.textContent="Set up native account";card.append(setup);
         }
-        if(mod.loopback_only && !mod.shared && !["homebox","grocy","media"].includes(mod.id) && !["127.0.0.1","localhost"].includes(location.hostname)){
+        if(mod.loopback_only && !mod.shared && !["homebox","grocy","media","kolibri"].includes(mod.id) && !["127.0.0.1","localhost"].includes(location.hostname)){
           const note=document.createElement("small");note.textContent=mod.id==="tak"?"Local setup only. Use the native admin CLI over SSH forwards for 8446 and 8443, with the trusted CA.":mod.id==="kolibri"?"Local setup only. Forward both 8086 and 8087 over SSH; open http://127.0.0.1:8086.":"Local setup only. SSH forward port "+mod.port+" and open http://127.0.0.1:"+mod.port;card.append(note);
         }
         if(mod.id==="meshmonitor" && mod.status==="running"){
