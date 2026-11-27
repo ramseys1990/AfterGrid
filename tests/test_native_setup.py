@@ -206,7 +206,7 @@ def login(client, root):
         "token": "native-test-token"}, headers={"Origin": "http://testserver"}).status_code == 201
 
 
-@pytest.mark.parametrize("ident", ["homebox", "media", "kolibri"])
+@pytest.mark.parametrize("ident", ["homebox", "media", "kolibri", "notes"])
 def test_portal_setup_auth_origin_admission_and_no_secret_echo(tmp_path, monkeypatch, ident):
     from core import app as portal
     calls = []

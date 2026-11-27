@@ -579,19 +579,21 @@ def notes_binding(host):
     inspect=json.loads(subprocess.check_output(["docker","inspect","aftergrid-notes-notes-1"],text=True))[0]
     assert any(p["HostIp"]==host for p in inspect["NetworkSettings"]["Ports"]["8080/tcp"])
 notes_binding("127.0.0.1")
+notes_setup_path="/api/admin/modules/notes/native-setup"
+notes_setup_payload={"mode":"create","username":"ciadmin","password":"disposable-wiki-test-password","confirmed":True}
+assert api(notes_setup_path,notes_setup_payload)["ok"]
+try:
+    api(notes_setup_path,notes_setup_payload)
+except urllib.error.HTTPError as exc:
+    assert exc.code==409
+else:
+    raise AssertionError("Configured DokuWiki must refuse account creation")
+assert api(notes_setup_path,{**notes_setup_payload,"mode":"verify"})["ok"]
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True)
     context=browser.new_context(service_workers="block")
     context.route("**/*",lambda route: route.continue_() if route.request.url.startswith(notes_base+"/") else route.abort())
     page=context.new_page()
-    page.goto(notes_base+"/install.php")
-    for field,value in {"title":"AfterGrid CI","superuser":"ciadmin","fullname":"CI Administrator","email":"ci@example.invalid","password":"disposable-wiki-test-password","confirm":"disposable-wiki-test-password"}.items():
-        page.locator("#"+field).fill(value)
-    page.locator("#acl").check()
-    page.locator("#policy").select_option("2")
-    page.locator("#allowreg").uncheck()
-    page.locator("#pop").uncheck()
-    page.locator("button[name=submit]").click()
     page.goto(notes_base+"/doku.php?id=emergency:fixture&do=login")
     page.locator("input[name=u]").fill("ciadmin")
     page.locator("input[name=p]").fill("disposable-wiki-test-password")

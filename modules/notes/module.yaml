@@ -9,5 +9,5 @@
   "upstream": "https://www.dokuwiki.org/",
   "loopback_only": true,
   "lan_shareable": true,
-  "setup_note": "Open /install.php on the local app URL. Enable ACLs, choose Closed Wiki, create a strong administrator password and disable self-registration and popularity reporting. Create local users and review page and media permissions before sharing on LAN."
+  "setup_note": "Use Set up native account while the application remains local-only. Setup enables closed native ACLs and disables registration, popularity reporting and online update checks. Save the administrator credentials, then explicitly share on LAN. Create household users and review native page/media permissions."
 }

@@ -1,6 +1,7 @@
 """Bounded native account setup; credentials never enter worker jobs or storage."""
 import base64
 import http.cookiejar
+from html.parser import HTMLParser
 import json
 import re
 import time
@@ -9,7 +10,8 @@ import urllib.parse
 import urllib.request
 
 BASE = {"homebox": "http://aftergrid-homebox:7745", "grocy": "http://aftergrid-grocy",
-        "media": "http://aftergrid-media:8096", "kolibri": "http://aftergrid-kolibri:8086"}
+        "media": "http://aftergrid-media:8096", "kolibri": "http://aftergrid-kolibri:8086",
+        "notes": "http://aftergrid-notes:8080"}
 MEDIA_AUTH = 'MediaBrowser Client="AfterGrid", Device="Native setup", DeviceId="aftergrid-native-setup", Version="1.0"'
 MAX_BYTES = 256 * 1024
 
@@ -36,9 +38,11 @@ class NativeClient:
             urllib.request.HTTPCookieProcessor(self.cookies))
         self.authorization = MEDIA_AUTH if module == "media" else None
         self.media_authenticated = False
+        self.notes_logout_token = None
 
-    def request(self, path, payload=None, method=None, form=False, redirect=False):
-        headers = {"Accept": "application/json", "User-Agent": "AfterGrid-native-setup"}
+    def request(self, path, payload=None, method=None, form=False, redirect=False, text=False):
+        headers = {"Accept": "text/html" if self.module == "notes" and text else "application/json",
+                   "User-Agent": "AfterGrid-native-setup"}
         body = None
         if payload is not None:
             body = (urllib.parse.urlencode(payload) if form else json.dumps(payload)).encode()
@@ -67,18 +71,26 @@ class NativeClient:
             if redirect and exc.code in (302, 303) and location == BASE[self.module] + "/":
                 exc.close()
                 return None
+            if (redirect and self.module == "notes" and exc.code in (302, 303)
+                and urllib.parse.urlsplit(location).netloc == urllib.parse.urlsplit(BASE[self.module]).netloc
+                and urllib.parse.urlsplit(location).path == "/doku.php"):
+                exc.close()
+                return None
             code = exc.code
             exc.close()
             raise SetupError("Native request refused (HTTP " + str(code) + "). Check the account details and application status.") from None
         except (OSError, ValueError):
             raise SetupError("Native application unavailable. Check its status and try again.") from None
         with response:
-            raw = response.read(MAX_BYTES + 1)
-            if len(raw) > MAX_BYTES:
+            limit = 1024 * 1024 if self.module == "notes" and text else MAX_BYTES
+            raw = response.read(limit + 1)
+            if len(raw) > limit:
                 raise SetupError("Unexpected native response size")
             if not raw:
                 return None
             try:
+                if self.module == "notes" and text:
+                    return raw.decode("utf-8")
                 return json.loads(raw)
             except (ValueError, UnicodeError):
                 raise SetupError("Unexpected native response. Check the application before retrying.") from None
@@ -93,11 +105,15 @@ class NativeClient:
                 self.request("/Sessions/Logout", {})
             elif self.module == "kolibri" and list(self.cookies):
                 self.request("/api/auth/session/current/", {}, method="DELETE")
+            elif self.module == "notes" and self.notes_logout_token:
+                self.request("/doku.php", {"do": "logout", "sectok": self.notes_logout_token},
+                             form=True, redirect=True, text=True)
         except SetupError:
             pass
         self.cookies.clear()
         self.authorization = None
         self.media_authenticated = False
+        self.notes_logout_token = None
 
 
 def validate(module, value):
@@ -111,7 +127,8 @@ def validate(module, value):
     if set(value) != allowed or value.get("confirmed") is not True:
         raise ValueError("Confirm native account setup on this trusted LAN")
     modes = {"homebox": {"create", "verify"}, "grocy": {"secure-default", "verify"},
-             "media": {"create", "finish-setup", "verify"}, "kolibri": {"create", "verify"}}
+             "media": {"create", "finish-setup", "verify"}, "kolibri": {"create", "verify"},
+             "notes": {"create", "verify"}}
     if mode not in modes[module]:
         raise ValueError("Unsupported native setup action")
     username, password = value.get("username"), value.get("password")
@@ -128,7 +145,134 @@ def validate(module, value):
             raise ValueError("Enter a Homebox display name")
     if module == "grocy" and (username != "admin" or password == "admin"):
         raise ValueError("Use the native admin account with a non-default password")
+    if module == "notes" and not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", username):
+        raise ValueError("Use a lowercase native username with letters, numbers, dots, hyphens or underscores")
     return value
+
+
+class NotesPage(HTMLParser):
+    """Only native form controls; no script execution, assets or forwarded pages."""
+    def __init__(self, source):
+        super().__init__(convert_charrefs=True)
+        self.ids, self.inputs, self.forms, self.links = set(), [], {}, []
+        self.form = self.select = self.textarea = None
+        self.feed(source or "")
+
+    def add(self, name, value, form=None):
+        target = self.form if form is None else form
+        if target is not None and name:
+            self.forms[target].append((name, value))
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if a.get("id"):
+            self.ids.add(a["id"])
+        if tag == "a" and a.get("href"):
+            self.links.append(a["href"])
+        if tag == "form":
+            self.form = a.get("id") or "form-" + str(len(self.forms))
+            self.forms[self.form] = []
+        elif tag == "input":
+            self.inputs.append(a)
+            if "disabled" not in a and (a.get("type") not in {"checkbox", "radio"} or "checked" in a):
+                self.add(a.get("name"), a.get("value", ""))
+        elif tag == "select":
+            self.select = {"attrs": a, "values": [], "first": None, "form": self.form}
+        elif tag == "option" and self.select is not None:
+            value = a.get("value", "")
+            if self.select["first"] is None:
+                self.select["first"] = value
+            if "selected" in a:
+                self.select["values"].append(value)
+        elif tag == "textarea":
+            self.textarea = (a, [], self.form)
+
+    def handle_data(self, data):
+        if self.textarea is not None:
+            self.textarea[1].append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "select" and self.select is not None:
+            s = self.select
+            values = s["values"] or ([] if "multiple" in s["attrs"] else [s["first"] or ""])
+            if "disabled" not in s["attrs"]:
+                for value in values:
+                    self.add(s["attrs"].get("name"), value, s["form"])
+            self.select = None
+        elif tag == "textarea" and self.textarea is not None:
+            a, parts, form = self.textarea
+            if "disabled" not in a:
+                self.add(a.get("name"), "".join(parts), form)
+            self.textarea = None
+        elif tag == "form":
+            self.form = None
+
+    def checked(self, name, value):
+        return any(a.get("name") == name and a.get("value", "") == value and "checked" in a for a in self.inputs)
+
+
+def notes_page(client, path):
+    page = NotesPage(client.request(path, text=True))
+    for link in page.links:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(link).query)
+        token = query.get("sectok", [""])[0]
+        if query.get("do") == ["logout"] and re.fullmatch(r"[a-f0-9]{32}", token):
+            client.notes_logout_token = token
+    return page
+
+
+def notes_setup(client, value):
+    if value["mode"] == "create":
+        page = notes_page(client, "/install.php")
+        names = {a.get("name") for a in page.inputs}
+        if not {"d[title]", "d[superuser]", "d[password]", "d[acl]"} <= names:
+            raise SetupError("DokuWiki is already configured or setup is unavailable; use Verify existing account")
+        if not any(a.get("name") == "d[license]" and a.get("value") == "8" for a in page.inputs):
+            raise SetupError("DokuWiki installer options changed; keep the application local-only")
+        client.request("/install.php", {"l": "en", "submit": "Save", "d[title]": "AfterGrid notes",
+            "d[acl]": "1", "d[superuser]": value["username"], "d[fullname]": value["username"],
+            "d[email]": value["username"] + "@aftergrid.home.arpa", "d[password]": value["password"],
+            "d[confirm]": value["password"], "d[policy]": "2", "d[license]": "8"}, form=True, text=True)
+    login = notes_page(client, "/doku.php?do=login")
+    controls = login.forms.get("dw__login")
+    token = next((v for k, v in controls or [] if k == "sectok"), "")
+    if not controls or not re.fullmatch(r"[a-f0-9]{32}", token):
+        raise SetupError("DokuWiki native login form could not be verified")
+    client.request("/doku.php", {"id": "start", "do": "login", "sectok": token,
+        "u": value["username"], "p": value["password"]}, form=True, redirect=True, text=True)
+    acl = notes_page(client, "/doku.php?do=admin&page=acl")
+    if not {"acl__tree", "acl__detail"} <= acl.ids:
+        raise NativeAuthError("DokuWiki administrator login refused. Check your account details.")
+    config_path = "/doku.php?do=admin&page=config"
+    config = notes_page(client, config_path)
+    controls = config.forms.get("dw__configform")
+    if not controls:
+        raise SetupError("DokuWiki administrator configuration access could not be verified")
+    if value["mode"] == "create":
+        # Submit the native form's current controls; change only its update check.
+        # The installer already set ACLs/closed policy and disabled registration.
+        fields = [(k, v) for k, v in controls if k != "config[updatecheck]"]
+        fields.append(("config[updatecheck]", "0"))
+        fields.append(("submit", "Save"))
+        client.request("/doku.php", fields, form=True, redirect=True, text=True)
+        config = notes_page(client, config_path)
+        acl = notes_page(client, "/doku.php?do=admin&page=acl")
+    if (not config.checked("config[useacl]", "1")
+        or not config.checked("config[disableactions][]", "register")
+        or not any(a.get("name") == "config[updatecheck]" for a in config.inputs)
+        or config.checked("config[updatecheck]", "1")
+        or not acl.checked("acl[*][@ALL]", "0")
+        or any(a.get("name", "").startswith("acl[") and a.get("name", "").endswith("[@ALL]")
+               and "checked" in a and a.get("value") != "0" for a in acl.inputs)):
+        raise SetupError("DokuWiki must use closed ACLs, disabled registration and disabled online update checks before sharing")
+    guest = NativeClient("notes")
+    try:
+        anonymous = notes_page(guest, "/doku.php?id=aftergrid:access-check")
+        if "dw__login" not in anonymous.forms:
+            raise SetupError("Anonymous DokuWiki access was not refused; keep it local-only")
+    finally:
+        guest.close()
+    return {"ok": True, "message": "DokuWiki administrator login, closed access controls and anonymous-access refusal verified. Registration and online update checks are disabled. Save your native credentials, then use Share on LAN. No publishing license was assigned; create household users and review permissions inside DokuWiki."}
 
 
 KOLIBRI_TASK = "kolibri.core.device.tasks.provisiondevice"
@@ -320,6 +464,8 @@ def prepare(module, value):
     client = NativeClient(module)
     created = False
     try:
+        if module == "notes":
+            return notes_setup(client, value)
         if module == "kolibri":
             return kolibri_setup(client, value)
         if module == "media":

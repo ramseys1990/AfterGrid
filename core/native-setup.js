@@ -4,14 +4,16 @@ const moduleId=location.pathname.split("/").pop();
 const homebox=moduleId==="homebox";
 const media=moduleId==="media";
 const kolibri=moduleId==="kolibri";
-const creates=homebox||media||kolibri;
-field("title").textContent=(homebox?"Homebox":media?"Jellyfin":kolibri?"Kolibri":"Grocy")+" native account setup";
+const notes=moduleId==="notes";
+const creates=homebox||media||kolibri||notes;
+field("title").textContent=(homebox?"Homebox":media?"Jellyfin":kolibri?"Kolibri":notes?"DokuWiki":"Grocy")+" native account setup";
 field("guidance").textContent=homebox?"Create one account for your shared collection, or verify an existing account. Its email is only a local login identifier; no email is sent. After verification, return to the card and Share on LAN to close registration.":media?"Create the administrator for a fresh Jellyfin installation while its port stays local-only. Setup disables remote access. If setup was interrupted after the account was created, choose Finish interrupted setup with the same credentials. Existing completed installations use Verify existing account. This form never resets an existing password. Configure /media and offline library providers inside Jellyfin after sharing.":"For a fresh Grocy installation, replace its admin/admin default password before sharing. Existing installations should use Verify existing account. This form never resets an unknown administrator password.";
 if(kolibri)field("guidance").textContent="Create the device administrator and AfterGrid learning facility on a fresh Kolibri installation. Guests can read imported content; learner accounts require passwords and self-registration stays disabled. New setup disables automatic and learner-requested downloads. Native setup temporarily stores its provisioning task; this form verifies and clears that task before reporting success. After an interrupted attempt, use Verify existing account with the same credentials. Import channels inside Kolibri after sharing both application ports on LAN.";
 const option=document.createElement("option");option.value=creates?"create":"secure-default";option.textContent=creates?"Create native account":"Replace default administrator password";field("mode").prepend(option);field("mode").value=option.value;
 if(media){const finish=document.createElement("option");finish.value="finish-setup";finish.textContent="Finish interrupted setup";field("mode").append(finish);}
+if(notes)field("guidance").textContent="Create the administrator for a fresh closed wiki while its port stays local-only. Setup enables native ACLs and disables registration, popularity reporting and online update checks. No publishing license is assigned. A local placeholder email is used; no mail service is configured. Existing accounts can be verified without changing their settings or resetting a password. Add household users and review page permissions in DokuWiki after sharing.";
 field("username-label").textContent=homebox?"Native account email":"Native username";
-if(!homebox){field("username").value="admin";field("username").readOnly=!media&&!kolibri;}
+if(!homebox){field("username").value="admin";field("username").readOnly=!media&&!kolibri&&!notes;}
 function modeChanged(){
   const verify=field("mode").value==="verify";
   const existing=verify||field("mode").value==="finish-setup";
