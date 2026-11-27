@@ -11,15 +11,16 @@ from core import native_setup as native
 TOKEN = "a" * 32
 
 
-def login_form():
-    return '<form id="dw__login"><input name="sectok" value="'+TOKEN+'"><input name="u"><input name="p" type="password"></form>'
+def login_form(token=""):
+    return '<form id="dw__login"><input name="sectok" value="'+token+'"><input name="u"><input name="p" type="password"></form>'
 
 
 @pytest.fixture
 def notes(monkeypatch):
     state = {"configured": False, "password": None, "calls": [], "admin": True,
              "closed": True, "acl": True, "registration_disabled": True,
-             "updatecheck": True, "save": True, "failure": None, "guest_blocked": True}
+             "updatecheck": True, "save": True, "failure": None, "guest_blocked": True,
+             "login_token": "", "config_token": TOKEN}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -52,9 +53,9 @@ def notes(monkeypatch):
                 state["configured"] = True
                 return self.respond("Installed")
             if self.path == "/doku.php?do=login":
-                return self.respond(login_form(), Set_Cookie="wiki_session=anonymous; Path=/")
+                return self.respond(login_form(state["login_token"]), Set_Cookie="wiki_session=anonymous; Path=/")
             if self.path == "/doku.php" and data.get("do") == ["login"]:
-                assert "wiki_session=anonymous" in cookie and data["sectok"] == [TOKEN]
+                assert "wiki_session=anonymous" in cookie and data["sectok"] == [state["login_token"]]
                 if data["p"] != [state["password"]]:
                     return self.respond(login_form())
                 return self.respond(code=302, Location="/doku.php?id=start", Set_Cookie="wiki_session=admin; Path=/")
@@ -68,7 +69,7 @@ def notes(monkeypatch):
                 assert authenticated
                 checked = lambda flag: " checked" if flag else ""
                 html = logout+'<div id="config__manager"><form id="dw__configform">'
-                for key, val in {"sectok": TOKEN, "do": "admin", "page": "config", "save": "1", "config[title]": "Original native title"}.items():
+                for key, val in {"sectok": state["config_token"], "do": "admin", "page": "config", "save": "1", "config[title]": "Original native title"}.items():
                     html += '<input name="'+key+'" value="'+val+'">'
                 html += '<input type="checkbox" name="config[useacl]" value="1"'+checked(state["acl"])+ '>'
                 html += '<input type="checkbox" name="config[disableactions][]" value="register"'+checked(state["registration_disabled"])+ '>'
@@ -170,3 +171,16 @@ def test_independent_guest_check_must_refuse_access(notes):
     notes["guest_blocked"] = False
     with pytest.raises(native.SetupError, match="Anonymous"):
         native.prepare("notes", value("verify"))
+
+
+def test_nonempty_native_login_token_is_preserved(notes):
+    notes["login_token"] = TOKEN
+    assert native.prepare("notes", value())["ok"]
+
+
+def test_empty_or_invalid_authenticated_token_never_submits_config(notes):
+    notes["config_token"] = ""
+    with pytest.raises(native.SetupError, match="authenticated configuration token"):
+        native.prepare("notes", value())
+    # Only login and best-effort logout may post to the native wiki.
+    assert notes["calls"].count(("POST", "/doku.php")) == 2

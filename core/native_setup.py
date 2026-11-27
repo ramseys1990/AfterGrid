@@ -235,8 +235,10 @@ def notes_setup(client, value):
             "d[confirm]": value["password"], "d[policy]": "2", "d[license]": "0"}, form=True, text=True)
     login = notes_page(client, "/doku.php?do=login")
     controls = login.forms.get("dw__login")
-    token = next((v for k, v in controls or [] if k == "sectok"), "")
-    if not controls or not re.fullmatch(r"[a-f0-9]{32}", token):
+    token = next((v for k, v in controls or [] if k == "sectok"), None)
+    # Native DokuWiki emits an empty token for anonymous login. Authenticated
+    # configuration and logout still require its full session-bound token.
+    if not controls or token is None or (token != "" and not re.fullmatch(r"[a-f0-9]{32}", token)):
         raise SetupError("DokuWiki native login form could not be verified")
     client.request("/doku.php", {"id": "start", "do": "login", "sectok": token,
         "u": value["username"], "p": value["password"]}, form=True, redirect=True, text=True)
@@ -248,6 +250,9 @@ def notes_setup(client, value):
     controls = config.forms.get("dw__configform")
     if not controls:
         raise SetupError("DokuWiki administrator configuration access could not be verified")
+    config_token = next((v for k, v in controls if k == "sectok"), "")
+    if not re.fullmatch(r"[a-f0-9]{32}", config_token):
+        raise SetupError("DokuWiki authenticated configuration token could not be verified")
     if value["mode"] == "create":
         # Submit the native form's current controls; change only its update check.
         # The installer already set ACLs/closed policy and disabled registration.
