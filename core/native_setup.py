@@ -47,7 +47,7 @@ class NativeClient:
             headers["Authorization"] = self.authorization
         if self.module == "kolibri":
             for cookie in self.cookies:
-                if cookie.name == "csrftoken":
+                if cookie.name == "kolibri_csrftoken":
                     headers["X-CSRFToken"] = cookie.value
         req = urllib.request.Request(BASE[self.module] + path, data=body,
                                      headers=headers, method=method or ("POST" if body else "GET"))

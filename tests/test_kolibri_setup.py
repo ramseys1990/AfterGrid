@@ -29,7 +29,7 @@ def kolibri(monkeypatch):
             payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             state["calls"].append((self.command, self.path))
             if self.path == "/api/auth/session/current/" and self.command == "PUT":
-                return self.respond({"kind": ["anonymous"]}, cookie="csrftoken=initial-csrf")
+                return self.respond({"kind": ["anonymous"]}, cookie="kolibri_csrftoken=initial-csrf")
             if self.command != "GET":
                 expected = "rotated-csrf" if "sessionid=verified" in self.headers.get("Cookie", "") else "initial-csrf"
                 assert self.headers.get("X-CSRFToken") == expected
@@ -57,7 +57,7 @@ def kolibri(monkeypatch):
                 if payload != {"username": state.get("username"), "password": state["password"]}:
                     return self.respond({"secret": "native credential details"}, code=401)
                 self.send_response(200)
-                self.send_header("Set-Cookie", "csrftoken=rotated-csrf; Path=/")
+                self.send_header("Set-Cookie", "kolibri_csrftoken=rotated-csrf; Path=/")
                 self.send_header("Set-Cookie", "sessionid=verified; Path=/")
                 self.end_headers()
                 self.wfile.write(json.dumps({"username": state["username"], "facility_id": "facility-1",

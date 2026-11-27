@@ -28,7 +28,7 @@ field("native-form").addEventListener("submit",async event=>{
   if(!["verify","finish-setup"].includes(mode)&&field("password").value!==field("password-confirm").value){field("result").textContent="The new passwords must match.";return;}
   const payload={mode,username:field("username").value,password:field("password").value,confirmed:field("confirmed").checked};
   if(homebox&&mode==="create")payload.name=field("name").value;
-  field("submit").disabled=true;field("result").textContent="Contacting the local native application…";
+  field("submit").disabled=true;field("result").textContent="Contacting the local native application.";
   try{
     const response=await fetch("/api/admin/modules/"+moduleId+"/native-setup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
     const result=await response.json();if(!response.ok)throw Error(typeof result.detail==="string"?result.detail:"Native setup unavailable");
