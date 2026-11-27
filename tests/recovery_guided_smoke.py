@@ -195,8 +195,13 @@ def detached_promotion(root, candidate, prior, observe, fail_restore=False):
             if time.monotonic()>deadline:raise RuntimeError("Detached promotion timed out")
             time.sleep(0.2)
         observe()
-        if int(assets.docker("wait",cid))!=0:
-            raise RuntimeError("Detached promotion failed: "+assets.docker("logs",cid))
+        exit_code=int(assets.docker("wait",cid))
+        if exit_code!=0:
+            # Python tracebacks are on stderr; the shared docker helper returns
+            # stdout only. This fixed fixture program contains no credentials.
+            logs=subprocess.run(["docker","logs",cid],check=True,
+                stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=15).stdout
+            raise RuntimeError("Detached promotion failed (exit "+str(exit_code)+"): "+logs)
         report=json.loads((candidate/"detached-executor.json").read_text())
         assert report["executor_image"]==prior["worker"]["image"] and report["disposable_only"]
         assert report["intentional_restore_interruption"] is fail_restore
