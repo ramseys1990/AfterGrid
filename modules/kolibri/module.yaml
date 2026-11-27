@@ -9,5 +9,5 @@
   "upstream": "https://learningequality.org/kolibri/",
   "loopback_only": true,
   "lan_shareable": true,
-  "setup_note": "Complete native facility and administrator setup using Set up native account while both application ports remain local-only. Guest reading is enabled; learner accounts require passwords and self-registration is disabled. Then explicitly share on LAN and import educational channels in Kolibri; use USB or local sources offline."
+  "setup_note": "Complete native facility and administrator setup using Set up native account while both application ports remain local-only. Guest reading is enabled; learner accounts require passwords and self-registration is disabled. Automatic and learner-requested downloads are disabled. Then explicitly share on LAN and import educational channels in Kolibri; use USB or local sources offline."
 }

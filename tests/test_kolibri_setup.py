@@ -12,7 +12,9 @@ from core import native_setup as native
 def kolibri(monkeypatch):
     state = {"facilities": [], "jobs": [], "calls": [], "password": None,
              "admin": True, "guest": True, "signup": False, "blank": False,
-             "cleanup": True, "task_status": "COMPLETED"}
+             "cleanup": True, "task_status": "COMPLETED", "save_settings": True,
+             "extra": {"enable_automatic_download": True, "allow_learner_download_resources": True,
+                       "allow_download_on_metered_connection": False, "limit_for_autodownload": 123}}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -71,12 +73,17 @@ def kolibri(monkeypatch):
                 return self.respond({})
             if self.path == "/api/device/devicesettings/":
                 assert "sessionid=verified" in self.headers.get("Cookie", "")
-                return self.respond({"allow_guest_access": state["guest"]})
+                if self.command == "PATCH":
+                    assert set(payload) == {"extra_settings"}
+                    assert payload["extra_settings"]["limit_for_autodownload"] == 123
+                    if state["save_settings"]:
+                        state["extra"] = payload["extra_settings"]
+                return self.respond({"allow_guest_access": state["guest"], "extra_settings": state["extra"]})
             if self.path == "/api/auth/session/current/" and self.command == "DELETE":
                 return self.respond([])
             return self.respond({}, code=404)
 
-        do_GET = do_POST = do_PUT = do_DELETE = handle_request
+        do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = handle_request
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -101,6 +108,8 @@ def test_create_uses_native_csrf_rotated_session_and_clears_only_provision_queue
     result = native.prepare("kolibri", value())
     assert result["ok"] and kolibri["jobs"] == []
     assert value()["password"] not in json.dumps(result)
+    assert kolibri["extra"] == {"enable_automatic_download": False, "allow_learner_download_resources": False,
+                                "allow_download_on_metered_connection": False, "limit_for_autodownload": 123}
     assert kolibri["calls"][-1] == ("DELETE", "/api/auth/session/current/")
 
 
@@ -109,6 +118,7 @@ def test_existing_account_verify_never_reprovisions(kolibri):
     assert native.prepare("kolibri", value("verify"))["ok"]
     assert ("POST", "/api/tasks/tasks/") not in kolibri["calls"]
     assert ("POST", "/api/tasks/tasks/clearall/") not in kolibri["calls"]
+    assert all(method != "PATCH" for method, path in kolibri["calls"])
     with pytest.raises(native.SetupError, match="already has"):
         native.prepare("kolibri", value())
 
@@ -162,3 +172,13 @@ def test_failed_provision_does_not_claim_success_or_delete_unknown_state(kolibri
     with pytest.raises(native.SetupError, match="did not finish"):
         native.prepare("kolibri", value())
     assert ("POST", "/api/tasks/tasks/clearall/") not in kolibri["calls"]
+
+
+def test_download_policy_requires_native_readback_and_existing_verify_does_not_change_it(kolibri):
+    kolibri["save_settings"] = False
+    with pytest.raises(native.SetupError, match="downloads"):
+        native.prepare("kolibri", value())
+    kolibri["calls"].clear()
+    with pytest.raises(native.SetupError, match="downloads"):
+        native.prepare("kolibri", value("verify"))
+    assert all(method != "PATCH" for method, path in kolibri["calls"])

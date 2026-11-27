@@ -194,16 +194,28 @@ def kolibri_setup(client, value):
                 raise SetupError("Kolibri setup did not finish; keep it local-only and verify existing credentials before retrying")
             time.sleep(0.5)
     user = kolibri_login(client, username, password)
-    kolibri_clear_setup(client, user, task_id)
     settings = client.request("/api/device/devicesettings/")
+    if value["mode"] == "create":
+        extra = settings.get("extra_settings") if isinstance(settings, dict) else None
+        if not isinstance(extra, dict):
+            raise SetupError("Kolibri download settings could not be read; keep it local-only")
+        client.request("/api/device/devicesettings/", {"extra_settings": {
+            **extra, "enable_automatic_download": False, "allow_learner_download_resources": False,
+            "allow_download_on_metered_connection": False}}, method="PATCH")
+        settings = client.request("/api/device/devicesettings/")
+    kolibri_clear_setup(client, user, task_id)
     if not isinstance(settings, dict) or settings.get("allow_guest_access") is not True:
         raise SetupError("Enable native guest reading in Kolibri before sharing")
+    extra = settings.get("extra_settings")
+    if (not isinstance(extra, dict) or any(extra.get(key) is not False for key in
+        ("enable_automatic_download", "allow_learner_download_resources", "allow_download_on_metered_connection"))):
+        raise SetupError("Disable native automatic, learner-requested and metered-connection downloads in Kolibri before sharing")
     facilities = client.request("/api/public/v1/facility/")
     facility = next((f for f in facilities if isinstance(f, dict) and f.get("id") == user["facility_id"]), None) if isinstance(facilities, list) else None
     if (not facility or facility.get("learner_can_sign_up") is not False
         or facility.get("learner_can_login_with_no_password") is not False):
         raise SetupError("Disable native learner self-registration and passwordless learner login before sharing")
-    return {"ok": True, "message": "Kolibri device administrator login and setup cleanup verified. Guest reading is enabled; learner accounts require passwords and self-registration is disabled. Save your credentials, then use Share on LAN. Import educational channels in Kolibri; no content is installed yet."}
+    return {"ok": True, "message": "Kolibri device administrator login and setup cleanup verified. Guest reading is enabled; learner accounts require passwords and self-registration is disabled. Automatic and learner-requested downloads are disabled. Save your credentials, then use Share on LAN. Import educational channels in Kolibri; no content is installed yet."}
 
 
 def homebox_login(client, username, password):
