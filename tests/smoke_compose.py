@@ -519,11 +519,17 @@ def media_request(path,body=None,token=None):
         raw=response.read()
         return json.loads(raw) if raw else None
 assert media_request("/System/Info/Public")["StartupWizardCompleted"] is False
-media_request("/Startup/User")
-media_request("/Startup/Configuration",{"ServerName":"AfterGrid CI","UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"})
-media_request("/Startup/User",{"Name":"ciadmin","Password":"disposable-media-test-password"})
-media_request("/Startup/RemoteAccess",{"EnableRemoteAccess":False})
-media_request("/Startup/Complete",{})
+media_setup_path="/api/admin/modules/media/native-setup"
+media_setup_payload={"mode":"create","username":"ciadmin","password":"disposable-media-test-password","confirmed":True}
+assert api(media_setup_path,media_setup_payload)["ok"]
+assert media_request("/System/Info/Public")["StartupWizardCompleted"] is True
+try:
+    api(media_setup_path,media_setup_payload)
+except urllib.error.HTTPError as exc:
+    assert exc.code==409
+else:
+    raise AssertionError("Configured Jellyfin must refuse account creation")
+assert api(media_setup_path,{**media_setup_payload,"mode":"verify"})["ok"]
 def media_login():
     return media_request("/Users/AuthenticateByName",{"Username":"ciadmin","Pw":"disposable-media-test-password"})
 session=media_login()
@@ -633,3 +639,5 @@ action("uninstall","notes")
 assert module("notes")["status"]=="not installed"
 assert b"Local emergency checklist." in subprocess.check_output(["sudo","cat","data/notes/data/pages/emergency/fixture.txt"])
 print("DokuWiki native setup, private page, LAN sharing and data preservation passed.")
+
+

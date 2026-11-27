@@ -9,5 +9,5 @@
   "upstream": "https://jellyfin.org/",
   "loopback_only": true,
   "lan_shareable": true,
-  "setup_note": "Complete native first-run setup locally, create a password-protected administrator, disable remote access and internet metadata providers for offline libraries. Add /media as a library. Original files are mounted read-only. Then explicitly share on LAN."
+  "setup_note": "Use Set up native account in AfterGrid while Jellyfin stays local-only. Create its administrator or finish interrupted setup with existing credentials; remote access stays disabled. Then explicitly share on LAN, add /media and disable internet providers for offline libraries. Native login remains required."
 }

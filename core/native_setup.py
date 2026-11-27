@@ -7,7 +7,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = {"homebox": "http://aftergrid-homebox:7745", "grocy": "http://aftergrid-grocy"}
+BASE = {"homebox": "http://aftergrid-homebox:7745", "grocy": "http://aftergrid-grocy",
+        "media": "http://aftergrid-media:8096"}
+MEDIA_AUTH = 'MediaBrowser Client="AfterGrid", Device="Native setup", DeviceId="aftergrid-native-setup", Version="1.0"'
 MAX_BYTES = 256 * 1024
 
 
@@ -31,7 +33,8 @@ class NativeClient:
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}), NoRedirect(),
             urllib.request.HTTPCookieProcessor(self.cookies))
-        self.authorization = None
+        self.authorization = MEDIA_AUTH if module == "media" else None
+        self.media_authenticated = False
 
     def request(self, path, payload=None, method=None, form=False, redirect=False):
         headers = {"Accept": "application/json", "User-Agent": "AfterGrid-native-setup"}
@@ -48,6 +51,9 @@ class NativeClient:
         except urllib.error.HTTPError as exc:
             location = urllib.parse.urljoin(BASE[self.module] + path, exc.headers.get("Location", ""))
             if self.module == "grocy" and path == "/login" and exc.code in (302, 303) and location == BASE[self.module] + "/login?invalid=true":
+                exc.close()
+                raise NativeAuthError("Native login refused. Check your account details.") from None
+            if self.module == "media" and path == "/Users/AuthenticateByName" and exc.code in (401, 403):
                 exc.close()
                 raise NativeAuthError("Native login refused. Check your account details.") from None
             if redirect and exc.code in (302, 303) and location == BASE[self.module] + "/":
@@ -75,10 +81,13 @@ class NativeClient:
                 self.request("/api/v1/users/logout", {}, method="POST")
             elif self.module == "grocy" and list(self.cookies):
                 self.request("/logout", redirect=True)
+            elif self.module == "media" and self.media_authenticated:
+                self.request("/Sessions/Logout", {})
         except SetupError:
             pass
         self.cookies.clear()
         self.authorization = None
+        self.media_authenticated = False
 
 
 def validate(module, value):
@@ -91,14 +100,16 @@ def validate(module, value):
         allowed.add("name")
     if set(value) != allowed or value.get("confirmed") is not True:
         raise ValueError("Confirm native account setup on this trusted LAN")
-    if mode not in ({"create", "verify"} if module == "homebox" else {"secure-default", "verify"}):
+    modes = {"homebox": {"create", "verify"}, "grocy": {"secure-default", "verify"},
+             "media": {"create", "finish-setup", "verify"}}
+    if mode not in modes[module]:
         raise ValueError("Unsupported native setup action")
     username, password = value.get("username"), value.get("password")
     if not isinstance(username, str) or not 1 <= len(username) <= 254 or username != username.strip():
         raise ValueError("Enter a valid native account name")
     if not isinstance(password, str) or not 1 <= len(password) <= 256 or any(ord(c) < 32 for c in password):
         raise ValueError("Enter a native password without control characters")
-    if mode != "verify" and len(password) < 12:
+    if mode in {"create", "secure-default"} and len(password) < 12:
         raise ValueError("Choose a password of at least 12 characters")
     if module == "homebox" and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", username):
         raise ValueError("Homebox uses an email address for its local account")
@@ -133,12 +144,87 @@ def grocy_login(client, password):
     return user
 
 
+def media_login(client, username, password, require_password=True):
+    if client.media_authenticated:
+        client.request("/Sessions/Logout", {})
+        client.media_authenticated = False
+        client.authorization = MEDIA_AUTH
+    result = client.request("/Users/AuthenticateByName", {"Username": username, "Pw": password})
+    token = result.get("AccessToken") if isinstance(result, dict) else None
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,256}", token):
+        raise SetupError("Jellyfin login could not be verified")
+    client.authorization = MEDIA_AUTH + ', Token="' + token + '"'
+    client.media_authenticated = True
+    user = client.request("/Users/Me")
+    if (not isinstance(user, dict) or user.get("Name") != username
+        or (require_password and user.get("HasPassword") is not True) or not isinstance(user.get("Policy"), dict)
+        or user["Policy"].get("IsAdministrator") is not True):
+        raise SetupError("A password-protected Jellyfin administrator is required")
+
+
+def media_setup(client, value):
+    mode, username, password = value["mode"], value["username"], value["password"]
+    public = client.request("/System/Info/Public")
+    complete = public.get("StartupWizardCompleted") if isinstance(public, dict) else None
+    if type(complete) is not bool:
+        raise SetupError("Jellyfin startup status could not be verified")
+    if mode == "verify":
+        media_login(client, username, password)
+        if not complete:
+            raise SetupError("Account login verified; choose Finish interrupted setup before sharing")
+    else:
+        if complete:
+            raise SetupError("Jellyfin is already configured; use Verify existing account")
+        if mode == "create":
+            initial = client.request("/Startup/User")
+            if not isinstance(initial, dict) or not isinstance(initial.get("Name"), str) or not initial["Name"]:
+                raise SetupError("Jellyfin initial account could not be identified")
+            # The initial administrator is hidden from /Users/Public. Verify its
+            # native empty first-run credential instead; never reset an unknown
+            # password after a partial setup attempt.
+            check = NativeClient("media")
+            try:
+                try:
+                    media_login(check, initial["Name"], "", require_password=False)
+                except NativeAuthError:
+                    raise SetupError("Jellyfin already has an account; use Finish interrupted setup with its existing credentials") from None
+            finally:
+                check.close()
+            client.request("/Startup/User", {"Name": username, "Password": password})
+        media_login(client, username, password)
+        client.request("/Startup/RemoteAccess", {"EnableRemoteAccess": False})
+        network = client.request("/System/Configuration/network")
+        if not isinstance(network, dict) or network.get("EnableRemoteAccess") is not False:
+            raise SetupError("Jellyfin remote access could not be confirmed disabled")
+        client.request("/Startup/Complete", {})
+        public = client.request("/System/Info/Public")
+        if not isinstance(public, dict) or public.get("StartupWizardCompleted") is not True:
+            raise SetupError("Jellyfin startup completion could not be verified")
+        media_login(client, username, password)
+    network = client.request("/System/Configuration/network")
+    if not isinstance(network, dict) or network.get("EnableRemoteAccess") is not False:
+        raise SetupError("Disable Jellyfin remote access in its native settings before sharing")
+    check = NativeClient("media")
+    try:
+        try:
+            media_login(check, username, "", require_password=False)
+        except NativeAuthError:
+            pass
+        else:
+            raise SetupError("Jellyfin still accepts an empty password; keep it local-only")
+    finally:
+        check.close()
+    return {"ok": True, "message": "Jellyfin administrator login and completed setup verified; remote access is disabled. Save your native credentials, then use Share on LAN. In Jellyfin, add /media and disable internet providers for offline libraries. Native login remains required."}
+
+
 def prepare(module, value):
     value = validate(module, value)
     mode, username, password = value["mode"], value["username"], value["password"]
     client = NativeClient(module)
     created = False
     try:
+        if module == "media":
+            return media_setup(client, value)
         if module == "homebox":
             if mode == "create":
                 client.request("/api/v1/users/register", {"name": value["name"].strip(), "email": username, "password": password})
@@ -173,3 +259,4 @@ def prepare(module, value):
         raise
     finally:
         client.close()
+

@@ -1480,7 +1480,7 @@ def create_app(data_dir=None):
     @api.get("/native-setup/{ident}")
     def native_setup_page(ident: str, request: Request):
         require_admin(request)
-        if ident not in {"homebox", "grocy"}:
+        if ident not in {"homebox", "grocy", "media"}:
             raise HTTPException(404, "Unsupported native setup")
         if recovery_core_only or recovery_offline:
             raise HTTPException(409, "Native setup is unavailable in restricted recovery mode")
@@ -1495,7 +1495,7 @@ def create_app(data_dir=None):
         require_admin(request)
         same_origin(request)
         rate_limit()
-        if ident not in {"homebox", "grocy"}:
+        if ident not in {"homebox", "grocy", "media"}:
             raise HTTPException(400, "Unsupported native setup")
         # Stream a small body and never return validation input or native errors.
         body = bytearray()
@@ -1607,3 +1607,4 @@ def create_app(data_dir=None):
     return api
 
 app = create_app()
+
