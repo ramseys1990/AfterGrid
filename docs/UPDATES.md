@@ -290,3 +290,10 @@ The existing worker image now includes core_update_tools.py and recovery_assets.
 The exclusive guided CI fixture starts a detached container from the exact installed worker image, using its packaged fixed updater tools. The installation is mounted read-only at its original path, checkpoint output is a separate private writable sibling, and the helper has no network. Existing local Docker socket access is needed to run the reviewed core-only Compose operations; no host command API or production dispatch is exposed.
 
 Both the normal path and an intentional post-checkpoint failure must recreate core and worker from their original image IDs, preserve the administrator session and maintenance hold, validate both checkpoint databases, and leave Kiwix/Kopia container IDs and start times unchanged while the reader stays accessible. The caller explicitly releases maintenance only afterward. This verifies the independent execution mechanism in disposable CI, not a production update or browser handoff.
+
+
+### Detached canonical promotion acceptance fixture (native validation pending)
+
+The disposable guided-recovery smoke now runs canonical candidate promotion in a detached container using the exact installed worker image. It checks successful promotion and an intentionally interrupted rollback, then uses the existing recovery command to resume restoration before releasing maintenance. Application identity and availability observations remain active while the executor runs.
+
+The executor has no network, published ports, or administrator credentials. Its root filesystem is read-only; only the exact disposable install and candidate directories are writable, alongside the Docker socket required for replacement. This is acceptance tooling, and production activation remains disabled. Local Python compilation and seven focused candidate-build tests passed; Linux Docker acceptance is pending.
