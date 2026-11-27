@@ -121,6 +121,95 @@ def detached_checkpoint(root, output, prior, observe, fail=False):
         # Only this exact fixture-created container, never project-wide removal.
         assets.docker("rm","--force","--volumes",cid)
 
+
+# Fixed disposable host program. It must outlive the worker it replaces.
+DETACHED_PROMOTION = r'''
+import json, os, sys
+from pathlib import Path
+for key in ("DOCKER_HOST", "DOCKER_CONTEXT"):
+    os.environ.pop(key, None)
+root, candidate = map(Path, sys.argv[1:3])
+assert root.name == "original" and root.parent.name.startswith("aftergrid-guided-ci-")
+assert candidate.parent == root.parent
+sys.path.insert(0, str(root / "worker"))
+import core_update_tools as update
+prior = json.loads(sys.argv[3])
+fail_restore = sys.argv[4] == "fail-restore"
+assert update.live_core(root) == prior
+source_digest = update.candidate_source_digest(root)
+for name in ("core", "worker"):
+    update.image_ref_matches("aftergrid-core-" + name, prior[name]["image"])
+plan = update.read_json_private(candidate / "candidate.json")
+def probe():
+    actual = update.live_core(root)
+    assert all(actual[name]["image"] == plan["candidate"][name]["image"] for name in prior)
+    for name, database in (("core", "/data/core.sqlite3"), ("worker", "/worker-state/jobs.sqlite3")):
+        code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert c.execute('PRAGMA integrity_check').fetchone()==('ok',); "
+        if fail_restore:
+            code += "c.execute('CREATE TABLE failed_promotion_fixture (id INTEGER)'); c.commit(); "
+        code += "c.close()"
+        update.assets.docker("exec", actual[name]["container"], "python3", "-c", code, database)
+    if fail_restore:
+        raise RuntimeError("Intentional detached canonical promotion failure")
+if fail_restore:
+    original = update.RESTORE_WORKER
+    interrupted = original.replace('mark("extracting")', 'mark("extracting"); os._exit(87)', 1)
+    assert interrupted != original
+    update.RESTORE_WORKER = interrupted
+    try:
+        update.promote_disposable(root, candidate, probe)
+    except (RuntimeError, update.subprocess.CalledProcessError):
+        state = update.read_json_private(candidate / "promotion.json")
+        assert state["phase"] == "promotion_requires_inspection"
+        assert state["resume_phase"] == "restoring_worker_state"
+    else:
+        raise AssertionError("Expected interrupted detached worker restoration")
+else:
+    state = update.promote_disposable(root, candidate, probe)
+    assert state["phase"] == "promoted"
+update.write_private_json(candidate / "detached-executor.json", {
+    "format": 1, "phase": state["phase"], "executor_source_sha256": source_digest,
+    "intentional_restore_interruption": fail_restore, "disposable_only": True})
+'''
+
+def detached_promotion(root, candidate, prior, observe, fail_restore=False):
+    source_digest=core_update.candidate_source_digest(root)
+    log_path=candidate/"detached-executor.log"
+    env={key:os.environ[key] for key in ("PATH","LD_LIBRARY_PATH","LANG","LC_ALL") if key in os.environ}
+    env["AFTERGRID_DISPOSABLE_RECOVERY_TEST"]="1"
+    # A host process avoids introducing a running writable Docker bind over
+    # canonical state. Keep the native checkpoint guard completely unchanged.
+    with log_path.open("xb") as output:
+        os.fchmod(output.fileno(),0o600)
+        process=subprocess.Popen([sys.executable,"-I","-c",DETACHED_PROMOTION,
+            str(root),str(candidate),json.dumps(prior),"fail-restore" if fail_restore else "success"],
+            stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,
+            start_new_session=True,env=env)
+    try:
+        assert os.getsid(process.pid)==process.pid
+        deadline=time.monotonic()+480
+        while process.poll() is None:
+            observe()
+            if time.monotonic()>deadline:raise RuntimeError("Detached promotion timed out")
+            time.sleep(0.2)
+        observe()
+        exit_code=process.wait(timeout=5)
+        if exit_code!=0:
+            # Only this fixed disposable program's private diagnostics.
+            raise RuntimeError("Detached promotion failed (exit "+str(exit_code)+"): "+log_path.read_text())
+        report=json.loads((candidate/"detached-executor.json").read_text())
+        assert report["executor_source_sha256"]==source_digest and report["disposable_only"]
+        assert report["intentional_restore_interruption"] is fail_restore
+        assert report["phase"]==("promotion_requires_inspection" if fail_restore else "promoted")
+        return report
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
+
 def main(fixture,exported=None):
     if os.geteuid()!=0 or os.environ.get("AFTERGRID_DISPOSABLE_RECOVERY_TEST")!="1":
         raise RuntimeError("Disposable CI only")
@@ -284,29 +373,10 @@ def main(fixture,exported=None):
                 assert applications=={ident:app_identity(ident) for ident in applications}
                 assert call(old,"/api/households")["households"][0]["name"]=="Guided household"
                 if promotion_failure:
-                    def bad_promotion():
-                        probe_candidate()
-                        # Simulate candidate schema changes in both canonical
-                        # databases, then reject the new version.
-                        run(cmd,"exec","-T","core","python","-c",
-                            "import sqlite3; c=sqlite3.connect('/data/core.sqlite3'); c.execute('CREATE TABLE failed_promotion_fixture (id INTEGER)'); c.commit(); c.close()")
-                        run(cmd,"exec","-T","worker","python3","-c",
-                            "import sqlite3; c=sqlite3.connect('/worker-state/jobs.sqlite3'); c.execute('CREATE TABLE failed_promotion_fixture (id INTEGER)'); c.commit(); c.close()")
-                        raise RuntimeError("Intentional canonical promotion failure")
-                    # Earlier runs exercised uninterrupted canonical rollback.
-                    # This fixture interrupts the real worker-volume helper after
-                    # moving the original files and recording its durable phase.
-                    # The next invocation must resume using the original helper.
-                    helper=core_update.RESTORE_WORKER
-                    interrupted=helper.replace('mark("extracting")','mark("extracting"); os._exit(87)',1)
-                    assert interrupted!=helper
-                    with patch.object(core_update,"RESTORE_WORKER",interrupted):
-                        try:core_update.promote_disposable(original,candidate,bad_promotion)
-                        except (RuntimeError,subprocess.CalledProcessError):
-                            pending=json.loads((candidate/"promotion.json").read_text())
-                            assert pending["phase"]=="promotion_requires_inspection"
-                            assert pending["resume_phase"]=="restoring_worker_state"
-                        else:raise AssertionError("Expected interrupted worker restoration")
+                    held=detached_promotion(original,candidate,core_update.live_core(original),observe_apps,True)
+                    assert held["phase"]=="promotion_requires_inspection"
+                    pending=json.loads((candidate/"promotion.json").read_text())
+                    assert pending["resume_phase"]=="restoring_worker_state"
                     assert applications=={ident:app_identity(ident) for ident in applications}
                     assert reader_fixture()
                     report=core_update.resume_disposable_rollback(original,candidate)
@@ -320,7 +390,7 @@ def main(fixture,exported=None):
                             "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert not c.execute(\"SELECT 1 FROM sqlite_master WHERE name='failed_promotion_fixture'\").fetchone(); c.close()",database)
                     probe_candidate()
                 if promote:
-                    promoted=core_update.promote_disposable(original,candidate,probe_candidate)
+                    promoted=detached_promotion(original,candidate,core_update.live_core(original),observe_apps)
                     assert promoted["phase"]=="promoted"
                     assert all(core_update.live_core(original)[name]["image"]==candidate_images[name]["image"] for name in prior)
                     assert (original/"core/update-fixture.txt").is_file()
@@ -345,7 +415,7 @@ def main(fixture,exported=None):
             run_trial(interrupt=True)
             run_trial(promotion_failure=True)
             run_trial(promote=True)
-            print("Source-built candidate images, forced probe failure, interrupted trial reconciliation, resumed worker restore and canonical promotion passed; Kiwix and Kopia stayed online.",flush=True)
+            print("Source-built candidate images, detached canonical promotion, interrupted detached worker restore and resumed rollback passed; Kiwix and Kopia stayed online.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")
             assert "core" in keys and "content/kiwix" in keys and "application/tak" not in keys
             for key in ("global","content/kiwix"):
@@ -665,5 +735,3 @@ print(j)
 if __name__=="__main__":
     if len(sys.argv) not in (2,3):raise SystemExit("Pinned ZIM fixture and optional private CI export path required")
     main(sys.argv[1],sys.argv[2] if len(sys.argv)==3 else None)
-
-
