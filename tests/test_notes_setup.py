@@ -43,11 +43,11 @@ def notes(monkeypatch):
                 if self.command == "GET":
                     if state["configured"]:
                         return self.respond("Already configured")
-                    return self.respond('<form><input name="d[title]"><input name="d[superuser]"><input name="d[password]" type="password"><input name="d[acl]" type="checkbox"><input name="d[license]" value="8" type="radio"></form>')
+                    return self.respond('<form><input name="d[title]"><input name="d[superuser]"><input name="d[password]" type="password"><input name="d[acl]" type="checkbox"><input name="d[license]" value="0" type="radio"></form>')
                 assert not state["configured"]
                 assert data["d[acl]"] == ["1"] and data["d[policy]"] == ["2"]
                 assert "d[allowreg]" not in data and "d[pop]" not in data
-                assert data["d[license]"] == ["8"] and data["d[confirm]"] == data["d[password]"]
+                assert data["d[license]"] == ["0"] and data["d[confirm]"] == data["d[password]"]
                 state["password"] = data["d[password]"][0]
                 state["configured"] = True
                 return self.respond("Installed")
@@ -170,4 +170,3 @@ def test_independent_guest_check_must_refuse_access(notes):
     notes["guest_blocked"] = False
     with pytest.raises(native.SetupError, match="Anonymous"):
         native.prepare("notes", value("verify"))
-

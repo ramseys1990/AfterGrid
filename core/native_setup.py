@@ -227,12 +227,12 @@ def notes_setup(client, value):
         names = {a.get("name") for a in page.inputs}
         if not {"d[title]", "d[superuser]", "d[password]", "d[acl]"} <= names:
             raise SetupError("DokuWiki is already configured or setup is unavailable; use Verify existing account")
-        if not any(a.get("name") == "d[license]" and a.get("value") == "8" for a in page.inputs):
+        if not any(a.get("name") == "d[license]" and a.get("value") == "0" for a in page.inputs):
             raise SetupError("DokuWiki installer options changed; keep the application local-only")
         client.request("/install.php", {"l": "en", "submit": "Save", "d[title]": "AfterGrid notes",
             "d[acl]": "1", "d[superuser]": value["username"], "d[fullname]": value["username"],
             "d[email]": value["username"] + "@aftergrid.home.arpa", "d[password]": value["password"],
-            "d[confirm]": value["password"], "d[policy]": "2", "d[license]": "8"}, form=True, text=True)
+            "d[confirm]": value["password"], "d[policy]": "2", "d[license]": "0"}, form=True, text=True)
     login = notes_page(client, "/doku.php?do=login")
     controls = login.forms.get("dw__login")
     token = next((v for k, v in controls or [] if k == "sectok"), "")
