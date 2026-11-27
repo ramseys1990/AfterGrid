@@ -9,5 +9,5 @@
   "upstream": "https://learningequality.org/kolibri/",
   "loopback_only": true,
   "lan_shareable": true,
-  "setup_note": "Complete native first-run facility and administrator setup locally or via SSH forwarding for ports 8086 and 8087. Then enable LAN sharing. Import educational channels via Kolibri's native content manager; use USB or local sources when offline."
+  "setup_note": "Complete native facility and administrator setup using Set up native account while both application ports remain local-only. Guest reading is enabled; learner accounts require passwords and self-registration is disabled. Automatic and learner-requested downloads are disabled. Then explicitly share on LAN and import educational channels in Kolibri; use USB or local sources offline."
 }

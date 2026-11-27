@@ -483,8 +483,18 @@ def kolibri_bindings():
     return json.loads(subprocess.check_output(["docker","inspect",ids[0]],text=True))[0]["NetworkSettings"]["Ports"]
 for port in ("8086/tcp","8087/tcp"):
     assert any(p["HostIp"]=="127.0.0.1" for p in kolibri_bindings()[port])
-# Disposable native provisioning. Do not use these credentials on a real host.
-subprocess.run(["docker","exec","-u","kolibri","aftergrid-kolibri-kolibri-1","kolibri","manage","provisiondevice","--noinput","--facility","AfterGrid CI","--superusername","ciadmin","--superuserpassword","disposable-education-test-password","--language_id","en","--preset","nonformal"],check=True)
+# Exercise the ordinary private portal setup path against the pinned native image.
+kolibri_setup_path="/api/admin/modules/kolibri/native-setup"
+kolibri_setup_payload={"mode":"create","username":"ciadmin","password":"disposable-education-test-password","confirmed":True}
+assert api(kolibri_setup_path,kolibri_setup_payload)["ok"]
+try:
+    api(kolibri_setup_path,kolibri_setup_payload)
+except urllib.error.HTTPError as exc:
+    assert exc.code==409
+else:
+    raise AssertionError("Configured Kolibri must refuse account creation")
+assert api(kolibri_setup_path,{**kolibri_setup_payload,"mode":"verify"})["ok"]
+
 action("share","kolibri")
 assert module("kolibri")["shared"]
 for port in ("8086/tcp","8087/tcp"):
@@ -494,6 +504,7 @@ action("stop","kolibri")
 assert module("kolibri")["status"]=="stopped"
 action("start","kolibri")
 assert module("kolibri")["status"]=="running" and kolibri_identity()==identity
+assert api(kolibri_setup_path,{**kolibri_setup_payload,"mode":"verify"})["ok"]
 recovered=verify_managed("kolibri","SQLite integrity and expected schema passed")
 assert subprocess.check_output(["sudo","cat",str(recovered/".node_id")]).strip()==identity
 action("uninstall","kolibri")
