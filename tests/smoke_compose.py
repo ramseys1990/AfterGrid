@@ -55,6 +55,30 @@ assert not api("/api/status")["selection_pending"]
 assert api("/api/admin/first-run",{"modules":["homebox","kiwix"]})==batch
 wait_job(batch["ids"][0],"kiwix initial install")
 assert module()["status"]=="running"
+# Fail early on native form/session compatibility before long module lifecycles.
+notes_setup_path="/api/admin/modules/notes/native-setup"
+notes_setup_payload={"mode":"create","username":"ciadmin","password":"disposable-wiki-test-password","confirmed":True}
+def notes_setup_call(payload):
+    try:
+        return api(notes_setup_path,payload)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail=json.loads(exc.read(4096)).get("detail")
+        except (ValueError,AttributeError):
+            detail=None
+        if not isinstance(detail,str) or len(detail)>300 or payload["password"] in detail:
+            detail="Native account setup refused (HTTP "+str(exc.code)+")"
+        raise AssertionError("DokuWiki native setup: "+detail) from None
+action("install","notes")
+assert notes_setup_call(notes_setup_payload)["ok"]
+try:
+    api(notes_setup_path,notes_setup_payload)
+except urllib.error.HTTPError as exc:
+    assert exc.code==409
+else:
+    raise AssertionError("Configured DokuWiki must refuse account creation")
+assert notes_setup_call({**notes_setup_payload,"mode":"verify"})["ok"]
+print("DokuWiki private portal setup and existing-account verification passed.",flush=True)
 plan=api("/api/admin/modules/kiwix/backup-plan")
 assert not plan["snapshot_verified"] and any(s["kopia_path"]=="/source/content/kiwix" for s in plan["sources"]),plan
 assert not api("/api/admin/backups/core")["snapshot_verified"]
@@ -570,28 +594,20 @@ assert subprocess.run(["sudo","test","-f","data/media/config/config/system.xml"]
 print("Jellyfin native setup, library, authentication, read-only media, sharing and lifecycle passed.")
 verify_content_backup("media")
 
-# Native DokuWiki installer and edit flow, using disposable credentials.
+# Native DokuWiki edit flow after the early private portal setup.
 from playwright.sync_api import sync_playwright, expect
-action("install","notes")
 assert module("notes")["status"]=="running"
 notes_base="http://127.0.0.1:8097"
 def notes_binding(host):
     inspect=json.loads(subprocess.check_output(["docker","inspect","aftergrid-notes-notes-1"],text=True))[0]
     assert any(p["HostIp"]==host for p in inspect["NetworkSettings"]["Ports"]["8080/tcp"])
 notes_binding("127.0.0.1")
+assert notes_setup_call({**notes_setup_payload,"mode":"verify"})["ok"]
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True)
     context=browser.new_context(service_workers="block")
     context.route("**/*",lambda route: route.continue_() if route.request.url.startswith(notes_base+"/") else route.abort())
     page=context.new_page()
-    page.goto(notes_base+"/install.php")
-    for field,value in {"title":"AfterGrid CI","superuser":"ciadmin","fullname":"CI Administrator","email":"ci@example.invalid","password":"disposable-wiki-test-password","confirm":"disposable-wiki-test-password"}.items():
-        page.locator("#"+field).fill(value)
-    page.locator("#acl").check()
-    page.locator("#policy").select_option("2")
-    page.locator("#allowreg").uncheck()
-    page.locator("#pop").uncheck()
-    page.locator("button[name=submit]").click()
     page.goto(notes_base+"/doku.php?id=emergency:fixture&do=login")
     page.locator("input[name=u]").fill("ciadmin")
     page.locator("input[name=p]").fill("disposable-wiki-test-password")
