@@ -78,6 +78,15 @@ class NativeClient:
                 return None
             code = exc.code
             exc.close()
+            if self.module == "notes" and code in (302, 303):
+                # Report only fixed request stages and redirect classification,
+                # never the native Location value, cookies or response body.
+                target = urllib.parse.urlsplit(location)
+                stage = "installer" if path == "/install.php" else ("page read" if body is None else "form submit")
+                same_origin = (target.scheme, target.netloc) == (urllib.parse.urlsplit(BASE[self.module]).scheme, urllib.parse.urlsplit(BASE[self.module]).netloc)
+                raise SetupError("DokuWiki redirect refused during " + stage +
+                    " (same origin: " + str(same_origin) + ", wiki path: " +
+                    str(target.path == "/doku.php") + "). Keep it local-only.") from None
             raise SetupError("Native request refused (HTTP " + str(code) + "). Check the account details and application status.") from None
         except (OSError, ValueError):
             raise SetupError("Native application unavailable. Check its status and try again.") from None
