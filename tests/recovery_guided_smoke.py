@@ -122,19 +122,21 @@ def detached_checkpoint(root, output, prior, observe, fail=False):
         assets.docker("rm","--force","--volumes",cid)
 
 
-# Fixed disposable promotion program. It must outlive the worker it replaces.
+# Fixed disposable host program. It must outlive the worker it replaces.
 DETACHED_PROMOTION = r'''
 import json, os, sys
 from pathlib import Path
-import core_update_tools as update
 for key in ("DOCKER_HOST", "DOCKER_CONTEXT"):
     os.environ.pop(key, None)
 root, candidate = map(Path, sys.argv[1:3])
-prior = json.loads(sys.argv[3])
-fail_restore = sys.argv[4] == "fail-restore"
 assert root.name == "original" and root.parent.name.startswith("aftergrid-guided-ci-")
 assert candidate.parent == root.parent
+sys.path.insert(0, str(root / "worker"))
+import core_update_tools as update
+prior = json.loads(sys.argv[3])
+fail_restore = sys.argv[4] == "fail-restore"
 assert update.live_core(root) == prior
+source_digest = update.candidate_source_digest(root)
 for name in ("core", "worker"):
     update.image_ref_matches("aftergrid-core-" + name, prior[name]["image"])
 plan = update.read_json_private(candidate / "candidate.json")
@@ -166,49 +168,47 @@ else:
     state = update.promote_disposable(root, candidate, probe)
     assert state["phase"] == "promoted"
 update.write_private_json(candidate / "detached-executor.json", {
-    "format": 1, "phase": state["phase"], "executor_image": prior["worker"]["image"],
+    "format": 1, "phase": state["phase"], "executor_source_sha256": source_digest,
     "intentional_restore_interruption": fail_restore, "disposable_only": True})
 '''
 
 def detached_promotion(root, candidate, prior, observe, fail_restore=False):
-    cid=assets.docker("run","--detach","--pull","never","--network","none",
-        "--read-only","--cap-drop","ALL","--cap-add","DAC_OVERRIDE",
-        "--cap-add","CHOWN","--cap-add","FOWNER",
-        "--security-opt","no-new-privileges","--tmpfs","/tmp",
-        "--env","AFTERGRID_DISPOSABLE_RECOVERY_TEST=1",
-        "--mount","type=bind,src="+str(root)+",dst="+str(root),
-        "--mount","type=bind,src="+str(candidate)+",dst="+str(candidate),
-        "--mount","type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock",
-        "--entrypoint","python3",prior["worker"]["image"],"-c",DETACHED_PROMOTION,
-        str(root),str(candidate),json.dumps(prior),"fail-restore" if fail_restore else "success")
-    assert re.fullmatch(r"[a-f0-9]{64}",cid)
+    source_digest=core_update.candidate_source_digest(root)
+    log_path=candidate/"detached-executor.log"
+    env={key:os.environ[key] for key in ("PATH","LD_LIBRARY_PATH","LANG","LC_ALL") if key in os.environ}
+    env["AFTERGRID_DISPOSABLE_RECOVERY_TEST"]="1"
+    # A host process avoids introducing a running writable Docker bind over
+    # canonical state. Keep the native checkpoint guard completely unchanged.
+    with log_path.open("xb") as output:
+        os.fchmod(output.fileno(),0o600)
+        process=subprocess.Popen([sys.executable,"-I","-c",DETACHED_PROMOTION,
+            str(root),str(candidate),json.dumps(prior),"fail-restore" if fail_restore else "success"],
+            stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,
+            start_new_session=True,env=env)
     try:
-        info=json.loads(assets.docker("container","inspect",cid))[0]
-        assert info["Image"]==prior["worker"]["image"]
-        assert info["HostConfig"]["NetworkMode"]=="none" and info["HostConfig"]["ReadonlyRootfs"]
-        assert not info["HostConfig"]["PortBindings"]
-        mounts={row["Destination"]:row for row in info["Mounts"]}
-        assert mounts[str(root)]["RW"] and mounts[str(candidate)]["RW"]
+        assert os.getsid(process.pid)==process.pid
         deadline=time.monotonic()+480
-        while assets.docker("container","inspect","--format","{{.State.Running}}",cid)=="true":
+        while process.poll() is None:
             observe()
             if time.monotonic()>deadline:raise RuntimeError("Detached promotion timed out")
             time.sleep(0.2)
         observe()
-        exit_code=int(assets.docker("wait",cid))
+        exit_code=process.wait(timeout=5)
         if exit_code!=0:
-            # Python tracebacks are on stderr; the shared docker helper returns
-            # stdout only. This fixed fixture program contains no credentials.
-            logs=subprocess.run(["docker","logs",cid],check=True,
-                stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=15).stdout
-            raise RuntimeError("Detached promotion failed (exit "+str(exit_code)+"): "+logs)
+            # Only this fixed disposable program's private diagnostics.
+            raise RuntimeError("Detached promotion failed (exit "+str(exit_code)+"): "+log_path.read_text())
         report=json.loads((candidate/"detached-executor.json").read_text())
-        assert report["executor_image"]==prior["worker"]["image"] and report["disposable_only"]
+        assert report["executor_source_sha256"]==source_digest and report["disposable_only"]
         assert report["intentional_restore_interruption"] is fail_restore
         assert report["phase"]==("promotion_requires_inspection" if fail_restore else "promoted")
         return report
     finally:
-        assets.docker("rm","--force","--volumes",cid)
+        if process.poll() is None:
+            process.terminate()
+            try:process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
 
 def main(fixture,exported=None):
     if os.geteuid()!=0 or os.environ.get("AFTERGRID_DISPOSABLE_RECOVERY_TEST")!="1":
