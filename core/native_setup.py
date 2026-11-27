@@ -72,8 +72,12 @@ class NativeClient:
                 exc.close()
                 return None
             if (redirect and self.module == "notes" and exc.code in (302, 303)
-                and urllib.parse.urlsplit(location).netloc == urllib.parse.urlsplit(BASE[self.module]).netloc
-                and urllib.parse.urlsplit(location).path == "/doku.php"):
+                and (urllib.parse.urlsplit(location).scheme, urllib.parse.urlsplit(location).netloc)
+                    == (urllib.parse.urlsplit(BASE[self.module]).scheme, urllib.parse.urlsplit(BASE[self.module]).netloc)
+                and urllib.parse.urlsplit(location).path in {"/doku.php", "/start"}):
+                # The official image enables native pretty URLs. Acknowledge
+                # its start-page redirect without following it; the caller
+                # independently reads fixed admin pages to verify the session.
                 exc.close()
                 return None
             code = exc.code

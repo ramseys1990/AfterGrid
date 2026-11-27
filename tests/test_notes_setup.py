@@ -20,7 +20,7 @@ def notes(monkeypatch):
     state = {"configured": False, "password": None, "calls": [], "admin": True,
              "closed": True, "acl": True, "registration_disabled": True,
              "updatecheck": True, "save": True, "failure": None, "guest_blocked": True,
-             "login_token": "", "config_token": TOKEN}
+             "login_token": "", "config_token": TOKEN, "redirect_path": "/start"}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -58,7 +58,7 @@ def notes(monkeypatch):
                 assert "wiki_session=anonymous" in cookie and data["sectok"] == [state["login_token"]]
                 if data["p"] != [state["password"]]:
                     return self.respond(login_form())
-                return self.respond(code=302, Location="/doku.php?id=start", Set_Cookie="wiki_session=admin; Path=/")
+                return self.respond(code=302, Location=state["redirect_path"], Set_Cookie="wiki_session=admin; Path=/")
             logout = '<a href="/doku.php?do=logout&amp;sectok='+TOKEN+'">Log out</a>'
             if self.path == "/doku.php?do=admin&page=acl":
                 if not authenticated or not state["admin"]:
@@ -83,13 +83,13 @@ def notes(monkeypatch):
                 assert data["config[tagline]"] == ["Keep & preserve"]
                 if state["save"]:
                     state["updatecheck"] = data["config[updatecheck]"] != ["0"]
-                return self.respond("Saved")
+                return self.respond(code=302, Location=state["redirect_path"])
             if self.path == "/doku.php?id=aftergrid:access-check":
                 assert not authenticated
                 return self.respond(login_form() if state["guest_blocked"] else "Public wiki page")
             if self.path == "/doku.php" and data.get("do") == ["logout"]:
                 assert authenticated and data["sectok"] == [TOKEN]
-                return self.respond(code=302, Location="/doku.php?id=start", Set_Cookie="wiki_session=; Max-Age=0; Path=/")
+                return self.respond(code=302, Location=state["redirect_path"], Set_Cookie="wiki_session=; Max-Age=0; Path=/")
             return self.respond(code=404)
 
         do_GET = do_POST = handle_request
@@ -108,11 +108,21 @@ def value(mode="create"):
     return {"mode": mode, "username": "operator", "password": "disposable-notes-password", "confirmed": True}
 
 
-def test_native_installer_login_closed_policy_config_preservation_and_logout(notes):
+@pytest.mark.parametrize("redirect_path", ["/start", "/doku.php?id=start"])
+def test_native_installer_login_closed_policy_config_preservation_and_logout(notes, redirect_path):
+    notes["redirect_path"] = redirect_path
     result = native.prepare("notes", value())
     assert result["ok"] and notes["configured"] and notes["updatecheck"] is False
     assert value()["password"] not in json.dumps(result)
     assert notes["calls"][-1] == ("POST", "/doku.php")
+
+
+@pytest.mark.parametrize("redirect_path", ["http://untrusted.invalid/start", "/unexpected"])
+def test_unreviewed_redirects_are_refused_without_following(notes, redirect_path):
+    notes["redirect_path"] = redirect_path
+    with pytest.raises(native.SetupError, match="redirect refused"):
+        native.prepare("notes", value())
+    assert not any(path == "/unexpected" for method, path in notes["calls"])
 
 
 def test_existing_verify_never_reconfigures_or_resets(notes):
