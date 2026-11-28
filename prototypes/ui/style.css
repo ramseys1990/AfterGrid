@@ -23,3 +23,15 @@ input[type=file]{max-width:100%}.field{min-width:0}.field input,.field select{ma
 
 /* Example notification inbox and connection-state layout */
 .notice-card{display:grid;gap:10px;min-width:0}.notice-card .panel-header{flex-wrap:wrap}.notice-card p{overflow-wrap:anywhere}.notice-kind{font-size:.75rem;color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:var(--radius)}.notice-card .actions{flex-wrap:wrap}.top-actions{min-width:0;flex-wrap:wrap}#notifications-shortcut{font-size:.83rem}
+
+/* Distinct theme treatments without changing component meaning or hierarchy. */
+:root[data-theme=overwatch] .hero:after{background:repeating-linear-gradient(0deg,transparent 0 31px,var(--accent) 32px 33px),repeating-linear-gradient(90deg,transparent 0 31px,var(--accent) 32px 33px);opacity:.075;transform:rotate(-15deg)}
+:root[data-theme=overwatch] .metric{border-top:3px solid var(--accent)}
+:root[data-theme=outpost] .hero:after{opacity:.13}
+:root[data-theme=essential] .hero:after{display:none}
+:root[data-theme=essential] .tile-icon{border-color:transparent}
+:root[data-theme=fortress] .hero:after{background:repeating-linear-gradient(135deg,transparent 0 24px,var(--accent) 25px 27px,transparent 28px 48px);opacity:.075;transform:none}
+:root[data-theme=fortress] .metric{border-left:4px solid var(--accent)}
+.theme-choice[aria-pressed=true]:focus-visible{outline-offset:5px}
+@media(max-width:850px){.sidebar .nav-item{min-height:48px}.sidebar .workspace{font-size:.85rem}.topbar{align-items:center}}
+@media(max-width:470px){.topbar .top-actions{flex-basis:100%;justify-content:flex-end}.topbar .top-actions button{flex:0 1 auto}.notice-card .panel-header strong{overflow-wrap:anywhere}.map-caption{max-width:calc(100% - 20px)}}
