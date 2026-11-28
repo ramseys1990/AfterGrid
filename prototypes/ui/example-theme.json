@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "theme_api": 1,
+  "version": "1.0.0",
+  "author": "Example contributor",
+  "license": "MIT",
+  "theme": {
+    "id": "local.expedition",
+    "name": "Expedition",
+    "description": "Example custom theme for offline import.",
+    "radius": 10,
+    "light": {
+      "bg": "#E9EDE5",
+      "panel": "#FAFCF7",
+      "sidebar": "#DCE4D8",
+      "text": "#203126",
+      "muted": "#4C6250",
+      "accent": "#365E38",
+      "onAccent": "#FFFFFF",
+      "border": "#859985",
+      "hero": "#D1DFC8"
+    },
+    "dark": {
+      "bg": "#101713",
+      "panel": "#1C2820",
+      "sidebar": "#151E18",
+      "text": "#E3ECDD",
+      "muted": "#A4B5A0",
+      "accent": "#A1CE88",
+      "onAccent": "#142014",
+      "border": "#526752",
+      "hero": "#233829"
+    }
+  }
+}
