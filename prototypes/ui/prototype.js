@@ -22,15 +22,23 @@ const homeNav=()=>[["home","Home"],...tools.filter(t=>resourceAvailable(t[0])).m
 function persist(){try{localStorage.setItem("aftergrid-ui-prototype-v1",JSON.stringify(prefs));}catch{}}
 function apply(){T.apply(root,themeResolve());root.dataset.density=prefs.density;root.dataset.motion=prefs.motion?"reduced":"normal";persist();}
 document.querySelector(".skip").addEventListener("click",e=>{e.preventDefault();$("main").focus();});
-function go(id){if(id==="home"){workspace="home";}if(id==="overview")workspace="admin";if(page===id&&location.hash==="#"+id){render();return;}location.hash=id;}
-function readRoute(){const id=location.hash.slice(1);if(id==="main"&&$("page").children.length)return;if(id==="home")workspace="home";if(id==="overview"||id.startsWith("app-")||["applications","marketplace","setup","backup","updates","activity","notifications","content"].includes(id))workspace="admin";else if(["knowledge","maps","communications","education","notes","media","plans"].includes(id))workspace="home";const allowed=(workspace==="home"?homeNav():adminNav).some(n=>n[0]===id)||(workspace==="admin"&&id.startsWith("app-")&&catalogApps.some(t=>t[0]===id.slice(4)));page=allowed?id:workspace==="home"?"home":"overview";render();}
+// Shared pages have explicit household URLs so reload and Back cannot switch workspaces.
+function routeHref(id,area=workspace){return "#"+(area==="home"&&["supplies","appearance"].includes(id)?"home/":"")+id;}
+function go(id){if(id==="home")workspace="home";if(id==="overview")workspace="admin";const href=routeHref(id);if(location.hash===href){readRoute();return;}location.hash=href;}
+function readRoute(){let id=location.hash.slice(1);if(id==="main"&&$("page").children.length)return;
+  if(["home/supplies","home/appearance"].includes(id)){workspace="home";id=id.slice(5);}
+  else if(id==="home"||["knowledge","maps","communications","education","notes","media","plans"].includes(id))workspace="home";
+  else workspace="admin";
+  const allowed=(workspace==="home"?homeNav():adminNav).some(n=>n[0]===id)||(workspace==="admin"&&id.startsWith("app-")&&catalogApps.some(t=>t[0]===id.slice(4)));
+  page=allowed?id:workspace==="home"?"home":"overview";render();
+}
 function nav(){const mobile=$("mobile-nav");mobile.hidden=false;mobile.setAttribute("aria-label",workspace==="home"?"Household shortcuts":"Administration shortcuts");
 const destinations=workspace==="home"?[["home","Home"],["knowledge","Knowledge"],["maps","Maps"],["plans","Plans"],["appearance","Settings"]].filter(([id])=>id==="home"||id==="appearance"||resourceAvailable(id)):[["overview","Overview"],["applications","Apps"],["content","Resources"],["notifications","Alerts"],["updates","System"]];
 const current=id=>page===id||workspace==="admin"&&(id==="applications"&&page.startsWith("app-")||id==="content"&&page==="supplies"||id==="notifications"&&page==="activity"||id==="updates"&&["backup","setup","appearance","marketplace"].includes(page));
-mobile.innerHTML=destinations.map(([id,label])=>'<a href="#'+id+'" '+(current(id)?'aria-current="page"':'')+'>'+icon(id)+'<span>'+label+'</span></a>').join("");
+mobile.innerHTML=destinations.map(([id,label])=>'<a href="'+routeHref(id)+'" '+(current(id)?'aria-current="page"':'')+'>'+icon(id)+'<span>'+label+'</span></a>').join("");
 document.body.dataset.workspace=workspace;
 updateNoticeCount();const items=workspace==="home"?homeNav():adminNav;$("workspace").value=workspace;
-const link=([id,name])=>'<a class="nav-item" href="#'+id+'" '+((id===page||id==="applications"&&page.startsWith("app-"))?'aria-current="page"':'')+'>'+icon(id)+name+'</a>';
+const link=([id,name])=>'<a class="nav-item" href="'+routeHref(id)+'" '+((id===page||id==="applications"&&page.startsWith("app-"))?'aria-current="page"':'')+'>'+icon(id)+name+'</a>';
 const groups=workspace==="admin"?[["Operations",["overview","applications","activity","notifications"]],["Resources",["content","supplies"]],["System",["updates","backup","setup","appearance","marketplace"]]]:[["Household",items.map(t=>t[0]).filter(id=>id!=="appearance")],["Preferences",["appearance"]]];
 $("navigation").innerHTML=groups.map(([label,ids])=>'<div class="nav-group"><span class="nav-heading">'+label+'</span>'+ids.map(id=>items.find(t=>t[0]===id)).filter(Boolean).map(link).join("")+'</div>').join("");
 $("breadcrumb").textContent=(workspace==="home"?"Household":"Administration")+" / "+(page.startsWith("app-")?"Application details":(items.find(n=>n[0]===page)||items[0])[1]);
@@ -156,9 +164,9 @@ function updateCatalogTabs(){
 function installMobileSections(){
   const host=$("page"),children=[...host.children],plan=sectionPlan(children);
   if(!plan.length||plan.some(([, ,indices])=>!indices.length||indices.some(i=>!children[i])))return;
-  for(const [id,,indices] of plan)for(const i of indices)children[i].dataset.sectionGroup=id;
+  for(const [id,,indices] of plan)for(const i of indices){const node=children[i];node.dataset.sectionGroup=id;if(!node.id)node.id="section-"+id+"-"+i;}
   const bar=document.createElement("nav");bar.id="mobile-sections";bar.setAttribute("aria-label","Page sections");
-  bar.innerHTML=plan.concat([["all","All",[]]]).map(([id,label])=>'<button type="button" class="quiet" data-mobile-section="'+id+'" aria-pressed="false">'+label+'</button>').join("");
+  bar.innerHTML=plan.concat([["all","All",plan.flatMap(([, ,indices])=>indices)]]).map(([id,label,indices])=>'<button type="button" class="quiet" data-mobile-section="'+id+'" aria-controls="'+indices.map(i=>children[i].id).join(" ")+'" aria-pressed="false">'+label+'</button>').join("");
   children[0].after(bar);
   if(page==="content")children[3].classList.add("desktop-content-shortcuts");
   const saved=mobileSections[mobileSectionKey()];selectMobileSection(saved&&plan.concat([["all"]]).some(([id])=>id===saved)?saved:plan[0][0]);
@@ -179,7 +187,7 @@ function setMenu(open,returnFocus=false){
 }
 $("menu").addEventListener("click",()=>setMenu(!document.querySelector(".shell").classList.contains("menu-open"),true));
 $("workspace-sidebar").addEventListener("keydown",e=>{if(e.key==="Escape"&&document.querySelector(".shell").classList.contains("menu-open")&&$("menu").getClientRects().length){e.preventDefault();setMenu(false,true);}});
-matchMedia("(max-width: 850px)").addEventListener("change",e=>{if(!e.matches)setMenu(false);});
+mobileWidth.addEventListener("change",e=>{if(!e.matches){setMenu(false);return;}const active=document.activeElement;if(active&&active.closest("[data-section-hidden]"))$("mobile-sections")?.querySelector('[aria-pressed="true"]')?.focus();});
 
 $("navigation").addEventListener("click",e=>{if(e.target.closest("a")){setMenu(false);$("main").focus();}});
 $("mobile-nav").addEventListener("click",e=>{if(e.target.closest("a")){setMenu(false);}});
