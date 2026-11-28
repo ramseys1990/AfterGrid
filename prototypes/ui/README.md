@@ -1,6 +1,6 @@
 # AfterGrid Phase 4 design lab
 
-Standalone, unshipped UI prototype. No API calls, live credentials, service actions or Docker dependencies. The Phase 3 portal, runtime assets, CI and roadmap acceptance counters are unchanged. The prototype is deliberately outside core/ and is not copied into the image.
+Standalone, unshipped UI prototype. No API calls, live credentials, service actions or Docker dependencies. The Phase 3 portal, runtime assets, existing CI and roadmap acceptance counters are unchanged. A separate UI prototype workflow runs without Docker. The prototype is deliberately outside core/ and is not copied into the image.
 
 ## Preview
 
@@ -12,10 +12,17 @@ Open http://127.0.0.1:8765/ in a browser. Stop the temporary server with Ctrl+C.
 
 ## Current slice
 
-- Overwatch reference theme, Outpost, Essential and Fortress, each in light/dark/system; semantic tokens, shared CSS components, local inline SVG icons, system font, compact/comfortable density and reduced motion. Browser preference persistence, reset and invalid-ID fallback. Built-in theme format is a provisional inner palette contract, not the final package manifest; custom import/export and server defaults are not implemented.
-- Responsive shell and explicit household/admin preview switch, installed-tool launcher with search/favorites, overview, filterable application catalog/detail and simulated install/remove, appearance, local resource and management view stubs, five-stage core-only-default first-run simulation, and accessible native dialog pattern with cancel/Escape/focus return.
+- Overwatch reference theme, Outpost, Essential and Fortress, each in light/dark/system; semantic tokens, shared CSS components, local inline SVG icons, system font, compact/comfortable density and reduced motion. Browser preference persistence, reset and invalid-ID fallback. All built-ins use the same versioned package envelope and palette validator as custom themes. Local file/paste import, browser-local persistence, duplicate/size/contrast validation, JSON copy/download, removal and fallback are implemented. Server defaults, server-side storage and backup/recovery integration remain unimplemented.
+- Responsive shell and explicit household/admin preview switch, installed-tool launcher with search/favorites, overview, filterable application catalog/detail and simulated install/remove, appearance, detailed maps/route, communications/PACE, household/inventory, content, updates, backup/recovery views, five-stage core-only-default first-run simulation, and accessible native dialog pattern with cancel/Escape/focus return.
 - Example-only data: no real metrics, map content, inventory, live mesh data, backups, updates, or authentication. Prototype lifecycle changes are in memory only.
 - Palette validation: twelve text/accent-to-background combinations plus accent-button text checked per mode, minimum 4.5:1. Does not establish WCAG conformance of the rendered UI. No arbitrary CSS/JS imports, external assets or custom code.
+
+- Future marketplace preview: hypothetical local catalog with search and type filtering, package details, trust/compatibility/size disclosures and simulated refresh/approval. No remote catalog or real installs.
+- Application details show separate example service state, native access, update/backup status and advanced diagnostics. Start/stop/restart and install/remove are simulated in memory. Other operational buttons preview a confirmation and append example activity; they do not execute the underlying action.
+
+## Community theme package v1 draft
+
+See theme.schema.json and example-theme.json. The envelope has schema_version, theme_api, version, author, license and the palette manifest (theme). All four built-ins use this envelope internally. Local imports require a local.* or community.* namespaced identifier; built-in IDs cannot be replaced. Exporting a built-in creates a namespaced editable copy. Local packages are limited to 16 KiB each and 16 installed per browser. Runtime validation is authoritative and adds contrast, whitespace and metadata checks beyond JSON Schema. Hex values only; bounded radius; no arbitrary CSS, HTML, JavaScript, font upload or external resources. Metadata is escaped on display. Invalid stored packages are ignored. The exported JSON is a prototype contract and may change before 1.0; the server-side import/admission, persistence and recovery gates remain open.
 
 ## Initial source audit and integration map
 
@@ -41,6 +48,6 @@ Run pure checks with Node 22 or later:
     cd prototypes/ui
     node --test themes.test.js
 
-No dependency installation. The initial committed source was read back, JavaScript syntax compiled in an isolated JS runtime and built-in palette validation/fallback exercised there. The Node harness and real browser rendering have not yet been run. For browser acceptance test all four themes in both modes, system switching, keyboard and focus, desktop/tablet/phone widths, workspace navigation, filtering, favorites, settings reload, core-only wizard, detail and confirmation cancel/Escape, and no off-origin requests. Existing browser acceptance tests remain separate. Check actual contrast, touch targets, native dialog focus and responsive screenshots. No checklist completion or production acceptance claimed.
+No dependency installation. The committed source was read back, JavaScript syntax compiled and six committed assertion bodies passed in an isolated JS runtime adapter (not the actual Node runner). A standalone browser_test.py runs a temporary loopback static server and exercises eight palettes across desktop/tablet/phone widths, system switching, preferences/reload, local package import/export/rejection/removal, metadata escaping, workspace navigation, search/favorites, catalog detail and simulated lifecycle, confirmation cancel/Escape, core-only setup, marketplace filters, and off-origin request refusal. Run with the existing project Playwright version 1.51.0 and Chromium installed: python prototypes/ui/browser_test.py from the root. A dedicated UI prototype checks workflow runs the Node harness and browser test without Docker; its result must be collected before claiming browser acceptance. Existing browser acceptance tests remain separate. Check actual contrast, touch targets, native dialog focus and responsive screenshots. No checklist completion or production acceptance claimed.
 
-Next: approve design refinements, implement final schema and shared accessibility component contracts, deepen page prototypes using explicit fixtures, add automated browser tests, then integrate one real view at a time after Phase 3 closure or approved deferral.
+Next: collect the dedicated CI results and fix failures; review actual rendered desktop/mobile layouts and accessibility beyond the initial checks; finalize the pre-release theme contract and server storage/backup design. Then integrate one real view at a time after Phase 3 closure or approved deferral. Keep marketplace implementation post-1.0; its preview is not a release requirement.
