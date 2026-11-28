@@ -12,9 +12,22 @@ Keep milestones functional, not paperwork-heavy.
 | 0.6 | Meshtastic, MeshCore, TAK, hardware/client setup | Planned |
 | 0.7 | Kolibri, media, notes, PACE, content packs | Planned |
 | 0.8 | Controlled manual and opt-in automatic updates, backup/restore | Planned |
+| 0.9 | Phase 4: UI overhaul, four built-in themes, local theme extensibility and usability/accessibility acceptance | Planned; after Phase 3 closeout or explicit operator-approved deferral. [Master checklist](UI_OVERHAUL.md) |
 | 1.0 | Real disconnected operation and clean-machine recovery, documentation | Planned |
+| 1.1 (proposed) | Marketplace foundation and curated community themes | Post-1.0; M1 in [marketplace plan](MARKETPLACE.md) |
+| 1.2 (proposed) | Curated offline content packs | Post-1.0; M2 in [marketplace plan](MARKETPLACE.md) |
+| 1.3 (proposed) | Reviewed community Compose modules | Post-1.0; M3 in [marketplace plan](MARKETPLACE.md) |
+| Later | Theme Studio, portable offline package collections, potential additional trusted catalogs | Post-1.0; M4 in [marketplace plan](MARKETPLACE.md) |
 
 Basic data preservation and security start now. Full offline recovery and AI must not block functional module development. Additional candidates: file sharing, documents, power monitoring, weather stations, offline translation, local AI and optional inter-household synchronization.
+
+## Upcoming UI and community ecosystem milestones — 2026-11-27
+
+Operator-approved direction: one shared responsive frontend with household and administrator experiences, Overwatch tactical design as the first reference, and four selectable built-in themes (Outpost, Essential, Fortress, Overwatch) in light/dark/system mode. Use one validated versioned theme format for built-ins and future community themes. Local import/export, offline assets, accessibility, safe fallback and theme recovery are planned before 1.0; no arbitrary CSS/JS or mandatory identity changes. [Phase 4 UI overhaul master checklist (0/20)](UI_OVERHAUL.md) carries forward existing live UI observations.
+
+After 1.0, build the [curated GitHub-hosted marketplace](MARKETPLACE.md) in stages: M1 catalog/trust/cache and themes; M2 content packs; M3 reviewed modules with restricted worker admission; M4 creation tools and portable offline packages. Proposed separate marketplace repository; no repository or infrastructure needed yet. Catalog refresh is optional and offline use independent; no automatic installs or broad host permissions. Reuse existing Compose, content and Kopia paths. Future milestone numbers are provisional, not release dates.
+
+These are planning additions only. Do not interrupt current Phase 3 work, mark existing acceptance complete, or make marketplace availability a v1.0 release gate. No implementation or test result is implied.
 
 ## Immediate next test
 Install the core in a clean Debian/Ubuntu guest. Open setup, create admin, log out/in, restart core, confirm account persists and only core is installed. Check multi-module selection, job progress and independent retries. Next: guided native setup and stable local URLs, then offline content and maps.
