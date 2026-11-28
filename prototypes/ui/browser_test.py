@@ -5,11 +5,11 @@ from pathlib import Path
 from threading import Thread
 from urllib.parse import urlsplit
 import json
-from playwright.sync_api import sync_playwright, expect
-
 ROOT = Path(__file__).resolve().parent
 
 def main():
+    from playwright.sync_api import sync_playwright, expect
+
     server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(ROOT)))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
