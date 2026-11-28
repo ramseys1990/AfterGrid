@@ -409,24 +409,27 @@ def mesh_resolve(host,*args,**kwargs):
     # while retaining the browser's real Host, Origin and cookie scope.
     return resolve(os.environ["AFTERGRID_LAN_BIND"] if host=="meshmonitor.aftergrid.home.arpa" else host,*args,**kwargs)
 native=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+def mesh_login(password):
+    with native.open(meshbase+"/api/csrf-token",timeout=20) as res:csrf=json.load(res)["csrfToken"]
+    req=urllib.request.Request(meshbase+"/api/auth/login",data=json.dumps({"username":"admin","password":password}).encode(),headers={"Origin":meshbase,"Content-Type":"application/json","X-CSRF-Token":csrf})
+    with native.open(req,timeout=20) as res:return json.load(res)
 with patch("socket.getaddrinfo",side_effect=mesh_resolve):
     with native.open(meshbase+"/api/auth/status",timeout=20) as res:
-        assert json.load(res)["authenticated"] is False
+        auth=json.load(res)
+        assert auth["authenticated"] is False and auth["anonymousDisabled"] is True
+    # Upstream system status can be public; user administration is explicitly protected.
     try:
-        native.open(meshbase+"/api/system/status",timeout=20).close()
+        native.open(meshbase+"/api/users",timeout=20).close()
     except urllib.error.HTTPError as exc:
         assert exc.code in (401,403)
         exc.close()
     else:
-        raise AssertionError("Anonymous MeshMonitor system access unexpectedly allowed")
-    with native.open(meshbase+"/api/csrf-token",timeout=20) as res:csrf=json.load(res)["csrfToken"]
-    req=urllib.request.Request(meshbase+"/api/auth/login",data=json.dumps({"username":"admin","password":creds["initial_password"]}).encode(),headers={"Origin":meshbase,"Content-Type":"application/json","X-CSRF-Token":csrf})
-    with native.open(req,timeout=20) as res:
-        assert json.load(res)["success"] is True
+        raise AssertionError("Anonymous MeshMonitor user administration unexpectedly allowed")
+    assert mesh_login(creds["initial_password"])["success"] is True
     with native.open(meshbase+"/api/auth/status",timeout=20) as res:
         auth=json.load(res)
         assert auth["authenticated"] is True and auth["user"]["isAdmin"] is True
-    with native.open(meshbase+"/api/system/status",timeout=20) as res:
+    with native.open(meshbase+"/api/users",timeout=20) as res:
         assert res.status==200
     with native.open(meshbase+"/api/csrf-token",timeout=20) as res:csrf=json.load(res)["csrfToken"]
     req=urllib.request.Request(meshbase+"/api/auth/logout",data=b"{}",headers={"Origin":meshbase,"Content-Type":"application/json","X-CSRF-Token":csrf})
@@ -435,6 +438,8 @@ with patch("socket.getaddrinfo",side_effect=mesh_resolve):
         assert json.load(res)["authenticated"] is False
 action("unshare","meshmonitor")
 assert not module("meshmonitor")["shared"]
+meshbase="http://127.0.0.1:8085"
+native=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 action("stop","meshmonitor")
 assert module("meshmonitor")["status"]=="stopped"
 action("start","meshmonitor")
