@@ -1,0 +1,150 @@
+"""Standalone browser regression; never connects to AfterGrid or Docker."""
+from functools import partial
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+from threading import Thread
+from urllib.parse import urlsplit
+import json
+from playwright.sync_api import sync_playwright, expect
+
+ROOT = Path(__file__).resolve().parent
+
+def main():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(ROOT)))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    errors, external = [], []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+            def route(req):
+                url = urlsplit(req.request.url)
+                if url.scheme in ("http", "https") and (url.scheme, url.netloc) != ("http", urlsplit(base).netloc):
+                    external.append(req.request.url)
+                    req.abort()
+                else:
+                    req.continue_()
+            context.route("**/*", route)
+            page = context.new_page()
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(base)
+            expect(page.locator("#page h1")).to_have_text("Life beyond the grid.")
+            page.locator("#appearance-shortcut").click()
+            for width in (1280, 768, 390):
+                page.set_viewport_size({"width": width, "height": 900})
+                for theme in ("overwatch", "outpost", "essential", "fortress"):
+                    page.locator(f'[data-theme-choice="{theme}"]').click()
+                    for mode in ("light", "dark"):
+                        page.locator("#mode").select_option(mode)
+                        expect(page.locator("html")).to_have_attribute("data-theme", theme)
+                        expect(page.locator("html")).to_have_attribute("data-mode", mode)
+                        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), (width, theme, mode)
+            page.emulate_media(color_scheme="light")
+            page.locator("#mode").select_option("system")
+            expect(page.locator("html")).to_have_attribute("data-mode", "light")
+            page.emulate_media(color_scheme="dark")
+            expect(page.locator("html")).to_have_attribute("data-mode", "dark")
+            page.locator("#density").select_option("compact")
+            page.locator("#motion").check()
+            expect(page.locator("html")).to_have_attribute("data-density", "compact")
+            page.reload()
+            expect(page.locator("html")).to_have_attribute("data-theme", "fortress")
+            expect(page.locator("#mode")).to_have_value("system")
+            expect(page.locator("#motion")).to_be_checked()
+            page.locator("#theme-example").click()
+            page.locator("#theme-import").click()
+            expect(page.locator("html")).to_have_attribute("data-theme", "local.expedition")
+            expect(page.locator("#theme-result")).to_contain_text("Imported")
+            page.reload()
+            expect(page.locator("html")).to_have_attribute("data-theme", "local.expedition")
+            page.locator("#theme-export").click()
+            package = json.loads(page.locator("#theme-json").input_value())
+            assert package["theme"]["id"] == "local.expedition"
+            with page.expect_download() as received:
+                page.locator("#theme-download").click()
+            assert received.value.suggested_filename == "local.expedition.json"
+            page.locator("#theme-import").click()
+            expect(page.locator("#theme-result")).to_contain_text("already exists")
+            page.locator("#theme-json").fill('{"schema_version":99}')
+            page.locator("#theme-import").click()
+            expect(page.locator("#theme-result")).to_contain_text("Unsupported")
+            page.locator("#theme-remove").click()
+            expect(page.locator("#confirmation")).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(page.locator("#confirmation")).not_to_be_visible()
+            expect(page.locator("#theme-remove")).to_be_focused()
+            page.locator("#theme-remove").click()
+            page.locator("#dialog-confirm").click()
+            expect(page.locator("html")).to_have_attribute("data-theme", "overwatch")
+            # File import; markup-looking metadata must render as text, not HTML.
+            package["theme"]["id"] = "local.escape"
+            package["theme"]["name"] = "<b>Example</b>"
+            page.locator("#theme-file").set_input_files({"name": "test.json", "mimeType": "application/json", "buffer": json.dumps(package).encode()})
+            expect(page.locator('[data-theme-choice="local.escape"]')).to_contain_text("<b>Example</b>")
+            assert page.locator('[data-theme-choice="local.escape"] b').count() == 0
+            page.locator("#menu").click()
+            expect(page.locator("#navigation")).to_be_visible()
+            page.locator("#workspace").select_option("home")
+            expect(page.locator("#page h1")).to_have_text("Life beyond the grid.")
+            page.locator("#tool-search").fill("knowledge")
+            expect(page.locator(".tile")).to_have_count(1)
+            page.locator('[data-favorite="knowledge"]').click()
+            expect(page.locator('[data-favorite="knowledge"]')).to_have_attribute("aria-pressed", "true")
+            page.locator('[data-open="knowledge"]').click()
+            expect(page.locator("#page h1")).to_have_text("Knowledge library")
+            page.goto(base + "/#maps")
+            expect(page.locator("#page h1")).to_have_text("Maps & navigation")
+            expect(page.locator("#route-start")).to_be_visible()
+            page.goto(base + "/#communications")
+            expect(page.get_by_role("heading", name="PACE plan", exact=True)).to_be_visible()
+            page.set_viewport_size({"width": 1280, "height": 900})
+            page.locator("#workspace").select_option("admin")
+            page.goto(base + "/#applications")
+            page.locator("#catalog-filter").select_option("optional")
+            page.locator('[data-app="education"]').click()
+            expect(page.locator("#page h1")).to_have_text("Education")
+            page.locator('[data-install-demo="education"]').click()
+            page.locator("#dialog-cancel").click()
+            expect(page.locator('[data-install-demo="education"]')).to_have_text("Simulate installation")
+            page.locator('[data-install-demo="education"]').click()
+            page.locator("#dialog-confirm").click()
+            expect(page.locator('[data-install-demo="education"]')).to_have_text("Simulate removal")
+            page.locator('[data-demo="stop:education"]').click()
+            page.locator("#dialog-confirm").click()
+            expect(page.locator(".metric").nth(1)).to_contain_text("Example stopped")
+            page.goto(base + "/#setup")
+            page.locator('[data-step="next"]').click()
+            assert page.locator('[data-select]:checked').count() == 0
+            page.locator('[data-step="skip"]').click()
+            expect(page.get_by_text("Core only", exact=True)).to_be_visible()
+            page.locator('[data-step="next"]').click()
+            expect(page.get_by_text("Example ready", exact=True)).to_be_visible()
+            page.locator('[data-step="next"]').click()
+            expect(page.get_by_role("heading", name="5. Ready")).to_be_visible()
+            for route_id, title in (("content", "Content & maps"), ("supplies", "Households & inventory"), ("updates", "Updates"), ("backup", "Backup & recovery"), ("activity", "Activity")):
+                page.goto(base + "/#" + route_id)
+                expect(page.locator("#page h1")).to_have_text(title)
+            page.goto(base + "/#marketplace")
+            page.locator("#market-category").select_option("Themes")
+            expect(page.locator(".tile")).to_have_count(2)
+            page.locator("#market-search").fill("Expedition")
+            expect(page.locator(".tile")).to_have_count(1)
+            page.locator('[data-market="expedition"]').click()
+            expect(page.get_by_role("heading", name="Expedition", exact=True)).to_be_visible()
+            expect(page.get_by_text("Illustrative, unreviewed", exact=True)).to_be_visible()
+            page.locator("#market-back").click()
+            expect(page.locator("#market-search")).to_have_value("Expedition")
+            context.close()
+            browser.close()
+        assert not errors, errors
+        assert not external, external
+        print("Standalone browser regression passed: themes, preferences, import/export, navigation, lifecycle, setup, marketplace and no external requests.")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+if __name__ == "__main__":
+    main()
