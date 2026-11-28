@@ -32,6 +32,14 @@ def main():
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(base)
             expect(page.locator("#page h1")).to_have_text("Life beyond the grid.")
+            # Keyboard-only first navigation and named landmarks.
+            page.keyboard.press("Tab")
+            expect(page.locator(".skip")).to_be_focused()
+            page.keyboard.press("Enter")
+            expect(page.locator("#main")).to_be_focused()
+            expect(page.get_by_role("navigation", name="Main navigation")).to_be_visible()
+            expect(page.get_by_role("main")).to_have_count(1)
+            expect(page.locator("#navigation [aria-current=page]")).to_have_count(1)
             expect(page.get_by_role("heading", name="Connection & availability")).to_be_visible()
             expect(page.get_by_text("Internet reachability", exact=True)).to_be_visible()
             page.locator("#notifications-shortcut").click()
@@ -251,9 +259,31 @@ def main():
                     page.goto(base + "/#" + route_id)
                     expect(page.locator("#page h1")).to_have_text(title)
                     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), (device, route_id)
+                    # Lightweight structural checks; not an accessibility certification.
+                    issues = page.evaluate("""() => {
+                      const visible = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+                      const ids = [...document.querySelectorAll('[id]')].map(e=>e.id);
+                      const duplicate = ids.filter((id,i)=>ids.indexOf(id)!==i);
+                      const unlabeled = [...document.querySelectorAll('button, a[href], input, select, textarea')].filter(visible).filter(e=> {
+                        if(e.getAttribute('aria-label')?.trim() || e.getAttribute('aria-labelledby') || e.textContent.trim() || e.labels?.length) return false;
+                        return true;
+                      }).map(e=>e.id || e.outerHTML.slice(0,100));
+                      return {duplicate, unlabeled};
+                    }""")
+                    assert not issues["duplicate"], (device, route_id, issues)
+                    assert not issues["unlabeled"], (device, route_id, issues)
                     if output:
                         page.screenshot(path=str(output / f"{device}-overwatch-dark-{route_id}.png"), full_page=True, animations="disabled")
                 page.goto(base + "/#overview")
+            page.set_viewport_size({"width": 1280, "height": 900})
+            page.emulate_media(forced_colors="active", reduced_motion="reduce")
+            page.goto(base + "/#overview")
+            expect(page.locator("#navigation [aria-current=page]")).to_be_visible()
+            assert page.evaluate("matchMedia('(forced-colors: active)').matches")
+            page.locator("#appearance-shortcut").click()
+            expect(page.locator("#page h1")).to_have_text("Appearance")
+            assert page.evaluate("matchMedia('(prefers-reduced-motion: reduce)').matches")
+            page.emulate_media(forced_colors="none", reduced_motion="no-preference")
             context.close()
             browser.close()
         assert not errors, errors
