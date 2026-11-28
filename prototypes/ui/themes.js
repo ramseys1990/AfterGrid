@@ -145,7 +145,41 @@
     element.dataset.mode=selection.appearance;
     element.style.colorScheme=selection.appearance;
   }
-  const api={schemaVersion:1,builtins,validate,resolve,apply,ratio};
+  const MAX_BYTES=16384, MAX_CUSTOM=16;
+  const metadataKeys="author,license,schema_version,theme,theme_api,version";
+  function packageOf(theme,metadata={}){
+    return {schema_version:1,theme_api:1,version:metadata.version||"1.0.0",author:metadata.author||"AfterGrid",license:metadata.license||"MIT",theme};
+  }
+  function validatePackage(p,local=true){
+    if(!p||typeof p!=="object"||Array.isArray(p)||Object.keys(p).sort().join(",")!==metadataKeys)return false;
+    if(p.schema_version!==1||p.theme_api!==1||typeof p.version!=="string"||!/^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$/.test(p.version))return false;
+    if(!["author","license"].every(k=>typeof p[k]==="string"&&p[k].trim()&&p[k].length<=100&&!/[\u0000-\u001f\u007f]/.test(p[k])))return false;
+    if(!validate(p.theme))return false;
+    if(!local)return builtins.some(b=>b.id===p.theme.id);
+    return /^(local|community)\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(p.theme.id)&&!builtins.some(b=>b.id===p.theme.id);
+  }
+  function parsePackage(raw){
+    if(typeof raw!=="string"||new TextEncoder().encode(raw).length>MAX_BYTES)throw Error("Theme must be a JSON file of at most 16 KiB.");
+    let p;try{p=JSON.parse(raw);}catch{throw Error("Invalid JSON.");}
+    if(!validatePackage(p))throw Error("Unsupported theme package, identifier, palette or contrast. Use the v1 example.");
+    return p;
+  }
+  function addPackage(existing,p){
+    if(!validatePackage(p))throw Error("Invalid theme package.");
+    if(existing.some(x=>x.theme.id===p.theme.id))throw Error("A theme with this ID already exists. Remove it first or choose a different ID.");
+    if(existing.length>=MAX_CUSTOM)throw Error("Local theme limit reached.");
+    return [...existing,p];
+  }
+  function loadPackages(raw){
+    try{
+      if(typeof raw!=="string"||raw.length>MAX_BYTES*MAX_CUSTOM)return [];
+      const items=JSON.parse(raw);if(!Array.isArray(items))return [];
+      let out=[];for(const p of items.slice(0,MAX_CUSTOM))if(validatePackage(p)&&!out.some(x=>x.theme.id===p.theme.id))out.push(p);
+      return out;
+    }catch{return [];}
+  }
+  const builtinPackages=builtins.map(t=>packageOf(t));
+  const api={schemaVersion:1,builtins,builtinPackages,validate,resolve,apply,ratio,packageOf,validatePackage,parsePackage,addPackage,loadPackages,MAX_BYTES,MAX_CUSTOM};
   if(typeof module!=="undefined"&&module.exports)module.exports=api;
   else root.AfterGridTheme=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
