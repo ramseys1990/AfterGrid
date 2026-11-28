@@ -25,6 +25,12 @@ SHA=re.compile(r"[a-f0-9]{64}")
 COMMIT=re.compile(r"[a-f0-9]{40}")
 IMAGE=re.compile(r"sha256:[a-f0-9]{64}")
 
+# Compiled-in release policy. A separately reviewed release must supply both
+# exact archive and source digests; neither an environment variable nor a
+# browser-provided checksum can authorize a release.
+PRODUCTION_EXECUTION_ENABLED=False
+APPROVED_CORE_RELEASES={}
+
 
 def extract_candidate(archive, destination, commit, checksum):
     if not COMMIT.fullmatch(commit) or not SHA.fullmatch(checksum):
@@ -731,9 +737,46 @@ def disposable_trial_scope(root,candidate):
     return root,candidate
 
 
-def candidate_trial(root,candidate,probe):
-    """Disposable acceptance only. No production activation or promotion."""
-    root,candidate=disposable_trial_scope(root,candidate)
+def production_scope(root,candidate):
+    """Release admission before any Docker operation, including rollback."""
+    if PRODUCTION_EXECUTION_ENABLED is not True:
+        raise ValueError("Production core updates are not released")
+    if os.geteuid()!=0 or Path("/etc/pve").exists() or shutil.which("pveversion"):
+        raise ValueError("Use the installed Linux guest, not the hypervisor")
+    root=assets.real_directory(root)
+    candidate=assets.real_directory(candidate)
+    staging=assets.real_directory(STAGING)
+    if root!=ROOT or candidate.parent!=staging or root in candidate.parents or candidate in root.parents:
+        raise ValueError("Expected the normal installation and private update staging")
+    for directory in (staging,candidate):
+        info=directory.stat()
+        if info.st_uid!=0 or stat.S_IMODE(info.st_mode)!=0o700:
+            raise ValueError("Private root-owned update staging required")
+    if (root/".install-pending").exists() or (root/"recovery-install-plan.json").exists():
+        raise ValueError("Complete installation or recovery first")
+    plan=read_json_private(candidate/"candidate.json")
+    commit=plan.get("commit")
+    if not isinstance(commit,str) or not COMMIT.fullmatch(commit):
+        raise ValueError("Exact approved release required")
+    if (plan.get("format")!=1 or plan.get("activated") is not False or plan.get("root")!=str(root)
+        or not re.fullmatch(re.escape(commit)+r"-[a-f0-9]{12}",candidate.name)):
+        raise ValueError("Candidate does not match installed release scope")
+    approved=APPROVED_CORE_RELEASES.get(commit)
+    if (not isinstance(approved,dict) or set(approved)!={"archive_sha256","source_sha256"}
+        or any(not isinstance(approved[k],str) or not SHA.fullmatch(approved[k]) or plan.get(k)!=approved[k]
+               for k in ("archive_sha256","source_sha256"))):
+        raise ValueError("Release is not approved for production execution")
+    check_candidate_source(candidate,plan)
+    return root,candidate
+
+
+def transaction_scope(root,candidate,production):
+    return production_scope(root,candidate) if production else disposable_trial_scope(root,candidate)
+
+
+def candidate_trial(root,candidate,probe,*,production=False):
+    """Isolated state-copy trial; production additionally requires release approval."""
+    root,candidate=transaction_scope(root,candidate,production)
     plan=read_json_private(candidate/"candidate.json")
     retained=verify_retention(candidate,plan)
     check_activation(root,candidate)
@@ -1104,8 +1147,8 @@ def restore_core_bind(root,checkpoint,report,suffix,seal_digest):
     return failed
 
 
-def rollback_disposable_promotion(root,candidate,state,plan,retained):
-    root,candidate=disposable_trial_scope(root,candidate)
+def rollback_disposable_promotion(root,candidate,state,plan,retained,*,production=False):
+    root,candidate=transaction_scope(root,candidate,production)
     if state.get("phase") not in {"starting_candidate","verifying","restoring_canonical_state","restoring_worker_state","restoring_source"} or not state.get("checkpoint"):
         raise ValueError("Canonical checkpoint and attempted startup required")
     digest=retained["candidate_sha256"]
@@ -1166,7 +1209,7 @@ def rollback_disposable_promotion(root,candidate,state,plan,retained):
     return state
 
 
-def promote_disposable(root,candidate,probe,*,container_mutations=False):
+def promote_disposable(root,candidate,probe,*,container_mutations=False,production=False):
     """Permanent canonical-mount activation in the disposable fixture only.
 
     A successful isolated trial is mandatory. The original local state is
@@ -1174,7 +1217,7 @@ def promote_disposable(root,candidate,probe,*,container_mutations=False):
     Canonical startup or probe failure attempts checkpoint restoration.
     An interrupted or unsuccessful restore remains held for inspection.
     """
-    root,candidate=disposable_trial_scope(root,candidate)
+    root,candidate=transaction_scope(root,candidate,production)
     plan=read_json_private(candidate/"candidate.json")
     retained=verify_retention(candidate,plan)
     check_candidate_source(candidate,plan)
@@ -1195,7 +1238,7 @@ def promote_disposable(root,candidate,probe,*,container_mutations=False):
            if container_mutations else stage_source_transition(root,candidate))
     path=candidate/"promotion.json"
     state={"format":1,"phase":"stopping","candidate_sha256":retained["candidate_sha256"],
-           "source_stage":str(stage),"previous":current,"backup_evidence":proof,"disposable_only":True,
+           "source_stage":str(stage),"previous":current,"backup_evidence":proof,"disposable_only":not production,
            "container_mutations":container_mutations}
     write_private_json(path,state)
     try:
@@ -1221,7 +1264,7 @@ def promote_disposable(root,candidate,probe,*,container_mutations=False):
         journal(path,state)
     except Exception:
         if state["phase"] in {"starting_candidate","verifying"} and state.get("checkpoint"):
-            try:rollback_disposable_promotion(root,candidate,state,plan,retained)
+            try:rollback_disposable_promotion(root,candidate,state,plan,retained,production=production)
             except Exception:
                 state["resume_phase"]=state["phase"]
                 state["phase"]="promotion_requires_inspection"
@@ -1255,15 +1298,15 @@ def resume_disposable_rollback(root,candidate):
     return rollback_disposable_promotion(root,candidate,state,plan,retained)
 
 
-def finish_disposable_promotion(root,candidate):
+def finish_disposable_promotion(root,candidate,*,production=False):
     """Reconcile the maintenance hold only after a terminal, verified outcome."""
-    root,candidate=disposable_trial_scope(root,candidate)
+    root,candidate=transaction_scope(root,candidate,production)
     plan=read_json_private(candidate/"candidate.json")
     retained=verify_retention(candidate,plan)
     path=candidate/"promotion.json"
     state=read_json_private(path)
     digest=retained["candidate_sha256"]
-    if (state.get("format")!=1 or state.get("disposable_only") is not True
+    if (state.get("format")!=1 or state.get("disposable_only") is not (not production)
         or state.get("candidate_sha256")!=digest or state.get("phase") not in {"promoted","rolled_back"}):
         raise ValueError("Verified terminal promotion outcome required")
     if check_scope(root,candidate/"source")!=plan["configuration"] or assets.local_docker()!=plan["platform"]:
@@ -1304,7 +1347,100 @@ def finish_disposable_promotion(root,candidate):
         os.replace(tmp,marker)
         sync_directory(marker.parent)
     finally:Path(tmp).unlink(missing_ok=True)
-    return {"outcome":state["phase"],"maintenance_phase":"sealed","production_activation":False}
+    return {"outcome":state["phase"],"maintenance_phase":"sealed","production_activation":production and promoted}
+
+
+# Fixed read-only probe in the actual core/worker containers, not a caller
+# supplied shell command. Compose health and exact image checks are separate.
+PRODUCTION_PROBE=r"""
+import json,sqlite3,sys
+from pathlib import Path
+service,digest=sys.argv[1:]
+if service=="core":
+    data=Path("/data")
+    marker=json.loads((data/"recovery-maintenance.json").read_text())
+    if marker.get("phase")!="updating" or marker.get("candidate_sha256")!=digest:
+        raise RuntimeError("Maintenance hold mismatch")
+    import urllib.request
+    with urllib.request.urlopen("http://127.0.0.1:8080/health",timeout=3) as res:
+        if res.status!=200 or json.load(res).get("status")!="ok":
+            raise RuntimeError("Core health mismatch")
+    db=data/"core.sqlite3"
+    tables={"admin","sessions","first_run"}
+elif service=="worker":
+    db=Path("/worker-state/jobs.sqlite3")
+    tables={"jobs","sharing","batches"}
+else:
+    raise RuntimeError("Unexpected service")
+with sqlite3.connect(db.as_uri()+"?mode=ro",uri=True,timeout=3) as con:
+    con.execute("PRAGMA trusted_schema=OFF")
+    if con.execute("PRAGMA quick_check").fetchmany(2)!=[("ok",)]:
+        raise RuntimeError("Database integrity check failed")
+    if not tables<={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
+        raise RuntimeError("Expected application schema unavailable")
+"""
+
+
+def probe_reviewed_update(root,candidate,images,override=None):
+    actual=live_core(root,override)
+    if any(actual[name]["image"]!=images[name]["image"] for name in ("core","worker")):
+        raise ValueError("Candidate image identity changed")
+    digest=assets.sha256_file(candidate/"candidate.json")
+    for name in ("core","worker"):
+        assets.docker("exec",actual[name]["container"],"python3","-I","-B","-c",
+                      PRODUCTION_PROBE,name,digest,timeout=45)
+    if live_core(root,override)!=actual:
+        raise ValueError("Candidate container identity changed")
+
+
+def execute_reviewed_update(root,candidate,expected_digest):
+    """One explicitly approved host-owned transaction, no automatic retry.
+
+    Run outside both core services. A failed or ambiguous operation leaves
+    the durable hold for inspection; only a validated terminal outcome may
+    return it to sealed maintenance.
+    """
+    root,candidate=production_scope(root,candidate)
+    if not isinstance(expected_digest,str) or not SHA.fullmatch(expected_digest):
+        raise ValueError("Exact confirmed candidate digest required")
+    if assets.sha256_file(candidate/"candidate.json")!=expected_digest:
+        raise ValueError("Confirmed candidate changed")
+    plan=read_json_private(candidate/"candidate.json")
+    check_activation(root,candidate)
+    for name in ("activation.json","promotion.json","production-dispatch.json"):
+        path=candidate/name
+        if path.exists() or path.is_symlink():
+            raise ValueError("Update already attempted; inspect its outcome")
+    dispatch=candidate/"production-dispatch.json"
+    state={"format":1,"phase":"starting","candidate_sha256":expected_digest}
+    # Exclusive file creation is the no-replay admission boundary. Persist
+    # before the first service stop; never automatically remove this receipt.
+    write_private_json(dispatch,state)
+    sync_directory(candidate)
+    try:
+        state["phase"]="trial"
+        journal(dispatch,state)
+        candidate_trial(root,candidate,lambda:probe_reviewed_update(
+            root,candidate,plan["candidate"],candidate/"trial-compose.json"),production=True)
+        state["phase"]="promotion"
+        journal(dispatch,state)
+        try:
+            promote_disposable(root,candidate,lambda:probe_reviewed_update(
+                root,candidate,plan["candidate"]),production=True)
+        except Exception:
+            # Only the verified terminal rollback can be finalized. Other
+            # phases remain held for explicit support reconciliation.
+            result=read_json_private(candidate/"promotion.json")
+            if result.get("phase")!="rolled_back":
+                raise
+        result=finish_disposable_promotion(root,candidate,production=True)
+        state["phase"]=result["outcome"]
+        journal(dispatch,state)
+        return result
+    except Exception:
+        state["phase"]="requires_inspection"
+        journal(dispatch,state)
+        raise
 
 
 def main():
@@ -1318,10 +1454,18 @@ def main():
     modes.add_argument("--check-activation",type=Path,metavar="CANDIDATE",help="Read-only activation prerequisites")
     modes.add_argument("--cancel-claim",type=Path,metavar="CANDIDATE",help="Cancel an unactivated update claim")
     modes.add_argument("--trial-status",type=Path,metavar="CANDIDATE",help="Read-only disposable trial journal status")
+    modes.add_argument("--apply-reviewed",type=Path,metavar="CANDIDATE",help="Host-only reviewed production transaction (release-gated)")
+    parser.add_argument("--candidate-sha256",help="Exact confirmed candidate digest for apply-reviewed")
     args=parser.parse_args()
     if os.geteuid()!=0:parser.error("Run as root on the installed Linux guest")
     if Path("/etc/pve").exists() or shutil.which("pveversion"):parser.error("Do not run on the Proxmox hypervisor")
     try:
+        if args.apply_reviewed is not None:
+            if any((args.archive,args.commit,args.sha256)) or not args.candidate_sha256:
+                parser.error("Apply requires only a prepared candidate and confirmed candidate digest")
+            print(json.dumps(execute_reviewed_update(ROOT,args.apply_reviewed,args.candidate_sha256),indent=2))
+            return
+        if args.candidate_sha256 is not None:parser.error("Candidate digest is only for apply-reviewed")
         if args.trial_status is not None:
             if any((args.archive,args.commit,args.sha256)):parser.error("Use trial status separately")
             print(json.dumps(inspect_trial(args.trial_status),indent=2))
