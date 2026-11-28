@@ -131,6 +131,9 @@ for key in ("DOCKER_HOST", "DOCKER_CONTEXT"):
 root, candidate = map(Path, sys.argv[1:3])
 assert root.name == "original" and root.parent.name.startswith("aftergrid-guided-ci-")
 assert candidate.parent == root.parent
+# Importing the installed worker must not write __pycache__ into the
+# exact reviewed source tree, especially after a preceding promotion.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(root / "worker"))
 import core_update_tools as update
 prior = json.loads(sys.argv[3])
@@ -195,7 +198,7 @@ def detached_promotion(root, candidate, prior, observe, fail_restore=False, cont
     else:
         with log_path.open("xb") as output:
             os.fchmod(output.fileno(),0o600)
-            process=subprocess.Popen([sys.executable,"-I","-c",DETACHED_PROMOTION,*arguments],
+            process=subprocess.Popen([sys.executable,"-I","-B","-c",DETACHED_PROMOTION,*arguments],
                 stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,
                 start_new_session=True,env=env)
     try:
