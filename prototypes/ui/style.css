@@ -57,3 +57,7 @@ input[type=file]{max-width:100%}.field{min-width:0}.field input,.field select{ma
 
 .brand-mini{align-items:center;gap:6px}.brand-mini svg{width:26px;height:26px;color:var(--accent);flex:none}.brand svg{flex:none}
 @media(forced-colors:active){.brand svg,.brand-mini svg,.tile-icon svg,.quick-link svg{color:CanvasText}.nav-item[aria-current=page],#mobile-nav a[aria-current=page]{outline:2px solid Highlight}.pace-card,.connection-strip,.market-status,.recovery-banner{border:1px solid CanvasText}}
+
+/* Keep keyboard-focused household controls above fixed phone navigation. */
+@media(max-width:850px){html:has(body[data-workspace=home]){scroll-padding-bottom:calc(80px + env(safe-area-inset-bottom))}body[data-workspace=home] :is(button,a,input,select,textarea,summary):focus-visible{scroll-margin-bottom:calc(80px + env(safe-area-inset-bottom))}}
+@media(prefers-contrast:more){.tile,.panel,.metric,.connection-strip,.market-status,.pace-card{border-width:2px}.nav-item[aria-current=page],#mobile-nav a[aria-current=page]{outline:2px solid var(--accent);outline-offset:-3px}}
