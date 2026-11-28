@@ -972,12 +972,21 @@ def container_mutation(root, candidate, image, operation):
     argv = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only",
         "--cap-drop", "ALL", "--cap-add", "DAC_OVERRIDE", "--cap-add", "CHOWN",
         "--cap-add", "FOWNER", "--security-opt", "no-new-privileges",
+        # SQLite checkpoint validation extracts a bounded database into a
+        # private temporary directory. Keep scratch off persistent mounts.
+        *(["--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=160m,mode=0700"] if restore else []),
         "--mount", "type=bind,src=" + str(root) + ",dst=" + str(root) + (",readonly" if restore else ""),
         "--mount", "type=bind,src=" + str(data) + ",dst=" + str(data) + ("" if restore else ",readonly"),
         "--mount", "type=bind,src=" + str(candidate) + ",dst=" + str(candidate) + ",readonly",
         "--entrypoint", "python3", image, "-I", "-c", SOURCE_MUTATION,
         operation, str(root), str(candidate)]
-    return json.loads(assets.docker(*argv, timeout=180))
+    try:
+        return json.loads(assets.docker(*argv, timeout=180))
+    except subprocess.CalledProcessError as exc:
+        # The helper runs a fixed program, not user commands. Preserve a
+        # bounded diagnostic rather than dumping the full Docker argv.
+        detail = (exc.stderr or "").strip()[-2000:]
+        raise RuntimeError(f"Fixed update helper {operation} failed (exit {exc.returncode}): {detail}") from None
 
 
 # Fixed helper executed in the retained local worker image. The named volume
