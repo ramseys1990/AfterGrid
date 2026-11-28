@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-theme="overwatch" data-mode="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>AfterGrid | UI design preview</title>
+<link rel="stylesheet" href="style.css"><script defer src="themes.js"></script><script defer src="prototype.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="sidebar" aria-label="Workspace navigation">
+  <a class="brand" href="#home"><svg aria-hidden="true" viewBox="0 0 40 40"><path d="M20 3 37 13v15L20 38 3 28V13Z M10 28 20 10 30 28H24L20 20 16 28Z" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>AfterGrid<small>Life beyond the grid</small></span></a>
+  <div class="workspace"><label for="workspace">Workspace preview</label><select id="workspace"><option value="home">Household</option><option value="admin" selected>Administration</option></select></div>
+  <nav id="navigation" aria-label="Main navigation"></nav>
+  <div class="sidebar-bottom"><span class="status"><span class="dot"></span> Prototype offline</span><small>Design preview · no live server</small></div>
+</aside>
+<div class="body">
+  <header class="topbar"><button id="menu" type="button" class="quiet mobile" aria-controls="navigation" aria-expanded="false">☰ Menu</button><a class="mobile brand-mini" href="#home">AfterGrid</a><span class="crumb" id="breadcrumb">Administration / Overview</span><div class="top-actions"><span class="status demo-label">DEMO DATA</span><button id="appearance-shortcut" class="quiet" type="button">Appearance</button></div></header>
+  <main id="main" tabindex="-1"><div class="notice"><strong>Design prototype</strong><span> All system values and operations are simulated. This page is not connected to AfterGrid.</span></div><div id="page"></div></main>
+  <footer>AfterGrid · Phase 4 design lab <span>Local assets only / no network calls</span></footer>
+</div></div>
+<dialog id="confirmation" aria-labelledby="dialog-title" aria-describedby="dialog-description"><h2 id="dialog-title"></h2><p id="dialog-description"></p><div class="actions"><button id="dialog-cancel" class="quiet" type="button" autofocus>Cancel</button><button id="dialog-confirm" type="button">Confirm demo action</button></div></dialog>
+<template id="icon-definitions"><svg viewBox="0 0 24 24" aria-hidden="true"></svg></template>
+</body></html>
