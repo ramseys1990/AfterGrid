@@ -74,6 +74,11 @@ start_core(){
   # Avoid caller-specific settings overriding the preserved installation.
   unset AFTERGRID_BIND AFTERGRID_PORT AFTERGRID_ORIGIN AFTERGRID_SECURE_COOKIE AFTERGRID_LAN_DOMAIN AFTERGRID_LAN_BIND
   local -a compose=(docker compose --project-name aftergrid-core --project-directory "$root" --file "$root/compose.yaml" --env-file "$root/.env")
+  # Private sibling staging is used only for explicitly reviewed updates.
+  # Do not chmod or replace an existing path; refuse unsafe staging.
+  local staging=/opt/aftergrid-updates
+  if [[ ! -e $staging && ! -L $staging ]]; then mkdir -m 0700 -- "$staging"; fi
+  [[ -d $staging && ! -L $staging && -O $staging && $(stat -c '%a' "$staging") == 700 ]] || die "Invalid private core update staging."
   echo "[3/4] Building and starting core only"
   "${compose[@]}" config -q
   if ! "${compose[@]}" up -d --build --wait --wait-timeout 120; then

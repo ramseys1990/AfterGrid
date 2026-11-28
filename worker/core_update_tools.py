@@ -963,7 +963,10 @@ plan = update.read_json_private(candidate / "candidate.json")
 digest = update.assets.sha256_file(candidate / "candidate.json")
 if plan["root"] != str(root):
     raise ValueError("Candidate installation mismatch")
-seal = update.read_json_private(root / "data/core/recovery-maintenance.json", 8192)
+marker = root / "data/core/recovery-maintenance.json"
+if operation == "restore-core" and not marker.exists():
+    marker = root / "data" / (".core-failed-" + digest[:20]) / "recovery-maintenance.json"
+seal = update.read_json_private(marker, 8192)
 if seal.get("phase") != "updating" or seal.get("candidate_sha256") != digest:
     raise ValueError("Matching update hold required")
 stage = root / (".core-update-source-" + digest[:20])
@@ -1298,7 +1301,7 @@ def resume_disposable_rollback(root,candidate):
     return rollback_disposable_promotion(root,candidate,state,plan,retained)
 
 
-def finish_disposable_promotion(root,candidate,*,production=False):
+def finish_disposable_promotion(root,candidate,*,production=False,detached=False):
     """Reconcile the maintenance hold only after a terminal, verified outcome."""
     root,candidate=transaction_scope(root,candidate,production)
     plan=read_json_private(candidate/"candidate.json")
@@ -1334,6 +1337,18 @@ def finish_disposable_promotion(root,candidate,*,production=False):
     info=marker.stat()
     value={key:seal[key] for key in ("format","modules","inventory_sha256","manifest_job")}
     value["phase"]="sealed"
+    if production:
+        value["core_update_outcome"]=state["phase"]
+        value["core_update_candidate_sha256"]=digest
+    if detached:
+        if not production:raise ValueError("Detached finalization requires reviewed production scope")
+        # Core owns its private data; the executor keeps the host root read-only.
+        trial_container_inventory(root,candidate,plan,canonical_candidate=True)
+        assets.docker("exec","--user","10001:10001",actual["core"]["container"],"python3","-I","-B","-c",
+                      FINALIZE_MARKER,json.dumps(seal),json.dumps(value),timeout=30)
+        if read_json_private(marker,8192)!=value or live_core(root)!=actual:
+            raise ValueError("Maintenance or core changed during finalization")
+        return {"outcome":state["phase"],"maintenance_phase":"sealed","production_activation":promoted}
     fd,tmp=tempfile.mkstemp(prefix=".core-update-finish-",dir=marker.parent)
     try:
         with os.fdopen(fd,"w") as out:
@@ -1348,6 +1363,30 @@ def finish_disposable_promotion(root,candidate,*,production=False):
         sync_directory(marker.parent)
     finally:Path(tmp).unlink(missing_ok=True)
     return {"outcome":state["phase"],"maintenance_phase":"sealed","production_activation":production and promoted}
+
+
+# Fixed compare-and-replace on the already verified core's private bind.
+FINALIZE_MARKER=r"""
+import json,os,sys,tempfile
+from pathlib import Path
+path=Path("/data/recovery-maintenance.json")
+expected,value=map(json.loads,sys.argv[1:])
+if json.loads(path.read_text())!=expected or expected.get("phase")!="updating":
+    raise RuntimeError("Maintenance hold changed")
+fd,tmp=tempfile.mkstemp(prefix=".core-update-finish-",dir=path.parent)
+try:
+    with os.fdopen(fd,"w") as out:
+        json.dump(value,out)
+        out.flush()
+        os.fsync(out.fileno())
+    if json.loads(path.read_text())!=expected:
+        raise RuntimeError("Maintenance hold changed")
+    os.replace(tmp,path)
+    directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+    try:os.fsync(directory)
+    finally:os.close(directory)
+finally:Path(tmp).unlink(missing_ok=True)
+"""
 
 
 # Fixed read-only probe in the actual core/worker containers, not a caller
@@ -1393,7 +1432,7 @@ def probe_reviewed_update(root,candidate,images,override=None):
         raise ValueError("Candidate container identity changed")
 
 
-def execute_reviewed_update(root,candidate,expected_digest):
+def execute_reviewed_update(root,candidate,expected_digest,*,detached=False):
     """One explicitly approved host-owned transaction, no automatic retry.
 
     Run outside both core services. A failed or ambiguous operation leaves
@@ -1426,14 +1465,14 @@ def execute_reviewed_update(root,candidate,expected_digest):
         journal(dispatch,state)
         try:
             promote_disposable(root,candidate,lambda:probe_reviewed_update(
-                root,candidate,plan["candidate"]),production=True)
+                root,candidate,plan["candidate"]),production=True,**({"container_mutations":True} if detached else {}))
         except Exception:
             # Only the verified terminal rollback can be finalized. Other
             # phases remain held for explicit support reconciliation.
             result=read_json_private(candidate/"promotion.json")
             if result.get("phase")!="rolled_back":
                 raise
-        result=finish_disposable_promotion(root,candidate,production=True)
+        result=finish_disposable_promotion(root,candidate,production=True,**({"detached":True} if detached else {}))
         state["phase"]=result["outcome"]
         journal(dispatch,state)
         return result
@@ -1441,6 +1480,97 @@ def execute_reviewed_update(root,candidate,expected_digest):
         state["phase"]="requires_inspection"
         journal(dispatch,state)
         raise
+
+
+# Browser requests select an approved commit or the exact prepared digest,
+# never a path, archive URL, image, Docker flag or command.
+def browser_releases():
+    if PRODUCTION_EXECUTION_ENABLED is not True:
+        return []
+    return sorted(commit for commit,record in APPROVED_CORE_RELEASES.items()
+                  if COMMIT.fullmatch(commit) and isinstance(record,dict)
+                  and set(record)=={"archive_sha256","source_sha256"}
+                  and all(isinstance(v,str) and SHA.fullmatch(v) for v in record.values()))
+
+
+def browser_staging():
+    staging=assets.real_directory(STAGING)
+    info=staging.stat()
+    if info.st_uid!=0 or stat.S_IMODE(info.st_mode)!=0o700:
+        raise ValueError("Private update staging required")
+    return staging
+
+
+def browser_candidate():
+    staging=browser_staging()
+    receipt=read_json_private(staging/"browser-candidate.json",4096)
+    name=receipt.get("candidate")
+    digest=receipt.get("candidate_sha256")
+    if (set(receipt)!={"candidate","candidate_sha256"} or not isinstance(name,str)
+        or not re.fullmatch(r"[a-f0-9]{40}-[a-f0-9]{12}",name)
+        or not isinstance(digest,str) or not SHA.fullmatch(digest)):
+        raise ValueError("Invalid reviewed candidate receipt")
+    candidate=staging/name
+    production_scope(ROOT,candidate)
+    if assets.sha256_file(candidate/"candidate.json")!=digest:
+        raise ValueError("Reviewed candidate changed")
+    return candidate,digest
+
+
+def browser_prepare(commit):
+    if commit not in browser_releases():
+        raise ValueError("Release is not approved")
+    staging=browser_staging()
+    receipt=staging/"browser-candidate.json"
+    if receipt.exists() or receipt.is_symlink():
+        raise ValueError("Existing candidate requires inspection")
+    import urllib.request
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self,*args,**kwargs):
+            return None
+    fd,path=tempfile.mkstemp(prefix=".reviewed-archive-",dir=staging)
+    archive=Path(path)
+    try:
+        client=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+        url="https://codeload.github.com/ramseys1990/AfterGrid/tar.gz/"+commit
+        deadline=time.monotonic()+120
+        with os.fdopen(fd,"wb") as out,client.open(url,timeout=10) as response:
+            size=0
+            while True:
+                if time.monotonic()>deadline:raise ValueError("Release download timed out")
+                chunk=response.read(1024*1024)
+                if not chunk:break
+                size+=len(chunk)
+                if size>SOURCE_LIMIT:raise ValueError("Release archive too large")
+                out.write(chunk)
+        candidate=prepare(ROOT,staging,archive,commit,APPROVED_CORE_RELEASES[commit]["archive_sha256"])
+        production_scope(ROOT,candidate)
+        retain_previous(ROOT,candidate)
+        digest=assets.sha256_file(candidate/"candidate.json")
+        write_private_json(receipt,{"candidate":candidate.name,"candidate_sha256":digest})
+        sync_directory(staging)
+    finally:archive.unlink(missing_ok=True)
+
+
+def browser_status():
+    releases=browser_releases()
+    result={"activation_enabled":bool(releases),"releases":releases,"candidate":None,"outcome":None}
+    if not releases:return result
+    try:candidate,digest=browser_candidate()
+    except FileNotFoundError:return result
+    result["candidate"]={"commit":candidate.name.split("-")[0],"candidate_sha256":digest}
+    path=candidate/"production-dispatch.json"
+    if path.exists() or path.is_symlink():
+        record=read_json_private(path)
+        if record.get("candidate_sha256")!=digest:raise ValueError("Dispatch receipt changed")
+        result["outcome"]=record.get("phase")
+    return result
+
+
+def browser_apply(digest):
+    candidate,expected=browser_candidate()
+    if digest!=expected:raise ValueError("Confirmed candidate changed")
+    return execute_reviewed_update(ROOT,candidate,digest,detached=True)
 
 
 def main():
@@ -1456,10 +1586,19 @@ def main():
     modes.add_argument("--trial-status",type=Path,metavar="CANDIDATE",help="Read-only disposable trial journal status")
     modes.add_argument("--apply-reviewed",type=Path,metavar="CANDIDATE",help="Host-only reviewed production transaction (release-gated)")
     parser.add_argument("--candidate-sha256",help="Exact confirmed candidate digest for apply-reviewed")
+    modes.add_argument("--browser-prepare",metavar="COMMIT")
+    modes.add_argument("--browser-apply",metavar="DIGEST")
+    modes.add_argument("--browser-status",action="store_true")
     args=parser.parse_args()
     if os.geteuid()!=0:parser.error("Run as root on the installed Linux guest")
     if Path("/etc/pve").exists() or shutil.which("pveversion"):parser.error("Do not run on the Proxmox hypervisor")
     try:
+        if args.browser_status or args.browser_prepare is not None or args.browser_apply is not None:
+            if any((args.archive,args.commit,args.sha256,args.candidate_sha256)):parser.error("Browser operation takes no other arguments")
+            if args.browser_status:print(json.dumps(browser_status()))
+            elif args.browser_prepare is not None:browser_prepare(args.browser_prepare)
+            else:print(json.dumps(browser_apply(args.browser_apply)))
+            return
         if args.apply_reviewed is not None:
             if any((args.archive,args.commit,args.sha256)) or not args.candidate_sha256:
                 parser.error("Apply requires only a prepared candidate and confirmed candidate digest")

@@ -223,7 +223,7 @@ def create_app(data_dir=None):
                 try:active=maintenance()
                 except (OSError,ValueError,TypeError):
                     active={"phase":"invalid"}
-                controls={"/api/admin/recovery-maintenance/begin","/api/admin/recovery-maintenance/seal","/api/admin/recovery-maintenance/release","/api/admin/core-update/claim"}
+                controls={"/api/admin/recovery-maintenance/begin","/api/admin/recovery-maintenance/seal","/api/admin/recovery-maintenance/release","/api/admin/core-update/claim","/api/admin/core-update/apply"}
                 auth=path in {"/api/login","/api/logout"}
                 permitted=not active or auth or path in controls
                 if active and active.get("phase")=="capturing" and (backup_post or (path=="/api/admin/backups/protected-snapshot" and not restricted)):
@@ -1112,10 +1112,53 @@ def create_app(data_dir=None):
         try:active=maintenance()
         except (OSError,ValueError,TypeError):active={"phase":"invalid"}
         phase=active.get("phase") if active else "idle"
-        return {"activation_enabled":False,"phase":phase,
-                "maintenance_active":bool(active),"host_reconciliation_required":phase in {"updating","invalid"},
+        info={"activation_enabled":False,"releases":[],"candidate":None,"outcome":None}
+        if not (recovery_core_only or recovery_offline):
+            try:
+                code,value=call("/core-update/status")
+                if code==200 and isinstance(value,dict):
+                    for key in ("activation_enabled","releases","candidate","outcome","prepare_state","apply_state"):
+                        if key in value:info[key]=value[key]
+            except WorkerUnavailable:pass
+        if phase=="sealed" and active.get("core_update_outcome") in {"promoted","rolled_back"}:
+            info["outcome"]=active["core_update_outcome"]
+        return {**info,"phase":phase,
+                "maintenance_active":bool(active),"host_reconciliation_required":phase=="invalid" or (phase=="updating" and info.get("apply_state")!="running"),
+                "inventory_sha256":active.get("inventory_sha256") if active and phase=="sealed" else None,
                 "affected_services":["core","worker"],"optional_applications_stopped":False,
-                "message":"Core update activation is not released; no changes can be initiated from this dashboard."}
+                "message":"Reviewed core update status" if info["activation_enabled"] else "Core update activation is not released; no changes can be initiated from this dashboard."}
+
+    class CoreUpdatePreparation(RepositoryConfirmation):
+        commit: str = Field(pattern=r"^[a-f0-9]{40}$")
+
+    @api.post("/api/admin/core-update/prepare",status_code=202)
+    def prepare_core_update(payload: CoreUpdatePreparation,request: Request):
+        require_admin(request)
+        same_origin(request)
+        if not payload.confirmed or maintenance() is not None:
+            raise HTTPException(409,"Confirm the approved release before maintenance")
+        maintenance_idle()
+        try:code,result=call("/core-update/prepare",{"commit":payload.commit})
+        except WorkerUnavailable:raise HTTPException(503,"Update preparation start not confirmed; inspect status") from None
+        if code!=202:raise HTTPException(409,"Reviewed release preparation unavailable; inspect status")
+        return result
+
+    @api.post("/api/admin/core-update/apply",status_code=202)
+    def apply_core_update(payload: CoreUpdateClaim,request: Request):
+        require_admin(request)
+        same_origin(request)
+        try:code,value=call("/core-update/status")
+        except WorkerUnavailable:raise HTTPException(503,"Reviewed update status unavailable") from None
+        if (code!=200 or not isinstance(value,dict) or value.get("activation_enabled") is not True
+            or not isinstance(value.get("candidate"),dict)
+            or value["candidate"].get("candidate_sha256")!=payload.candidate_sha256
+            or value.get("prepare_state")!="finished" or value.get("apply_state") or value.get("outcome")):
+            raise HTTPException(409,"Prepared approved candidate required")
+        claim_core_update(payload,request)
+        try:code,result=call("/core-update/apply",{"candidate_sha256":payload.candidate_sha256})
+        except WorkerUnavailable:raise HTTPException(503,"Update start not confirmed; keep maintenance held and inspect status") from None
+        if code!=202:raise HTTPException(409,"Update start not confirmed; keep maintenance held and inspect status")
+        return result
 
     @api.post("/api/admin/core-update/claim")
     def claim_core_update(payload: CoreUpdateClaim,request: Request):
