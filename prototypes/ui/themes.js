@@ -178,8 +178,22 @@
       return out;
     }catch{return [];}
   }
+  // Studio uses the same bounded package contract as the import path.
+  function createDraft(base, id, name){
+    if(!validate(base))throw Error("Invalid starting palette.");
+    return packageOf({...base,id,name,description:"Created in Theme Studio",light:{...base.light},dark:{...base.dark}},{author:"Local creator",license:"MIT"});
+  }
+  function contrastReport(theme){
+    if(!theme||!["light","dark"].every(m=>theme[m]&&keys.every(k=>typeof theme[m][k]==="string"&&/^#[0-9a-f]{6}$/i.test(theme[m][k]))))return [];
+    return ["light","dark"].map(mode=>{
+      const p=theme[mode], checks=["bg","panel","sidebar","hero"].flatMap(bg=>["text","muted","accent"].map(fg=>({pair:fg+" / "+bg,ratio:ratio(p[fg],p[bg])})));
+      checks.push({pair:"button text / accent",ratio:ratio(p.onAccent,p.accent)});
+      checks.sort((a,b)=>a.ratio-b.ratio);
+      return {mode,minimum:checks[0].ratio,pair:checks[0].pair,passes:checks.every(c=>c.ratio>=4.5)};
+    });
+  }
   const builtinPackages=builtins.map(t=>packageOf(t));
-  const api={schemaVersion:1,builtins,builtinPackages,validate,resolve,apply,ratio,packageOf,validatePackage,parsePackage,addPackage,loadPackages,MAX_BYTES,MAX_CUSTOM};
+  const api={schemaVersion:1,builtins,builtinPackages,validate,resolve,apply,ratio,packageOf,validatePackage,parsePackage,addPackage,loadPackages,createDraft,contrastReport,MAX_BYTES,MAX_CUSTOM};
   if(typeof module!=="undefined"&&module.exports)module.exports=api;
   else root.AfterGridTheme=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
