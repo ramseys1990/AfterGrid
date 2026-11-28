@@ -1,0 +1,30 @@
+name: UI prototype checks
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'prototypes/ui/**'
+      - '.github/workflows/ui-prototype.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  standalone-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pure theme and package regressions
+        run: node --test prototypes/ui/themes.test.js
+      - name: Browser dependencies
+        run: |
+          python -m pip install playwright==1.51.0
+          python -m playwright install --with-deps chromium
+      - name: Standalone UI browser regression
+        run: python prototypes/ui/browser_test.py
