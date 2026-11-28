@@ -8,3 +8,15 @@ textarea{font:inherit;min-height:100px;width:100%;resize:vertical;padding:12px;c
 input[type=file]{max-width:100%}.field{min-width:0}.field input,.field select{max-width:100%;width:100%}.table-scroll{max-width:100%;overflow-x:auto}table{border-collapse:collapse;width:100%;text-align:left;font-size:.86rem}th,td{padding:12px 9px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere}th{color:var(--muted);font-size:.75rem;letter-spacing:.025em}td{color:var(--text)}tbody tr:last-child td{border:0}summary{cursor:pointer;min-height:44px;font-weight:650;display:list-item;padding:8px 0}details p{margin-top:10px}.theme-choice{overflow-wrap:anywhere}.notice span{overflow-wrap:anywhere}.panel button{max-width:100%;overflow-wrap:anywhere}
 @media(max-width:470px){table{min-width:300px}th,td{padding:10px 7px}.theme-options{grid-template-columns:repeat(2,minmax(0,1fr))}.filterbar select{max-width:100%}.top-actions{margin-left:0}.panel .grid{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+
+
+/* Theme Studio preview remains scoped to its own tokens. */
+.studio-fields{grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))}
+.studio-palette{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:8px}
+.studio-color{display:grid;grid-template-columns:minmax(0,1fr) 48px 78px;align-items:center;gap:6px;padding:6px;border:1px solid var(--border);border-radius:var(--radius);font-size:.8rem}
+.studio-color label{font-weight:600}.studio-color input[type=color]{width:48px;height:44px;padding:3px;min-width:0}.studio-color output{font-family:ui-monospace,monospace;font-size:.7rem}
+.studio-preview{color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px;display:grid;gap:12px}
+.studio-preview .studio-nav{background:var(--sidebar);color:var(--text);padding:10px;border-radius:var(--radius);font-weight:700}
+.studio-preview .hero h3{font-size:1.5rem;margin:5px 0}
+.studio-demo-button{display:inline-block;padding:8px 10px;border-radius:var(--radius);background:var(--accent);color:var(--onAccent);font-size:.8rem}
+.studio-fields input[type=range]{width:100%;accent-color:var(--accent)}
