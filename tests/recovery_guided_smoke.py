@@ -135,6 +135,7 @@ sys.path.insert(0, str(root / "worker"))
 import core_update_tools as update
 prior = json.loads(sys.argv[3])
 fail_restore = sys.argv[4] == "fail-restore"
+container_mutations = sys.argv[5] == "container"
 assert update.live_core(root) == prior
 source_digest = update.candidate_source_digest(root)
 for name in ("core", "worker"):
@@ -157,7 +158,7 @@ if fail_restore:
     assert interrupted != original
     update.RESTORE_WORKER = interrupted
     try:
-        update.promote_disposable(root, candidate, probe)
+        update.promote_disposable(root, candidate, probe, container_mutations=container_mutations)
     except (RuntimeError, update.subprocess.CalledProcessError):
         state = update.read_json_private(candidate / "promotion.json")
         assert state["phase"] == "promotion_requires_inspection"
@@ -165,45 +166,71 @@ if fail_restore:
     else:
         raise AssertionError("Expected interrupted detached worker restoration")
 else:
-    state = update.promote_disposable(root, candidate, probe)
+    state = update.promote_disposable(root, candidate, probe, container_mutations=container_mutations)
     assert state["phase"] == "promoted"
 update.write_private_json(candidate / "detached-executor.json", {
     "format": 1, "phase": state["phase"], "executor_source_sha256": source_digest,
     "intentional_restore_interruption": fail_restore, "disposable_only": True})
 '''
 
-def detached_promotion(root, candidate, prior, observe, fail_restore=False):
+def detached_promotion(root, candidate, prior, observe, fail_restore=False, container=False):
     source_digest=core_update.candidate_source_digest(root)
     log_path=candidate/"detached-executor.log"
     env={key:os.environ[key] for key in ("PATH","LD_LIBRARY_PATH","LANG","LC_ALL") if key in os.environ}
     env["AFTERGRID_DISPOSABLE_RECOVERY_TEST"]="1"
     # A host process avoids introducing a running writable Docker bind over
     # canonical state. Keep the native checkpoint guard completely unchanged.
-    with log_path.open("xb") as output:
-        os.fchmod(output.fileno(),0o600)
-        process=subprocess.Popen([sys.executable,"-I","-c",DETACHED_PROMOTION,
-            str(root),str(candidate),json.dumps(prior),"fail-restore" if fail_restore else "success"],
-            stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,
-            start_new_session=True,env=env)
+    arguments=[str(root),str(candidate),json.dumps(prior),"fail-restore" if fail_restore else "success",
+               "container" if container else "host"]
+    process=None
+    cid=None
+    if container:
+        cid=assets.docker("run","--detach","--pull","never","--network","none","--read-only",
+            "--cap-drop","ALL","--cap-add","DAC_OVERRIDE","--security-opt","no-new-privileges",
+            "--tmpfs","/tmp","--env","AFTERGRID_DISPOSABLE_RECOVERY_TEST=1",
+            "--mount","type=bind,src="+str(root)+",dst="+str(root)+",readonly",
+            "--mount","type=bind,src="+str(candidate)+",dst="+str(candidate),
+            "--mount","type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock",
+            "--entrypoint","python3",prior["worker"]["image"],"-c",DETACHED_PROMOTION,*arguments)
+    else:
+        with log_path.open("xb") as output:
+            os.fchmod(output.fileno(),0o600)
+            process=subprocess.Popen([sys.executable,"-I","-c",DETACHED_PROMOTION,*arguments],
+                stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,
+                start_new_session=True,env=env)
     try:
-        assert os.getsid(process.pid)==process.pid
+        if container:
+            assert re.fullmatch(r"[a-f0-9]{64}",cid)
+            info=json.loads(assets.docker("inspect",cid))[0]
+            assert info["Image"]==prior["worker"]["image"]
+            assert info["HostConfig"]["NetworkMode"]=="none" and info["HostConfig"]["ReadonlyRootfs"]
+            mounts={m["Destination"]:m for m in info["Mounts"]}
+            assert not mounts[str(root)]["RW"] and mounts[str(candidate)]["RW"]
+        else:
+            assert os.getsid(process.pid)==process.pid
         deadline=time.monotonic()+480
-        while process.poll() is None:
+        def running():
+            return assets.docker("inspect","--format","{{.State.Running}}",cid)=="true" if container else process.poll() is None
+        while running():
             observe()
             if time.monotonic()>deadline:raise RuntimeError("Detached promotion timed out")
             time.sleep(0.2)
         observe()
-        exit_code=process.wait(timeout=5)
+        exit_code=int(assets.docker("wait",cid)) if container else process.wait(timeout=5)
         if exit_code!=0:
             # Only this fixed disposable program's private diagnostics.
-            raise RuntimeError("Detached promotion failed (exit "+str(exit_code)+"): "+log_path.read_text())
+            logs=(subprocess.run(["docker","logs",cid],check=True,stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,text=True,timeout=15).stdout if container else log_path.read_text())
+            raise RuntimeError("Detached promotion failed (exit "+str(exit_code)+"): "+logs)
         report=json.loads((candidate/"detached-executor.json").read_text())
         assert report["executor_source_sha256"]==source_digest and report["disposable_only"]
         assert report["intentional_restore_interruption"] is fail_restore
         assert report["phase"]==("promotion_requires_inspection" if fail_restore else "promoted")
         return report
     finally:
-        if process.poll() is None:
+        if cid:
+            assets.docker("rm","--force","--volumes",cid)
+        elif process.poll() is None:
             process.terminate()
             try:process.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -316,9 +343,10 @@ def main(fixture,exported=None):
                 for field in ("Entrypoint","Cmd","User","WorkingDir"):
                     fmt="{{json .Config."+field+"}}"
                     assert assets.docker("image","inspect","--format",fmt,image)==assets.docker("image","inspect","--format",fmt,prior[name]["image"]),field
-            def run_trial(fail=False,interrupt=False,promote=False,promotion_failure=False):
+            def run_trial(fail=False,interrupt=False,promote=False,promotion_failure=False,container=False):
                 prior=core_update.live_core(original)
                 candidate=tmp/("candidate-promotion-failure" if promotion_failure else "candidate-promotion" if promote else "candidate-interruption" if interrupt else "candidate-failure" if fail else "candidate-success")
+                if container:candidate=candidate.with_name(candidate.name+"-container")
                 candidate.mkdir(mode=0o700)
                 source=candidate/"source"
                 source.mkdir()
@@ -373,7 +401,7 @@ def main(fixture,exported=None):
                 assert applications=={ident:app_identity(ident) for ident in applications}
                 assert call(old,"/api/households")["households"][0]["name"]=="Guided household"
                 if promotion_failure:
-                    held=detached_promotion(original,candidate,core_update.live_core(original),observe_apps,True)
+                    held=detached_promotion(original,candidate,core_update.live_core(original),observe_apps,True,container=container)
                     assert held["phase"]=="promotion_requires_inspection"
                     pending=json.loads((candidate/"promotion.json").read_text())
                     assert pending["resume_phase"]=="restoring_worker_state"
@@ -390,7 +418,7 @@ def main(fixture,exported=None):
                             "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert not c.execute(\"SELECT 1 FROM sqlite_master WHERE name='failed_promotion_fixture'\").fetchone(); c.close()",database)
                     probe_candidate()
                 if promote:
-                    promoted=detached_promotion(original,candidate,core_update.live_core(original),observe_apps)
+                    promoted=detached_promotion(original,candidate,core_update.live_core(original),observe_apps,container=container)
                     assert promoted["phase"]=="promoted"
                     assert all(core_update.live_core(original)[name]["image"]==candidate_images[name]["image"] for name in prior)
                     assert (original/"core/update-fixture.txt").is_file()
@@ -414,6 +442,8 @@ def main(fixture,exported=None):
             run_trial(fail=True)
             run_trial(interrupt=True)
             run_trial(promotion_failure=True)
+            run_trial(promotion_failure=True,container=True)
+            run_trial(promote=True,container=True)
             run_trial(promote=True)
             print("Source-built candidate images, detached canonical promotion, interrupted detached worker restore and resumed rollback passed; Kiwix and Kopia stayed online.",flush=True)
             keys=call(old,"/api/admin/backups/policy-sources")
