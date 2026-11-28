@@ -70,6 +70,11 @@ def main():
             # Mobile sections are real views, not scrolling shortcuts.
             expect(page.locator("#mobile-sections")).to_be_visible()
             expect(page.locator('[data-mobile-section="display"]')).to_have_attribute("aria-pressed", "true")
+            controlled = page.locator('[data-mobile-section="display"]').get_attribute("aria-controls").split()
+            assert len(controlled) == 2
+            for ident in controlled:
+                expect(page.locator("#" + ident)).to_be_visible()
+
             expect(page.locator("#theme-json")).to_be_hidden()
             page.locator('[data-mobile-section="packages"]').click()
             expect(page.locator("#theme-json")).to_be_visible()
@@ -204,6 +209,20 @@ def main():
             expect(page.locator("#notifications-shortcut")).to_be_hidden()
             expect(page.locator("#mobile-nav")).to_be_visible()
             expect(page.locator("#mobile-nav a[href=\"#home\"]")).to_have_attribute("aria-current", "page")
+            # Shared pages keep their household identity across direct navigation, reload and history.
+            page.locator('#mobile-nav a[href="#home/appearance"]').click()
+            expect(page.locator("#page h1")).to_have_text("Appearance")
+            expect(page.locator("body")).to_have_attribute("data-workspace", "home")
+            page.reload()
+            expect(page.locator("body")).to_have_attribute("data-workspace", "home")
+            page.go_back()
+            expect(page.locator("#page h1")).to_have_text("Life beyond the grid.")
+            page.goto(base + "/#home/supplies")
+            expect(page.locator("#page h1")).to_have_text("Food & supplies")
+            page.reload()
+            expect(page.locator("body")).to_have_attribute("data-workspace", "home")
+            page.goto(base + "/#home")
+
             assert page.locator(".resource-grid").evaluate("el => getComputedStyle(el).gridTemplateColumns.split(' ').length") == 2
             expect(page.locator("#page h1")).to_have_text("Life beyond the grid.")
             page.locator("#tool-search").fill("knowledge")
