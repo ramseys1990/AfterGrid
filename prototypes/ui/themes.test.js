@@ -46,3 +46,22 @@ test("prototype syntax and offline boundary",()=>{
   assert.doesNotMatch(js,/\b(fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/);
   for(const asset of ["style.css","themes.js","prototype.js"])assert.ok(html.includes('"'+asset+'"'));
 });
+
+test("versioned theme manifests, import round trip and built-ins",()=>{
+  const p=JSON.parse(fs.readFileSync(__dirname+"/example-theme.json","utf8"));
+  assert.ok(T.builtinPackages.every(x=>T.validatePackage(x,false)));
+  assert.ok(T.validatePackage(p));
+  assert.equal(T.parsePackage(JSON.stringify(p)).theme.id,p.theme.id);
+  assert.equal(T.loadPackages(JSON.stringify(T.addPackage([],p)))[0].theme.id,p.theme.id);
+  assert.equal(T.resolve(p.theme.id,"dark",false,[p.theme]).theme.name,p.theme.name);
+  assert.throws(()=>T.addPackage([p],p));
+  assert.throws(()=>T.parsePackage(JSON.stringify({...p,schema_version:2})));
+  assert.throws(()=>T.parsePackage(JSON.stringify({...p,theme:{...p.theme,id:"overwatch"}})));
+  assert.throws(()=>T.parsePackage(JSON.stringify({...p,theme:{...p.theme,css:"body{display:none}"}})));
+  assert.throws(()=>T.parsePackage(" ".repeat(T.MAX_BYTES+1)));
+  assert.throws(()=>T.parsePackage("{"));
+  assert.equal(T.loadPackages("invalid").length,0);
+  assert.equal(T.loadPackages(JSON.stringify([p,p,{}])).length,1);
+  const full=Array.from({length:T.MAX_CUSTOM},(_,i)=>({...p,theme:{...p.theme,id:"local.sample"+i}}));
+  assert.throws(()=>T.addPackage(full,p));
+});
