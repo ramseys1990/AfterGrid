@@ -908,6 +908,87 @@ def source_transition(root,stage,forward):
     return record
 
 
+SOURCE_MUTATION = r'''
+import json, sys
+from pathlib import Path
+sys.path.insert(0, "/app")
+import core_update_tools as update
+operation, root, candidate = sys.argv[1:]
+root = update.assets.real_directory(Path(root))
+candidate = update.assets.real_directory(Path(candidate))
+plan = update.read_json_private(candidate / "candidate.json")
+digest = update.assets.sha256_file(candidate / "candidate.json")
+if plan["root"] != str(root):
+    raise ValueError("Candidate installation mismatch")
+seal = update.read_json_private(root / "data/core/recovery-maintenance.json", 8192)
+if seal.get("phase") != "updating" or seal.get("candidate_sha256") != digest:
+    raise ValueError("Matching update hold required")
+stage = root / (".core-update-source-" + digest[:20])
+if operation == "stage":
+    result = str(update.stage_source_transition(root, candidate))
+else:
+    state = update.read_json_private(candidate / "promotion.json")
+    if state.get("candidate_sha256") != digest or state.get("source_stage") != str(stage):
+        raise ValueError("Promotion journal mismatch")
+    if operation in {"promote-source", "restore-source"}:
+        result = update.source_transition(root, stage, operation == "promote-source")
+    elif operation == "restore-core":
+        checkpoint = candidate / "promotion-checkpoint"
+        report = update.read_json_private(checkpoint / "checkpoint.json")
+        if report["archives"] != state.get("checkpoint"):
+            raise ValueError("Promotion checkpoint mismatch")
+        result = str(update.restore_core_bind(root, checkpoint,
+            report["archives"]["core"], digest[:20], digest))
+    else:
+        raise ValueError("Unsupported fixed update operation")
+print(json.dumps(result))
+'''
+
+
+def container_mutation(root, candidate, image, operation):
+    """Fixed short-lived filesystem operation; no socket or network in helper.
+
+    Source operations protect runtime data with a nested read-only bind. Core
+    restoration instead grants only the data parent, after services are stopped.
+    The transaction executor can keep its installation bind read-only throughout.
+    """
+    if operation not in {"stage", "promote-source", "restore-source", "restore-core"}:
+        raise ValueError("Unsupported fixed update operation")
+    if not isinstance(image, str) or not IMAGE.fullmatch(image):
+        raise ValueError("Exact retained worker image required")
+    root = assets.real_directory(root)
+    candidate = assets.real_directory(candidate)
+    data = assets.real_directory(root / "data")
+    if root == candidate or root in candidate.parents or candidate in root.parents:
+        raise ValueError("Candidate must be outside the installation")
+    for path in (root, candidate, data):
+        if "," in str(path) or any(ord(c) < 32 for c in str(path)):
+            raise ValueError("Unsafe update mount path")
+    plan = read_json_private(candidate / "candidate.json")
+    if plan["root"] != str(root) or plan["previous"]["worker"]["image"] != image:
+        raise ValueError("Retained worker identity mismatch")
+    image_ref_matches(image, image)
+    restore = operation == "restore-core"
+    argv = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+        "--cap-drop", "ALL", "--cap-add", "DAC_OVERRIDE", "--cap-add", "CHOWN",
+        "--cap-add", "FOWNER", "--security-opt", "no-new-privileges",
+        # SQLite checkpoint validation extracts a bounded database into a
+        # private temporary directory. Keep scratch off persistent mounts.
+        *(["--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=160m,mode=0700"] if restore else []),
+        "--mount", "type=bind,src=" + str(root) + ",dst=" + str(root) + (",readonly" if restore else ""),
+        "--mount", "type=bind,src=" + str(data) + ",dst=" + str(data) + ("" if restore else ",readonly"),
+        "--mount", "type=bind,src=" + str(candidate) + ",dst=" + str(candidate) + ",readonly",
+        "--entrypoint", "python3", image, "-I", "-c", SOURCE_MUTATION,
+        operation, str(root), str(candidate)]
+    try:
+        return json.loads(assets.docker(*argv, timeout=180))
+    except subprocess.CalledProcessError as exc:
+        # The helper runs a fixed program, not user commands. Preserve a
+        # bounded diagnostic rather than dumping the full Docker argv.
+        detail = (exc.stderr or "").strip()[-2000:]
+        raise RuntimeError(f"Fixed update helper {operation} failed (exit {exc.returncode}): {detail}") from None
+
+
 # Fixed helper executed in the retained local worker image. The named volume
 # is never removed. Save failed files by rename before restoring; the
 # quarantine is intentionally retained for inspection.
@@ -1055,7 +1136,10 @@ def rollback_disposable_promotion(root,candidate,state,plan,retained):
         raise ValueError("Worker state still in use")
     # The disposable scope is mandatory; no writes to a real installed host.
     # Keep the failed core directory and worker quarantine for investigation.
-    failed=restore_core_bind(root,checkpoint,report["archives"]["core"],digest[:20],digest)
+    if state.get("container_mutations") is True:
+        failed=Path(container_mutation(root,candidate,retained["previous"]["worker"]["image"],"restore-core"))
+    else:
+        failed=restore_core_bind(root,checkpoint,report["archives"]["core"],digest[:20],digest)
     state["failed_core"]=str(failed)
     state["phase"]="restoring_worker_state"
     journal(path,state)
@@ -1070,7 +1154,10 @@ def rollback_disposable_promotion(root,candidate,state,plan,retained):
     state["failed_worker_quarantine"]=quarantine
     state["phase"]="restoring_source"
     journal(path,state)
-    source_transition(root,Path(state["source_stage"]),False)
+    if state.get("container_mutations") is True:
+        container_mutation(root,candidate,retained["previous"]["worker"]["image"],"restore-source")
+    else:
+        source_transition(root,Path(state["source_stage"]),False)
     state["phase"]="starting_previous"
     journal(path,state)
     state["returned_containers"]=replace_core(root,retained["previous"])
@@ -1079,7 +1166,7 @@ def rollback_disposable_promotion(root,candidate,state,plan,retained):
     return state
 
 
-def promote_disposable(root,candidate,probe):
+def promote_disposable(root,candidate,probe,*,container_mutations=False):
     """Permanent canonical-mount activation in the disposable fixture only.
 
     A successful isolated trial is mandatory. The original local state is
@@ -1104,10 +1191,12 @@ def promote_disposable(root,candidate,probe):
     if seal.get("phase")!="updating" or seal.get("candidate_sha256")!=retained["candidate_sha256"]:
         raise ValueError("Matching maintenance hold required")
     proof=validate_backup_evidence(plan,seal,live_backup_inventory(current["worker"]["container"]),int(time.time()))
-    stage=stage_source_transition(root,candidate)
+    stage=(Path(container_mutation(root,candidate,retained["previous"]["worker"]["image"],"stage"))
+           if container_mutations else stage_source_transition(root,candidate))
     path=candidate/"promotion.json"
     state={"format":1,"phase":"stopping","candidate_sha256":retained["candidate_sha256"],
-           "source_stage":str(stage),"previous":current,"backup_evidence":proof,"disposable_only":True}
+           "source_stage":str(stage),"previous":current,"backup_evidence":proof,"disposable_only":True,
+           "container_mutations":container_mutations}
     write_private_json(path,state)
     try:
         scoped_compose(root,"stop","core","worker")
@@ -1116,7 +1205,10 @@ def promote_disposable(root,candidate,probe):
         state["checkpoint"]=capture_stopped_checkpoint(root,candidate/"promotion-checkpoint",current)["archives"]
         state["phase"]="promoting_source"
         journal(path,state)
-        source_transition(root,stage,True)
+        if container_mutations:
+            container_mutation(root,candidate,retained["previous"]["worker"]["image"],"promote-source")
+        else:
+            source_transition(root,stage,True)
         state["phase"]="starting_candidate"
         journal(path,state)
         state["active"]=replace_core(root,plan["candidate"])
@@ -1256,5 +1348,4 @@ def main():
 
 
 if __name__=="__main__":main()
-
 
