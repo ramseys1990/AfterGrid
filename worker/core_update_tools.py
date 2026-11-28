@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an exact, core-only update candidate without activating it."""
+"""Prepare exact core updates and execute only separately released candidates."""
 import argparse
 import hashlib
 import json
@@ -1177,7 +1177,7 @@ def rollback_disposable_promotion(root,candidate,state,plan,retained,*,productio
     volume="aftergrid-core_worker_state"
     if assets.docker("ps","-q","--filter","volume="+volume):
         raise ValueError("Worker state still in use")
-    # The disposable scope is mandatory; no writes to a real installed host.
+    # Scope was checked before mutation; real installs require explicit release policy.
     # Keep the failed core directory and worker quarantine for investigation.
     if state.get("container_mutations") is True:
         failed=Path(container_mutation(root,candidate,retained["previous"]["worker"]["image"],"restore-core"))
@@ -1210,7 +1210,7 @@ def rollback_disposable_promotion(root,candidate,state,plan,retained,*,productio
 
 
 def promote_disposable(root,candidate,probe,*,container_mutations=False,production=False):
-    """Permanent canonical-mount activation in the disposable fixture only.
+    """Canonical-mount activation under disposable or reviewed release scope.
 
     A successful isolated trial is mandatory. The original local state is
     captured again before the candidate is started on canonical mounts.
@@ -1406,11 +1406,11 @@ def execute_reviewed_update(root,candidate,expected_digest):
     if assets.sha256_file(candidate/"candidate.json")!=expected_digest:
         raise ValueError("Confirmed candidate changed")
     plan=read_json_private(candidate/"candidate.json")
-    check_activation(root,candidate)
     for name in ("activation.json","promotion.json","production-dispatch.json"):
         path=candidate/name
         if path.exists() or path.is_symlink():
             raise ValueError("Update already attempted; inspect its outcome")
+    check_activation(root,candidate)
     dispatch=candidate/"production-dispatch.json"
     state={"format":1,"phase":"starting","candidate_sha256":expected_digest}
     # Exclusive file creation is the no-replay admission boundary. Persist
@@ -1488,7 +1488,7 @@ def main():
     except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError,tarfile.TarError) as exc:
         parser.exit(1,"Core update preparation failed: "+str(exc)+"\n")
     print("Candidate prepared:",destination)
-    print("No live containers replaced. Activation and rollback are not yet enabled.")
+    print("No live containers replaced. Production activation requires a separately approved release.")
 
 
 if __name__=="__main__":main()
