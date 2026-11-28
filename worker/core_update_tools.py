@@ -321,7 +321,7 @@ def check_backups(root, candidate):
             "activation_enabled":False,"rollback_ready":False}
 
 
-def image_archive_identities(path):
+def image_archive_identities(path, expected=None):
     """Verify the image configuration identities in a Docker save archive."""
     with tarfile.open(path,mode="r:") as tar:
         member=tar.getmember("manifest.json")
@@ -339,6 +339,47 @@ def image_archive_identities(path):
             digest=hashlib.sha256(tar.extractfile(config).read()).hexdigest()
             if digest!=name.rsplit("/",1)[-1].removesuffix(".json"):raise ValueError("Archived image identity mismatch")
             ids.add("sha256:"+digest)
+        # Containerd image stores identify an image by its OCI root descriptor.
+        # Verify the metadata chain to the same configuration before accepting
+        # that identity. Classic stores continue to use configuration digests.
+        if expected is not None and ids!=expected and 'index.json' in tar.getnames():
+            index=tar.getmember('index.json')
+            if not index.isfile() or not 0<index.size<=65536:
+                raise ValueError('Invalid OCI archive index')
+            roots=json.load(tar.extractfile(index)).get('manifests',[])
+            if not isinstance(roots,list) or not 1<=len(roots)<=2:
+                raise ValueError('Unexpected OCI root count')
+            configs=set()
+            seen=set()
+            def verify_descriptor(desc, depth=0):
+                digest=desc.get('digest','')
+                if depth>8 or not IMAGE.fullmatch(digest):
+                    raise ValueError('Invalid OCI descriptor')
+                member=tar.getmember('blobs/sha256/'+digest[7:])
+                if not member.isfile() or not 0<member.size<=FILE_LIMIT or member.size!=desc.get('size'):
+                    raise ValueError('Invalid OCI metadata size')
+                data=tar.extractfile(member).read()
+                if hashlib.sha256(data).hexdigest()!=digest[7:]:
+                    raise ValueError('OCI metadata identity mismatch')
+                if digest in seen:return
+                seen.add(digest)
+                value=json.loads(data)
+                kind=desc.get('mediaType','')
+                if kind in {'application/vnd.oci.image.index.v1+json','application/vnd.docker.distribution.manifest.list.v2+json'}:
+                    children=value.get('manifests')
+                    if not isinstance(children,list) or not 1<=len(children)<=32:
+                        raise ValueError('Invalid OCI manifest list')
+                    for child in children:verify_descriptor(child,depth+1)
+                elif kind in {'application/vnd.oci.image.manifest.v1+json','application/vnd.docker.distribution.manifest.v2+json'}:
+                    verify_descriptor(value['config'],depth+1)
+                elif kind in {'application/vnd.oci.image.config.v1+json','application/vnd.docker.container.image.v1+json'}:
+                    configs.add(digest)
+                elif kind=='application/vnd.oci.empty.v1+json' and value=={}:
+                    pass
+                else:raise ValueError('Unsupported OCI metadata type')
+            for root in roots:verify_descriptor(root)
+            root_ids={root['digest'] for root in roots}
+            if ids<=configs and root_ids==expected:return root_ids
         return ids
 
 
@@ -389,7 +430,7 @@ def retain_previous(root,candidate):
             prior[service]={"tag":tag,"image":expected}
         archive=stage/"images.tar"
         assets.save_images(rows,archive)
-        if image_archive_identities(archive)!={r["image_id"] for r in rows}:
+        if image_archive_identities(archive,{r["image_id"] for r in rows})!={r["image_id"] for r in rows}:
             raise ValueError("Prior image archive identity mismatch")
         archive_hash=assets.sha256_file(archive)
         if live_core(root)!=plan["previous"] or check_scope(root,candidate/"source")!=plan["configuration"]:
@@ -422,7 +463,8 @@ def verify_retention(candidate,plan):
         raise ValueError("Prior image archive missing or changed")
     if assets.sha256_file(archive)!=record.get("archive_sha256"):
         raise ValueError("Prior image archive checksum mismatch")
-    if image_archive_identities(archive)!={plan["previous"][name]["image"] for name in ("core","worker")}:
+    expected={plan["previous"][name]["image"] for name in ("core","worker")}
+    if image_archive_identities(archive,expected)!=expected:
         raise ValueError("Prior archive identity mismatch")
     for name,images in (("previous",record["previous"]),("candidate",plan["candidate"])):
         expected={}

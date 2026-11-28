@@ -433,3 +433,31 @@ def test_resume_canonical_rollback_requires_disposable_scope(tmp_path,monkeypatc
         update.resume_disposable_rollback(tmp_path,tmp_path)
 
 
+
+@pytest.mark.parametrize('tamper', [False, True])
+def test_oci_archive_root_identity_is_bound_to_configuration(tmp_path,tamper):
+    import json
+    blobs={}
+    def blob(value,kind):
+        data=json.dumps(value).encode()
+        digest=hashlib.sha256(data).hexdigest()
+        blobs['blobs/sha256/'+digest]=data
+        return {'digest':'sha256:'+digest,'size':len(data),'mediaType':kind}
+    config=blob({'architecture':'amd64','os':'linux'},'application/vnd.oci.image.config.v1+json')
+    manifest=blob({'config':config,'layers':[]},'application/vnd.oci.image.manifest.v1+json')
+    root=blob({'manifests':[manifest]},'application/vnd.oci.image.index.v1+json')
+    expected={root['digest']}
+    blobs['index.json']=json.dumps({'manifests':[root]}).encode()
+    blobs['manifest.json']=json.dumps([{'Config':'blobs/sha256/'+config['digest'][7:]}]).encode()
+    if tamper:blobs['blobs/sha256/'+manifest['digest'][7:]]=b'X'*manifest['size']
+    path=tmp_path/'images.tar'
+    with tarfile.open(path,'w') as tar:
+        for name,data in blobs.items():
+            member=tarfile.TarInfo(name);member.size=len(data)
+            tar.addfile(member,io.BytesIO(data))
+    if tamper:
+        with pytest.raises(ValueError,match='identity mismatch'):update.image_archive_identities(path,expected)
+    else:
+        assert update.image_archive_identities(path,expected)==expected
+        assert update.image_archive_identities(path,{'sha256:'+'f'*64})!=expected
+        assert update.image_archive_identities(path)=={config['digest']}
