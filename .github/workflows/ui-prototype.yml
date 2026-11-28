@@ -27,4 +27,14 @@ jobs:
           python -m pip install playwright==1.51.0
           python -m playwright install --with-deps chromium
       - name: Standalone UI browser regression
+        env:
+          AFTERGRID_UI_SCREENSHOTS: ${{ runner.temp }}/aftergrid-ui-screenshots
         run: python prototypes/ui/browser_test.py
+      - name: Publish rendered UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aftergrid-ui-screenshots
+          path: ${{ runner.temp }}/aftergrid-ui-screenshots/*.png
+          if-no-files-found: ignore
+          retention-days: 14
