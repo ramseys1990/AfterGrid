@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -62,3 +63,25 @@ def test_helper_mounts_never_grant_source_and_data_writes_together(mutation_scop
     assert len(mounts) == 3 and not any("docker.sock" in value for value in mounts)
     assert args[args.index("--network") + 1] == "none"
     assert "--read-only" in args and "--privileged" not in args
+    if restore:
+        assert args[args.index("--tmpfs") + 1] == "/tmp:rw,noexec,nosuid,nodev,size=160m,mode=0700"
+    else:
+        assert "--tmpfs" not in args
+
+
+def test_helper_failure_reports_bounded_stderr(mutation_scope, monkeypatch):
+    root, candidate, _ = mutation_scope
+
+    def docker(*args, **kwargs):
+        if args[0] == "image":
+            return IMAGE
+        raise subprocess.CalledProcessError(1, ["docker", "run"], stderr="x" * 3000 + "scratch directory unavailable")
+
+    monkeypatch.setattr(update.assets, "docker", docker)
+    with pytest.raises(RuntimeError, match="Fixed update helper restore-core failed") as caught:
+        update.container_mutation(root, candidate, IMAGE, "restore-core")
+    message = str(caught.value)
+    assert message.endswith("scratch directory unavailable")
+    assert len(message) < 2100
+    assert "docker run" not in message
+
