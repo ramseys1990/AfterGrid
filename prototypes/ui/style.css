@@ -65,3 +65,19 @@ input[type=file]{max-width:100%}.field{min-width:0}.field input,.field select{ma
 /* Rendered review: prevent short panels stretching their content; compact phone catalog. */
 .split>.panel{align-content:start}
 @media(max-width:470px){.catalog-grid .tile{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 10px;padding:12px;align-items:start}.catalog-grid .tile-top{grid-column:1/-1}.catalog-grid .tile h3,.catalog-grid .tile>small,.catalog-grid .tile>p,.catalog-grid .catalog-meta,.catalog-grid .tile-action{grid-column:1/-1}.catalog-grid .tile>p{min-height:0;margin:0;font-size:.79rem}.catalog-grid .tile-icon{width:36px;height:36px}.catalog-grid .tile-icon svg{width:22px;height:22px}.catalog-grid .catalog-meta{padding-top:7px}.catalog-grid .tile-action{min-height:44px;padding:8px 10px}.catalog-grid .tile h3{font-size:1rem}}
+
+/* Mobile section paging: hidden groups are removed from layout and tab order on
+   narrow screens only; every panel remains available on desktop and via All. */
+#mobile-sections{display:none}
+@media(max-width:850px){
+  body[data-workspace]{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
+  html:has(body[data-workspace]){scroll-padding-bottom:calc(84px + env(safe-area-inset-bottom))}
+  body[data-workspace] :is(button,a,input,select,textarea,summary):focus-visible{scroll-margin-bottom:calc(84px + env(safe-area-inset-bottom))}
+  #mobile-sections{display:flex;flex-wrap:wrap;gap:6px;padding:7px;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius)}
+  #mobile-sections button{flex:1 1 auto;min-height:44px;font-size:.8rem;padding:7px 11px}
+  #mobile-sections button[aria-pressed=true]{background:var(--accent);color:var(--onAccent);border-color:var(--accent);font-weight:750}
+  #page > [data-section-hidden],.desktop-content-shortcuts{display:none!important}
+  #mobile-nav a{position:relative}
+  #mobile-nav a[aria-current=page]:before{content:"";position:absolute;top:0;left:25%;right:25%;height:3px;background:currentColor;border-radius:3px}
+}
+@media(forced-colors:active){#mobile-sections button[aria-pressed=true]{outline:2px solid Highlight;outline-offset:-3px}}
