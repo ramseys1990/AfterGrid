@@ -10,7 +10,17 @@ COMMIT="a"*40
 def test_build_candidate_records_and_checks_source_metadata(tmp_path,monkeypatch):
     import json
     commands=[]
-    monkeypatch.setattr(update.subprocess,"run",lambda command,**kw:commands.append(command))
+    configs=[]
+    monkeypatch.setenv("DOCKER_CONFIG",str(tmp_path/"host-credentials"))
+    def build(command,**kwargs):
+        commands.append(command)
+        config=Path(kwargs["env"]["DOCKER_CONFIG"])
+        assert config.is_dir() and config.stat().st_mode&0o077==0
+        assert config!=tmp_path/"host-credentials"
+        assert kwargs["env"]["DOCKER_HOST"]=="unix:///var/run/docker.sock"
+        (config/"buildx-metadata").write_text("temporary build state")
+        configs.append(config)
+    monkeypatch.setattr(update.subprocess,"run",build)
     def docker(*args):
         name=Path(commands[-1][-1]).name
         if args[3]=="{{.Id}}":return "sha256:"+("1" if name=="core" else "2")*64
@@ -22,10 +32,27 @@ def test_build_candidate_records_and_checks_source_metadata(tmp_path,monkeypatch
     assert set(rows)=={"core","worker"}
     assert rows["core"]["image"]=="sha256:"+"1"*64
     assert rows["worker"]["image"]=="sha256:"+"2"*64
+    assert len(configs)==2 and configs[0]==configs[1]
+    assert not configs[0].exists()
     for name,command in zip(("core","worker"),commands):
         assert "org.opencontainers.image.revision="+COMMIT in command
         assert "org.aftergrid.component="+name in command
         assert command[-1]==str(tmp_path/name)
+
+
+def test_failed_build_removes_private_docker_client_state(tmp_path,monkeypatch):
+    import subprocess
+    configs=[]
+    def fail(command,**kwargs):
+        config=Path(kwargs["env"]["DOCKER_CONFIG"])
+        (config/"partial-metadata").write_text("incomplete build")
+        configs.append(config)
+        raise subprocess.CalledProcessError(1,command)
+    monkeypatch.setattr(update.subprocess,"run",fail)
+    monkeypatch.setattr(update.assets,"docker",lambda *a:pytest.fail("Build failed before image inspection"))
+    with pytest.raises(subprocess.CalledProcessError):
+        update.build_candidate(tmp_path,COMMIT,"123456789abc")
+    assert len(configs)==1 and not configs[0].exists()
 
 @pytest.mark.parametrize("change", [None, {"org.opencontainers.image.revision":"b"*40},
     {"org.opencontainers.image.source":"https://example.test/other"}, {"org.aftergrid.component":"other"}])

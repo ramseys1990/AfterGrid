@@ -125,7 +125,7 @@ try:opener.open("http://127.0.0.1:8080/api/admin/jobs")
 except urllib.error.HTTPError as e:assert e.code==401
 else:raise AssertionError("Anonymous administrative access")
 import native_setup
-assert set(native_setup.BASE)=={"homebox","grocy"}
+assert set(native_setup.BASE)=={"homebox","grocy","media","kolibri","notes"}
 '''
         run(*cmd, "exec", "-T", "core", "python", "-c", probe)
         outcome["source_built_boot"] = True
