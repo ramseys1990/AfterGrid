@@ -43,6 +43,59 @@ RETENTION_FLAGS={"keepLatest":"--keep-latest","keepHourly":"--keep-hourly","keep
                  "keepWeekly":"--keep-weekly","keepMonthly":"--keep-monthly","keepAnnual":"--keep-annual"}
 SECRET_LOCK = threading.Lock()
 REGISTRY_LOCK = threading.Lock()
+CORE_UPDATE_LOCK = threading.Lock()
+
+
+def core_update_request(operation, body=None):
+    """Only the installed worker may start a fixed reviewed helper."""
+    try:
+        from . import core_update_tools as update
+    except ImportError:
+        import core_update_tools as update
+    releases=update.browser_releases()
+    if RECOVERY_CORE_ONLY or RECOVERY_OFFLINE or ROOT!=str(update.ROOT) or not releases:
+        if operation=="status":return {"activation_enabled":False,"releases":[],"candidate":None,"outcome":None}
+        raise ValueError("Core updates are not released")
+    if operation not in {"status","prepare","apply"}:raise ValueError("Unknown update operation")
+    if operation=="prepare":
+        if not isinstance(body,dict) or set(body)!={"commit"} or body["commit"] not in releases:
+            raise ValueError("Choose an approved release")
+        argument=body["commit"]
+    elif operation=="apply":
+        if not isinstance(body,dict) or set(body)!={"candidate_sha256"} or not isinstance(body["candidate_sha256"],str) or not update.SHA.fullmatch(body["candidate_sha256"]):
+            raise ValueError("Confirm the exact candidate")
+        argument=body["candidate_sha256"]
+    else:
+        if body is not None:raise ValueError("Invalid status request")
+        argument=None
+    with CORE_UPDATE_LOCK:
+        ids=update.assets.docker("ps","--no-trunc","-q","--filter","label=com.docker.compose.project=aftergrid-core","--filter","label=com.docker.compose.service=worker").splitlines()
+        if len(ids)!=1 or not update.SHA.fullmatch(ids[0]):raise ValueError("Expected one installed worker")
+        image,labels=json.loads(update.assets.docker("inspect","--format","[{{json .Image}},{{json .Config.Labels}}]",ids[0]))
+        if (not update.IMAGE.fullmatch(image) or labels.get("com.docker.compose.project.working_dir")!=ROOT
+            or labels.get("com.docker.compose.project.config_files")!=ROOT+"/compose.yaml"):
+            raise ValueError("Normal installed worker required")
+        common=["run","--pull","never","--read-only","--cap-drop","ALL","--cap-add","DAC_OVERRIDE",
+                "--security-opt","no-new-privileges","--mount","type=bind,src="+ROOT+",dst="+ROOT+",readonly",
+                "--mount","type=bind,src="+str(update.STAGING)+",dst="+str(update.STAGING)+(",readonly" if operation=="status" else "")]
+        if operation=="status":
+            result=json.loads(update.assets.docker(*common,"--rm","--network","none","--entrypoint","python3",image,"/app/core_update_tools.py","--browser-status",timeout=15))
+            # Inspect only our fixed executor names, never other workloads.
+            for name in ("prepare","apply"):
+                ids=update.assets.docker("ps","-a","-q","--filter","name=^/aftergrid-reviewed-"+name+"$").splitlines()
+                if ids:
+                    state=json.loads(update.assets.docker("inspect","--format","{{json .State}}","aftergrid-reviewed-"+name))
+                    result[name+"_state"]="running" if state.get("Running") else "failed" if state.get("ExitCode")!=0 else "finished"
+            return result
+        # Names are deliberately single-use until an operator reviews the prior
+        # receipt. No arbitrary cleanup or repeated launch after a timeout.
+        argv=common+["--detach","--name","aftergrid-reviewed-"+operation,"--network","bridge" if operation=="prepare" else "none",
+                     "--tmpfs","/tmp:rw,noexec,nosuid,nodev,size=256m",
+                     "--mount","type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock"]
+        if operation=="apply":argv+=["--cap-add","CHOWN","--cap-add","FOWNER"]
+        cid=update.assets.docker(*argv,"--entrypoint","python3",image,"/app/core_update_tools.py","--browser-"+operation,argument,timeout=15)
+        if not update.SHA.fullmatch(cid):raise ValueError("Executor start not confirmed")
+        return {"accepted":True}
 
 def catalog():
     result = {}
@@ -2488,6 +2541,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path == "/core-update/status":
+            try:return self.send_json(200,core_update_request("status"))
+            except (OSError,ValueError,TypeError,KeyError,RuntimeError,subprocess.SubprocessError):
+                return self.send_json(503,{"detail":"Reviewed core update status unavailable"})
         if self.path == "/health":
             return self.send_json(200, {"ok": True})
         if self.path == "/modules":
@@ -2548,13 +2605,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if RECOVERY_CORE_ONLY:
             return self.send_json(409,{"detail":"Core-only recovery disables module actions"})
-        if self.path not in {"/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation", "/guarded-update", "/resolve-rollback"}:
+        if self.path not in {"/core-update/prepare","/core-update/apply","/jobs", "/jobs/batch", "/registry-check", "/backup-policy/retention", "/update-eligibility", "/update-preparation", "/guarded-update", "/resolve-rollback"}:
             return self.send_json(404, {"detail": "Unknown endpoint"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
                 raise ValueError("Invalid request length")
             body = json.loads(self.rfile.read(size))
+            if self.path in {"/core-update/prepare","/core-update/apply"}:
+                try:return self.send_json(202,core_update_request(self.path.rsplit("/",1)[-1],body))
+                except (OSError,ValueError,TypeError,KeyError,RuntimeError,subprocess.SubprocessError):
+                    return self.send_json(409,{"detail":"Reviewed update unavailable or start not confirmed; inspect status"})
             if self.path=="/resolve-rollback":
                 return self.send_json(202,{"id":enqueue_reader_resolution(body)})
             if self.path in {"/update-preparation","/guarded-update"}:
