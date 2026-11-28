@@ -81,3 +81,15 @@ input[type=file]{max-width:100%}.field{min-width:0}.field input,.field select{ma
   #mobile-nav a[aria-current=page]:before{content:"";position:absolute;top:0;left:25%;right:25%;height:3px;background:currentColor;border-radius:3px}
 }
 @media(forced-colors:active){#mobile-sections button[aria-pressed=true]{outline:2px solid Highlight;outline-offset:-3px}}
+
+/* Related destination links are mobile-only; the desktop sidebar remains authoritative. */
+#mobile-destinations,#mobile-catalog-tabs{display:none}
+@media(max-width:850px){
+  #mobile-destinations,#mobile-catalog-tabs{display:flex;flex-wrap:wrap;gap:6px;align-items:stretch}
+  #mobile-destinations a{flex:1 1 auto;min-height:44px;display:flex;align-items:center;justify-content:center;text-align:center;text-decoration:none;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-size:.76rem;color:var(--text);background:var(--panel)}
+  #mobile-destinations a[aria-current=page]{border-color:var(--accent);color:var(--accent);font-weight:750}
+  #mobile-catalog-tabs button{flex:1 1 0;min-width:0;min-height:44px;font-size:.8rem}
+  #mobile-catalog-tabs button[aria-pressed=true]{background:var(--accent);color:var(--onAccent);border-color:var(--accent)}
+  #catalog-filter{display:none}
+}
+@media(forced-colors:active){#mobile-destinations a[aria-current=page],#mobile-catalog-tabs button[aria-pressed=true]{outline:2px solid Highlight;outline-offset:-3px}}
