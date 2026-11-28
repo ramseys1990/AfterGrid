@@ -297,21 +297,95 @@ async function renderModules(){
       $("catalog").append(card);
     }
 }
+let reviewedUpdate=null,coreUpdateBusy=false;
 async function refreshCoreUpdate(){
   const button=$("core-update-refresh"),result=$("core-update-result");
   button.disabled=true;
   try{
     const r=await api("/api/admin/core-update/status");
     if(!status?.admin)return;
+    reviewedUpdate=r;
+    const terminal=["promoted","rolled_back"].includes(r.outcome);
+    const controls=$("core-update-controls"),select=$("core-update-release");
+    controls.hidden=!r.activation_enabled&&!terminal;
+    const selected=select.value;
+    select.replaceChildren();
+    for(const commit of r.releases||[]){
+      const option=document.createElement("option");option.value=commit;option.textContent=commit.slice(0,12);select.append(option);
+    }
+    if((r.releases||[]).includes(selected))select.value=selected;
+    $("core-update-prepare").disabled=coreUpdateBusy||!r.activation_enabled||!select.value||r.maintenance_active||!!r.prepare_state||!!r.candidate;
+    $("core-update-backup").disabled=coreUpdateBusy||!r.activation_enabled||!r.candidate||r.prepare_state!=="finished"||r.maintenance_active||!!r.apply_state||!!r.outcome;
+    $("core-update-apply").disabled=coreUpdateBusy||!r.activation_enabled||!r.candidate||r.prepare_state!=="finished"||r.phase!=="sealed"||!r.inventory_sha256||!!r.apply_state||!!r.outcome;
+    $("core-update-release-maintenance").disabled=coreUpdateBusy||!terminal||r.phase!=="sealed";
     result.textContent=r.host_reconciliation_required
-      ?"Update maintenance requires host reconciliation. Do not release maintenance or rebuild containers manually."
-      :r.maintenance_active
-        ?"Recovery maintenance is active. Core update activation is not released."
-        :"Core update activation is not released. Your applications remain independently managed.";
-  }catch(e){if(status?.admin)result.textContent="Core update status unavailable.";}
+      ?"Update maintenance requires inspection. Do not retry or rebuild containers manually."
+      :r.apply_state==="running"?"Installing reviewed update. The portal may reconnect; independent applications remain running."
+      :r.outcome==="promoted"?"Reviewed update installed. Finish maintenance to resume administration."
+      :r.outcome==="rolled_back"?"Previous version restored. Finish maintenance after reviewing the outcome."
+      :r.prepare_state==="running"?"Preparing reviewed update. Refresh status to check progress."
+      :r.prepare_state==="failed"||r.apply_state==="failed"||r.outcome==="requires_inspection"?"Update attempt needs inspection; do not retry."
+      :r.phase==="sealed"&&r.candidate?"Protected recovery inventory sealed. Review and install the prepared update."
+      :r.maintenance_active?"Recovery maintenance is active. Finish or inspect the current capture."
+      :r.candidate?"Reviewed candidate prepared. Create and verify protected core backups."
+      :r.activation_enabled?"Choose a reviewed release to prepare.":"Core update activation is not released. Your applications remain independently managed.";
+  }catch(e){reviewedUpdate=null;$("core-update-controls").hidden=true;if(status?.admin)result.textContent="Core update status unavailable. Refresh after reconnecting; do not retry a possibly submitted update.";}
   finally{button.disabled=false;}
 }
 $("core-update-refresh").addEventListener("click",refreshCoreUpdate);
+async function coreUpdateAction(fn){
+  if(coreUpdateBusy)return;
+  coreUpdateBusy=true;
+  for(const id of ["core-update-prepare","core-update-backup","core-update-apply","core-update-release-maintenance"])$(id).disabled=true;
+  try{await fn();}
+  catch(e){$("core-update-result").textContent="Update step not confirmed: "+e.message+". Refresh status before any further action.";}
+  finally{coreUpdateBusy=false;await refreshCoreUpdate();}
+}
+$("core-update-prepare").addEventListener("click",()=>coreUpdateAction(async()=>{
+  const commit=$("core-update-release").value;
+  if(!reviewedUpdate?.releases?.includes(commit)||!confirm("Download and build this exact reviewed release? Your running applications will not be stopped."))return;
+  await api("/api/admin/core-update/prepare",{commit,confirmed:true});
+  await refreshCoreUpdate();
+}));
+async function waitCoreBackup(id,label){
+  if(!Number.isInteger(id)||id<=0)throw Error("Unexpected backup job");
+  for(let i=0;i<180;i++){
+    $("core-update-result").textContent=label+" — checking job "+id;
+    const jobs=await api("/api/admin/jobs");
+    const job=jobs.find(row=>row.id===id);
+    if(!job)throw Error("Backup job evidence unavailable");
+    if(job.state==="succeeded")return;
+    if(["failed","interrupted"].includes(job.state))throw Error(label+" did not succeed");
+    await new Promise(resolve=>setTimeout(resolve,2000));
+  }
+  throw Error(label+" still pending; inspect activity");
+}
+$("core-update-backup").addEventListener("click",()=>coreUpdateAction(async()=>{
+  if(!reviewedUpdate?.candidate||!confirm("Create protected core and worker backups and verify isolated restoration? Confirm Kopia is connected and its recovery password is saved off-server."))return;
+  await api("/api/admin/recovery-maintenance/begin",{modules:[],confirmed:true});
+  for(const key of ["core","worker"]){
+    let job=await api("/api/admin/backups/protected-snapshot",{key,confirmed:true});
+    await waitCoreBackup(job.id,"Protected "+key+" snapshot");
+    job=await api("/api/admin/backups/"+key+"/verify-snapshot",{confirmed:true});
+    await waitCoreBackup(job.id,"Verify "+key+" snapshot");
+  }
+  const job=await api("/api/admin/backups/recovery-manifest",{confirmed:true});
+  await waitCoreBackup(job.id,"Recovery inventory");
+  await api("/api/admin/recovery-maintenance/seal",{confirmed:true});
+  await refreshCoreUpdate();
+}));
+$("core-update-apply").addEventListener("click",()=>coreUpdateAction(async()=>{
+  const r=reviewedUpdate;
+  if(!r?.candidate||!r.inventory_sha256||!confirm("Install the prepared reviewed update? The portal and application manager will restart. Do not retry if the browser disconnects."))return;
+  $("core-update-result").textContent="Submitting update. Refresh status after reconnecting; do not retry.";
+  await api("/api/admin/core-update/apply",{candidate_sha256:r.candidate.candidate_sha256,inventory_sha256:r.inventory_sha256,confirmed:true});
+  await refreshCoreUpdate();
+}));
+$("core-update-release-maintenance").addEventListener("click",()=>coreUpdateAction(async()=>{
+  if(!["promoted","rolled_back"].includes(reviewedUpdate?.outcome)||!confirm("Finish verified update maintenance?"))return;
+  await api("/api/admin/recovery-maintenance/release",{confirmed:true});
+  await refreshCoreUpdate();
+}));
 $("update-health-refresh").addEventListener("click",async()=>{
   const button=$("update-health-refresh"),root=$("update-health-result");
   button.disabled=true;root.textContent="Reading local update health…";
