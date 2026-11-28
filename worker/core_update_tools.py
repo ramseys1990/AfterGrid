@@ -963,7 +963,10 @@ plan = update.read_json_private(candidate / "candidate.json")
 digest = update.assets.sha256_file(candidate / "candidate.json")
 if plan["root"] != str(root):
     raise ValueError("Candidate installation mismatch")
-seal = update.read_json_private(root / "data/core/recovery-maintenance.json", 8192)
+marker = root / "data/core/recovery-maintenance.json"
+if operation == "restore-core" and not marker.exists():
+    marker = root / "data" / (".core-failed-" + digest[:20]) / "recovery-maintenance.json"
+seal = update.read_json_private(marker, 8192)
 if seal.get("phase") != "updating" or seal.get("candidate_sha256") != digest:
     raise ValueError("Matching update hold required")
 stage = root / (".core-update-source-" + digest[:20])
@@ -1334,6 +1337,9 @@ def finish_disposable_promotion(root,candidate,*,production=False,detached=False
     info=marker.stat()
     value={key:seal[key] for key in ("format","modules","inventory_sha256","manifest_job")}
     value["phase"]="sealed"
+    if production:
+        value["core_update_outcome"]=state["phase"]
+        value["core_update_candidate_sha256"]=digest
     if detached:
         if not production:raise ValueError("Detached finalization requires reviewed production scope")
         # Core owns its private data; the executor keeps the host root read-only.
