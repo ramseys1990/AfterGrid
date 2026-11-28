@@ -87,9 +87,18 @@ $("dialog-cancel").addEventListener("click",()=>$("confirmation").close("cancel"
 $("dialog-confirm").addEventListener("click",()=>$("confirmation").close("confirm"));
 $("confirmation").addEventListener("close",()=>{const action=dialogAction;dialogAction=null;if($("confirmation").returnValue==="confirm"&&action)action();if(returnFocus?.isConnected)returnFocus.focus();else $("main").focus();returnFocus=null;});
 $("confirmation").addEventListener("cancel",e=>{e.preventDefault();$("confirmation").close("cancel");});
-$("workspace").addEventListener("change",e=>{workspace=e.target.value;go(workspace==="home"?"home":"overview");});
-$("menu").addEventListener("click",()=>{const open=document.querySelector(".shell").classList.toggle("menu-open");$("menu").setAttribute("aria-expanded",String(open));});
-$("navigation").addEventListener("click",e=>{if(e.target.closest("a")){document.querySelector(".shell").classList.remove("menu-open");$("menu").setAttribute("aria-expanded","false");}});
+$("workspace").addEventListener("change",e=>{setMenu(false);workspace=e.target.value;go(workspace==="home"?"home":"overview");});
+function setMenu(open,returnFocus=false){
+  document.querySelector(".shell").classList.toggle("menu-open",open);
+  $("menu").setAttribute("aria-expanded",String(open));
+  if(open)$("workspace").focus();
+  else if(returnFocus)$("menu").focus();
+}
+$("menu").addEventListener("click",()=>setMenu(!document.querySelector(".shell").classList.contains("menu-open"),true));
+$("workspace-sidebar").addEventListener("keydown",e=>{if(e.key==="Escape"&&document.querySelector(".shell").classList.contains("menu-open")&&$("menu").getClientRects().length){e.preventDefault();setMenu(false,true);}});
+matchMedia("(max-width: 850px)").addEventListener("change",e=>{if(!e.matches)setMenu(false);});
+
+$("navigation").addEventListener("click",e=>{if(e.target.closest("a")){setMenu(false);$("main").focus();}});
 $("appearance-shortcut").addEventListener("click",()=>go("appearance"));
 $("notifications-shortcut").addEventListener("click",()=>go("notifications"));
 $("page").addEventListener("input",e=>{if(e.target.id==="tool-search")filterTiles();else if(e.target.id==="market-search"){marketQuery=e.target.value;$("market-results").innerHTML=marketCards();}});
