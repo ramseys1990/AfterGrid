@@ -271,7 +271,7 @@ async function renderModules(){
         if(mod.shared && mod.lan_url){
           const note=document.createElement("p");note.textContent="LAN URL: "+mod.lan_url+(mod.lan_dns?" — local DNS must point to the server.":" — reserve the server IP for stable links.")+(mod.id==="tak"?" TLS; enroll with the trusted CA.":" HTTP is unencrypted.");card.append(note);
         }else if(mod.share_available){
-          const note=document.createElement("p");note.textContent=(mod.lan_dns?"Add a local DNS record for "+new URL(mod.lan_url).hostname+". ":"")+"Complete native account setup before sharing. LAN URL: "+mod.lan_url;card.append(note);
+          const note=document.createElement("p");note.textContent=(mod.lan_dns?"Add a local DNS record for "+new URL(mod.lan_url).hostname+". ":"")+(["meshmonitor","kopia"].includes(mod.id)?"Save the generated credentials before sharing, then sign in to the native application. ":"Complete native account setup before sharing. ")+"LAN URL: "+mod.lan_url;card.append(note);
         }else if(["homebox","grocy","kopia","meshmonitor","tak","kolibri","media","notes"].includes(mod.id)){
           const note=document.createElement("small");note.textContent="LAN sharing needs a private LAN bind configured on the server; see the LAN setup guide.";card.append(note);
         }
