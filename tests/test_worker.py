@@ -89,6 +89,13 @@ def test_lan_sharing_configuration(tmp_path, monkeypatch):
     assert env["AFTERGRID_MODULE_BIND"]=="192.168.10.4"
     assert env["AFTERGRID_MODULE_URL"]=="http://homebox.aftergrid.home.arpa:8082"
     assert env["AFTERGRID_HOMEBOX_REGISTRATION"]=="false"
+    # The native label URL must not depend on the current private IP when
+    # the operator preserves the configured local DNS name.
+    monkeypatch.setattr(worker,"LAN_BIND","192.168.10.55")
+    moved=worker.sharing_env("homebox")
+    assert moved["AFTERGRID_MODULE_BIND"]=="192.168.10.55"
+    assert moved["AFTERGRID_MODULE_URL"]==env["AFTERGRID_MODULE_URL"]
+    assert moved["AFTERGRID_HOMEBOX_REGISTRATION"]=="false"
     worker.set_sharing("homebox",False)
     assert worker.sharing_env("homebox")["AFTERGRID_MODULE_BIND"]=="127.0.0.1"
     assert worker.sharing_env("homebox")["AFTERGRID_HOMEBOX_REGISTRATION"]=="false"
