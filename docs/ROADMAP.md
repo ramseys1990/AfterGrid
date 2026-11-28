@@ -251,6 +251,19 @@ Current: **9 of 13 checklist items complete** (1–8 and 10). Runtime evidence a
 The test guest is disposable, but acceptance must preserve installed application data unless a distinct test explicitly calls for deletion. Keep all infrastructure changes confined to the designated guest. Retain native application permissions, use Compose and Kopia, and defer the major UI overhaul until the approach to 1.0.
 
 
+### Remaining Phase 3 closeout gates
+
+Freeze feature scope. Finish the focused updater and onboarding changes; do not add new services or repeat previously accepted tests unless the affected implementation changed.
+
+| Row | Repository work | Remaining live acceptance |
+|---|---|---|
+| 9 | PR #14: latest correction needs native guided acceptance; then reviewed release authorization, narrowly scoped detached production execution and browser handoff still need implementation/validation. Do not expose activation based on disposable results alone. | With an approved release and independently verified protected core/worker snapshots, use the normal browser path on the designated guest; verify healthy core/worker, retained data/session, unchanged optional container IDs/start times and reader access. Exercise failure/reconciliation in disposable fixtures before any live promotion. |
+| 11 | PR #17 merged: durable label procedure and hostname continuity regression passed. | Reserve the existing address or choose supported local DNS; scan one native Homebox test label from a physical phone. For hostname-based labels verify the same original label after a controlled IP/DNS change, reboot and WAN loss. Existing IP labels are not automatically migrated. |
+| 12 | PR #16: generated-account browser-first MeshMonitor guidance and shared-origin native test pending. Keep native login; no new account service. | Install MeshMonitor privately, reveal credentials, explicitly approve sharing, sign in using the LAN URL and verify anonymous denial and native logout. No hardware connection or extra service is needed to certify the onboarding flow; radio operation is a separate acceptance scope. |
+| 13 | PR #18 merged: bounded resource probe, eight exact-source unit tests and ten loopback HTTP requests passed; redirect refused. See [system sizing](SYSTEM_REQUIREMENTS.md). | Record declared dataset/module configuration, available memory/swap, disk, latency and OOM/restart evidence during representative larger reads, regional routing preparation and selected backup/media/education workloads. Measure one configuration at a time. Bare metal deferred. |
+
+No checklist row has been newly marked complete by this repository closeout. Preserve the existing development-image/override evidence until a reviewed standard release is accepted. Production activation stays gated. Do not change unrelated Proxmox guests, native accounts, router settings, installed application data or existing printed labels merely to satisfy a fixture.
+
 ### Real Proxmox installation evidence — 2026-11-24
 
 Tested source: `ebbb27c0566bb085bbcff16f005b9553385a83bb`.
