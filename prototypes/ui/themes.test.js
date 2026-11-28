@@ -65,3 +65,27 @@ test("versioned theme manifests, import round trip and built-ins",()=>{
   const full=Array.from({length:T.MAX_CUSTOM},(_,i)=>({...p,theme:{...p.theme,id:"local.sample"+i}}));
   assert.throws(()=>T.addPackage(full,p));
 });
+
+test("studio drafts do not mutate built-ins and report both contrast modes",()=>{
+  const base=T.builtins[0];
+  const p=T.createDraft(base,"local.studio","Studio example");
+  assert.ok(T.validatePackage(p));
+  assert.equal(T.contrastReport(p.theme).length,2);
+  assert.ok(T.contrastReport(p.theme).every(x=>x.passes));
+  const old=base.dark.text;
+  p.theme.dark.text=p.theme.dark.bg;
+  assert.equal(base.dark.text,old);
+  assert.equal(T.validatePackage(p),false);
+  assert.equal(T.contrastReport(p.theme).find(x=>x.mode==="dark").passes,false);
+  assert.equal(T.contrastReport(p.theme).find(x=>x.mode==="light").passes,true);
+  p.theme.dark.text="url(https://example.com)";
+  assert.equal(T.contrastReport(p.theme).length,0);
+  assert.throws(()=>T.createDraft({},"local.invalid","Invalid"));
+});
+test("studio script is local and syntactically valid",()=>{
+  const html=fs.readFileSync(__dirname+"/index.html","utf8");
+  const studio=fs.readFileSync(__dirname+"/studio.js","utf8");
+  new vm.Script(studio);
+  assert.match(html,/src="studio.js"/);
+  assert.doesNotMatch(studio,/\b(fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/);
+});
