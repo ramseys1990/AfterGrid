@@ -167,6 +167,8 @@ def main():
             page.locator("#category-filter").select_option("Inventory")
             expect(page.locator(".catalog-grid .tile")).to_have_count(2)
             expect(page.locator('[data-app="homebox"]')).to_be_visible()
+            expect(page.locator(".catalog-meta")).to_have_count(2)
+            expect(page.locator(".catalog-meta").first).to_contain_text("Storage not estimated")
             expect(page.locator('[data-app="supplies"]')).to_be_visible()
             page.locator("#category-filter").select_option("")
             page.locator("#catalog-filter").select_option("optional")
@@ -195,6 +197,8 @@ def main():
             for route_id, title in (("content", "Content & maps"), ("supplies", "Households & inventory"), ("updates", "Updates"), ("backup", "Backup & recovery"), ("activity", "Activity")):
                 page.goto(base + "/#" + route_id)
                 expect(page.locator("#page h1")).to_have_text(title)
+                if route_id == "backup":
+                    expect(page.locator(".recovery-banner h2")).to_have_text("Restore not verified")
             page.goto(base + "/#marketplace")
             page.locator("#market-category").select_option("Themes")
             expect(page.locator(".tile")).to_have_count(2)
