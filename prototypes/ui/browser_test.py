@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Thread
 from urllib.parse import urlsplit
 import json
+import os
 ROOT = Path(__file__).resolve().parent
 
 def main():
@@ -126,6 +127,12 @@ def main():
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
             page.locator("#menu").click()
             expect(page.locator("#navigation")).to_be_visible()
+            expect(page.locator("#workspace")).to_be_focused()
+            expect(page.locator("#menu")).to_have_attribute("aria-expanded", "true")
+            page.keyboard.press("Escape")
+            expect(page.locator("#navigation")).to_be_hidden()
+            expect(page.locator("#menu")).to_be_focused()
+            page.locator("#menu").click()
             page.locator("#workspace").select_option("home")
             expect(page.locator("#notifications-shortcut")).to_be_hidden()
             expect(page.locator("#page h1")).to_have_text("Life beyond the grid.")
@@ -179,6 +186,40 @@ def main():
             expect(page.get_by_text("Illustrative, unreviewed", exact=True)).to_be_visible()
             page.locator("#market-back").click()
             expect(page.locator("#market-search")).to_have_value("Expedition")
+            # Deterministic rendered evidence: all built-in palettes on desktop and phone.
+            # No real application state or credentials are involved.
+            evidence = os.environ.get("AFTERGRID_UI_SCREENSHOTS")
+            output = Path(evidence) if evidence else None
+            if output:
+                output.mkdir(parents=True, exist_ok=True)
+            page.goto(base + "/#overview")
+            page.evaluate("localStorage.clear()")
+            page.reload()
+            for width, height, device in ((1440, 1000, "desktop"), (390, 844, "phone")):
+                page.set_viewport_size({"width": width, "height": height})
+                for theme in ("overwatch", "outpost", "essential", "fortress"):
+                    for mode in ("light", "dark"):
+                        page.locator("#appearance-shortcut").click()
+                        page.locator(f'[data-theme-choice="{theme}"]').click()
+                        page.locator("#mode").select_option(mode)
+                        page.goto(base + "/#overview")
+                        expect(page.locator("html")).to_have_attribute("data-theme", theme)
+                        expect(page.locator("html")).to_have_attribute("data-mode", mode)
+                        expect(page.locator("#page h1")).to_have_text("Life beyond the grid.")
+                        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), (device, theme, mode)
+                        if output:
+                            page.screenshot(path=str(output / f"{device}-{theme}-{mode}-overview.png"), full_page=True, animations="disabled")
+                # Representative operational pages, with narrow-width overflow checks.
+                page.locator("#appearance-shortcut").click()
+                page.locator('[data-theme-choice="overwatch"]').click()
+                page.locator("#mode").select_option("dark")
+                for route_id, title in (("applications","Applications"), ("app-knowledge","Knowledge library"), ("content","Content & maps"), ("backup","Backup & recovery"), ("notifications","Notifications"), ("marketplace","Marketplace"), ("appearance","Appearance"), ("home","Life beyond the grid."), ("maps","Maps & navigation"), ("communications","Communications")):
+                    page.goto(base + "/#" + route_id)
+                    expect(page.locator("#page h1")).to_have_text(title)
+                    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), (device, route_id)
+                    if output:
+                        page.screenshot(path=str(output / f"{device}-overwatch-dark-{route_id}.png"), full_page=True, animations="disabled")
+                page.goto(base + "/#overview")
             context.close()
             browser.close()
         assert not errors, errors
