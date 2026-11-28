@@ -103,6 +103,7 @@ def main():
             expect(page.locator('[data-theme-choice="local.escape"]')).to_contain_text("<b>Example</b>")
             assert page.locator('[data-theme-choice="local.escape"] b').count() == 0
             # Theme Studio: scoped preview, both modes, invalid contrast, save/reload.
+            page.locator("#studio-details summary").click()
             page.locator("#studio-name").fill("Workshop")
             page.locator("#studio-id").fill("local.workshop")
             page.locator("#studio-author").fill("Prototype test")
@@ -135,6 +136,9 @@ def main():
             page.locator("#menu").click()
             page.locator("#workspace").select_option("home")
             expect(page.locator("#notifications-shortcut")).to_be_hidden()
+            expect(page.locator("#mobile-nav")).to_be_visible()
+            expect(page.locator("#mobile-nav a[href=\"#home\"]")).to_have_attribute("aria-current", "page")
+            assert page.locator(".resource-grid").evaluate("el => getComputedStyle(el).gridTemplateColumns.split(' ').length") == 2
             expect(page.locator("#page h1")).to_have_text("Life beyond the grid.")
             page.locator("#tool-search").fill("knowledge")
             expect(page.locator(".tile")).to_have_count(1)
@@ -150,6 +154,11 @@ def main():
             page.set_viewport_size({"width": 1280, "height": 900})
             page.locator("#workspace").select_option("admin")
             page.goto(base + "/#applications")
+            page.locator("#category-filter").select_option("Inventory")
+            expect(page.locator(".catalog-grid .tile")).to_have_count(2)
+            expect(page.locator('[data-app="homebox"]')).to_be_visible()
+            expect(page.locator('[data-app="supplies"]')).to_be_visible()
+            page.locator("#category-filter").select_option("")
             page.locator("#catalog-filter").select_option("optional")
             page.locator('[data-app="education"]').click()
             expect(page.locator("#page h1")).to_have_text("Education")
