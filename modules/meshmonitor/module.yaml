@@ -13,5 +13,5 @@
     "MESHMONITOR_ADMIN_PASSWORD",
     "MESHMONITOR_SESSION_SECRET"
   ],
-  "setup_note": "Reveal the generated first-login credentials as AfterGrid administrator. Native login is required. Add your own compatible LAN radio in MeshMonitor Sources. No radio or internet broker is configured automatically. Explicitly enable trusted LAN access after setup."
+  "setup_note": "Reveal and save the generated first-login credentials as AfterGrid administrator. Select Share on LAN, then Open application and sign in with the native account. Review permissions before adding your own compatible LAN radio in MeshMonitor Sources. No radio or internet broker is configured automatically."
 }
