@@ -20,3 +20,6 @@ input[type=file]{max-width:100%}.field{min-width:0}.field input,.field select{ma
 .studio-preview .hero h3{font-size:1.5rem;margin:5px 0}
 .studio-demo-button{display:inline-block;padding:8px 10px;border-radius:var(--radius);background:var(--accent);color:var(--onAccent);font-size:.8rem}
 .studio-fields input[type=range]{width:100%;accent-color:var(--accent)}
+
+/* Example notification inbox and connection-state layout */
+.notice-card{display:grid;gap:10px;min-width:0}.notice-card .panel-header{flex-wrap:wrap}.notice-card p{overflow-wrap:anywhere}.notice-kind{font-size:.75rem;color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:var(--radius)}.notice-card .actions{flex-wrap:wrap}.top-actions{min-width:0;flex-wrap:wrap}#notifications-shortcut{font-size:.83rem}
