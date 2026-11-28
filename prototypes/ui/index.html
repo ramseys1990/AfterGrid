@@ -9,14 +9,14 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div class="shell">
-<aside class="sidebar" aria-label="Workspace navigation">
+<aside class="sidebar" id="workspace-sidebar" aria-label="Workspace navigation">
   <a class="brand" href="#home"><svg aria-hidden="true" viewBox="0 0 40 40"><path d="M20 3 37 13v15L20 38 3 28V13Z M10 28 20 10 30 28H24L20 20 16 28Z" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>AfterGrid<small>Life beyond the grid</small></span></a>
   <div class="workspace"><label for="workspace">Workspace preview</label><select id="workspace"><option value="home">Household</option><option value="admin" selected>Administration</option></select></div>
   <nav id="navigation" aria-label="Main navigation"></nav>
   <div class="sidebar-bottom"><span class="status"><span class="dot"></span> Prototype offline</span><small>Design preview · no live server</small></div>
 </aside>
 <div class="body">
-  <header class="topbar"><button id="menu" type="button" class="quiet mobile" aria-controls="navigation" aria-expanded="false">☰ Menu</button><a class="mobile brand-mini" href="#home">AfterGrid</a><span class="crumb" id="breadcrumb">Administration / Overview</span><div class="top-actions"><span class="status demo-label">DEMO DATA</span><button id="notifications-shortcut" type="button" class="quiet" hidden>Notifications</button><button id="appearance-shortcut" class="quiet" type="button">Appearance</button></div></header>
+  <header class="topbar"><button id="menu" type="button" class="quiet mobile" aria-controls="workspace-sidebar" aria-expanded="false">☰ Menu</button><a class="mobile brand-mini" href="#home">AfterGrid</a><span class="crumb" id="breadcrumb">Administration / Overview</span><div class="top-actions"><span class="status demo-label">DEMO DATA</span><button id="notifications-shortcut" type="button" class="quiet" hidden>Notifications</button><button id="appearance-shortcut" class="quiet" type="button">Appearance</button></div></header>
   <main id="main" tabindex="-1"><div class="notice"><strong>Design prototype</strong><span> All system values and operations are simulated. This page is not connected to AfterGrid.</span></div><div id="page"></div></main>
   <footer>AfterGrid · Phase 4 design lab <span>Local assets only / no network calls</span></footer>
 </div></div>
