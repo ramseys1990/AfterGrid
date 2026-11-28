@@ -37,6 +37,17 @@ A root operator on an existing development installation can set AFTERGRID_BIND t
 
 Native setup keeps Homebox, Grocy, Jellyfin, Kolibri and DokuWiki loopback-only until the separate Share on LAN action. The AfterGrid administrator form sends credentials only to the fixed bundled application, with no proxy, SSH tunnel or external identity service. Credentials and native session tokens are transient and never enter worker jobs, activity output or portal storage. Native sessions used for verification are logged out on completion where the application is reachable. Use HTTP only on a trusted private LAN and acknowledge its unencrypted transport in the form. Native account setup is disabled in restricted recovery mode. If a change was submitted but verification fails, use Verify existing account with the same details before retrying creation or changing a password.
 
+## Before printing permanent equipment labels
+
+The simplest option is to reserve the server's current IP in the router. Use that address for Homebox and do not change it after printing labels. If you want labels to survive a change of IP, use a stable local DNS name from the start. No additional DNS service is installed by AfterGrid.
+
+1. Reserve the server IP, or configure the chosen home.arpa name using your existing router/DNS. Install AfterGrid with the matching LAN domain for hostname-based labels.
+2. Set up Homebox, share it on the LAN, and open the exact Homebox link shown by the portal. Do not print labels from a loopback or temporary URL.
+3. Generate one test label using Homebox's native item/label functionality. On a physical phone connected to the LAN, scan it and sign in if prompted. Check the expected item and the actual URL, including hostname and port, before printing the rest.
+4. For hostname-based continuity acceptance on a disposable deployment, retain the same item data, change the private IP, update the router DNS record and reconfigure the AfterGrid bind/origin as described above. Reapply the shared Homebox configuration. Scan the **original** label on a phone with fresh DNS resolution and verify the same item opens. Test again after reboot and with WAN disconnected.
+
+Existing IP-based labels do not automatically become hostname-based labels. Preserve the old address if possible or reprint them. The configured Homebox hostname is already passed to its native container; a configuration-level test verifies the same name is retained across a private IP change. Actual printed-label continuity and physical DNS/WAN acceptance are not yet established. No router settings are changed automatically.
+
 ## Testing
 
 Hosted CI tests Docker bindings with a disposable private address, not real Wi-Fi clients. Physical LAN, local DNS, QR scans, HTTPS trust and native account changes still require real-host testing.
