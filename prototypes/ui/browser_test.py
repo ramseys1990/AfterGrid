@@ -197,9 +197,20 @@ def main():
             for route_id, title in (("content", "Content & maps"), ("supplies", "Households & inventory"), ("updates", "Updates"), ("backup", "Backup & recovery"), ("activity", "Activity")):
                 page.goto(base + "/#" + route_id)
                 expect(page.locator("#page h1")).to_have_text(title)
+                if route_id == "content":
+                    expect(page.locator(".content-storage")).to_contain_text("Illustrative")
+                    page.locator("#content-filter").select_option("local")
+                    expect(page.locator("#archive-results tbody tr")).to_have_count(2)
+                    page.locator("#content-filter").select_option("available")
+                    expect(page.locator("#archive-results tbody tr")).to_have_count(1)
+                    page.locator('[data-content-jump="routing-content"]').click()
+                    expect(page.locator("#routing-content")).to_be_focused()
+                    page.locator("#content-filter").select_option("all")
                 if route_id == "backup":
                     expect(page.locator(".recovery-banner h2")).to_have_text("Restore not verified")
             page.goto(base + "/#marketplace")
+            expect(page.locator(".market-status")).to_contain_text("Unverified listings")
+            expect(page.get_by_text("Catalog trust & refresh details", exact=True)).to_be_visible()
             page.locator("#market-category").select_option("Themes")
             expect(page.locator(".tile")).to_have_count(2)
             page.locator("#market-search").fill("Expedition")
