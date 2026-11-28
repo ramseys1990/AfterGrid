@@ -83,3 +83,10 @@ The regression suite now exercises the inventory category split, compact househo
 ## Operations workspace refinement
 
 Revision b315a5d passed the UI workflow (46112590658) after the second visual iteration. Core acceptance was still running at the first check. New changes build on that baseline: map-first schematic with a larger responsive canvas, route endpoint swap and explicit unavailable route metrics; four ordered PACE cards with untested status, separate communications/device panels; a prominent restore-not-verified banner and compact catalog category/storage metadata. No actual map, radio, recovery or storage measurements are connected. Browser tests cover the new route and PACE controls, catalog metadata and unverified recovery wording. New screenshots and full regression must be reviewed against the new revision before approval.
+
+
+## Content, discovery and brand refinement
+
+The content manager now has example archive status filters, keyboard-focusable shortcuts to knowledge, regional maps and routing sections, and a distinct illustrative storage summary that does not imply measured disk capacity. The marketplace prioritizes search and package browsing, with a compact explicit unverified-cache banner and expandable trust/refresh details. The local vector brand mark is consistent on desktop and mobile; it is a candidate identity, not an approved final logo. Forced-color styling preserves selected navigation and important boundaries. The corresponding browser assertions cover the new content filters, focus shortcuts and marketplace trust wording. Manual rendered and accessibility review remains required.
+
+Native module styling belongs to roadmap U5. The core theme must not be injected into native pages. Review supported settings and licenses for each pinned version, record configuration persistence/restore and reset behavior, and keep native permissions unchanged. Until that review is complete, all app icons are generic local functional symbols and native interfaces retain their original styling. No unsupported upstream capability is claimed.
