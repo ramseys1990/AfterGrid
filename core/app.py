@@ -1120,6 +1120,8 @@ def create_app(data_dir=None):
                     for key in ("activation_enabled","releases","candidate","outcome","prepare_state","apply_state"):
                         if key in value:info[key]=value[key]
             except WorkerUnavailable:pass
+        if phase=="sealed" and active.get("core_update_outcome") in {"promoted","rolled_back"}:
+            info["outcome"]=active["core_update_outcome"]
         return {**info,"phase":phase,
                 "maintenance_active":bool(active),"host_reconciliation_required":phase=="invalid" or (phase=="updating" and info.get("apply_state")!="running"),
                 "inventory_sha256":active.get("inventory_sha256") if active and phase=="sealed" else None,
