@@ -337,15 +337,15 @@ async function coreUpdateAction(fn){
   if(coreUpdateBusy)return;
   coreUpdateBusy=true;
   for(const id of ["core-update-prepare","core-update-backup","core-update-apply","core-update-release-maintenance"])$(id).disabled=true;
-  try{await fn();}
-  catch(e){$("core-update-result").textContent="Update step not confirmed: "+e.message+". Refresh status before any further action.";}
-  finally{coreUpdateBusy=false;await refreshCoreUpdate();}
+  try{await fn();coreUpdateBusy=false;await refreshCoreUpdate();}
+  catch(e){reviewedUpdate=null;$("core-update-result").textContent="Update step not confirmed: "+e.message+". Refresh status before any further action.";}
+  finally{coreUpdateBusy=false;}
 }
 $("core-update-prepare").addEventListener("click",()=>coreUpdateAction(async()=>{
   const commit=$("core-update-release").value;
   if(!reviewedUpdate?.releases?.includes(commit)||!confirm("Download and build this exact reviewed release? Your running applications will not be stopped."))return;
   await api("/api/admin/core-update/prepare",{commit,confirmed:true});
-  await refreshCoreUpdate();
+
 }));
 async function waitCoreBackup(id,label){
   if(!Number.isInteger(id)||id<=0)throw Error("Unexpected backup job");
@@ -372,19 +372,19 @@ $("core-update-backup").addEventListener("click",()=>coreUpdateAction(async()=>{
   const job=await api("/api/admin/backups/recovery-manifest",{confirmed:true});
   await waitCoreBackup(job.id,"Recovery inventory");
   await api("/api/admin/recovery-maintenance/seal",{confirmed:true});
-  await refreshCoreUpdate();
+
 }));
 $("core-update-apply").addEventListener("click",()=>coreUpdateAction(async()=>{
   const r=reviewedUpdate;
   if(!r?.candidate||!r.inventory_sha256||!confirm("Install the prepared reviewed update? The portal and application manager will restart. Do not retry if the browser disconnects."))return;
   $("core-update-result").textContent="Submitting update. Refresh status after reconnecting; do not retry.";
   await api("/api/admin/core-update/apply",{candidate_sha256:r.candidate.candidate_sha256,inventory_sha256:r.inventory_sha256,confirmed:true});
-  await refreshCoreUpdate();
+
 }));
 $("core-update-release-maintenance").addEventListener("click",()=>coreUpdateAction(async()=>{
   if(!["promoted","rolled_back"].includes(reviewedUpdate?.outcome)||!confirm("Finish verified update maintenance?"))return;
   await api("/api/admin/recovery-maintenance/release",{confirmed:true});
-  await refreshCoreUpdate();
+
 }));
 $("update-health-refresh").addEventListener("click",async()=>{
   const button=$("update-health-refresh"),root=$("update-health-result");
